@@ -2,14 +2,15 @@
   "name": "finalapp",
   "main": "node_modules/expo/AppEntry.js",
   "version": "1.0.0",
-  "scripts": {
-    "start": "expo start",
-    "reset-project": "node ./scripts/reset-project.js",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "web": "expo start --web",
-    "lint": "expo lint"
-  },
+"scripts": {
+  "start": "node api/send-mail.js",
+  "expo": "expo start",
+  "reset-project": "node ./scripts/reset-project.js",
+  "android": "expo start --android",
+  "ios": "expo start --ios",
+  "web": "expo start --web",
+  "lint": "expo lint"
+},
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
     "@react-native-async-storage/async-storage": "^2.2.0",
