@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "finalapp",
-    "slug": "finalapp",
+    "name": "Spacesolutions",
+    "slug": "Spacesolutions",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/logo.png",
     "scheme": "finalapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -23,7 +23,7 @@
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/logo.png"
     },
     "plugins": [
       "expo-router",
