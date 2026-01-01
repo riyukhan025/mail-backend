@@ -2,7 +2,12 @@
   "buildCommand": "npm run web",
   "outputDirectory": "dist",
   "framework": "other",
+  "functions": {
+    "api/**": {
+      "runtime": "@vercel/node@latest"
+    }
+  },
   "rewrites": [
-    { "source": "/:path*", "destination": "/index.html" }
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
