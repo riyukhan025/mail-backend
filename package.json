@@ -3,12 +3,12 @@
   "main": "node_modules/expo/AppEntry.js",
   "version": "1.0.0",
 "scripts": {
-  "start": "node api/send-mail.js",
-  "expo": "expo start",
+  "start": "expo start",
+  "dev": "expo start",
+  "build": "expo export --platform web",
   "reset-project": "node ./scripts/reset-project.js",
   "android": "expo start --android",
   "ios": "expo start --ios",
-  "web": "expo start --web",
   "lint": "expo lint"
 },
   "dependencies": {
