@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -73,12 +74,12 @@ const MARITAL_STATUS = "Dropdown-m2CY7O4n-W";
 /* ================= SIGNATURE COORDS ================= */
 const SIGNATURE_COORDS = {
   respondent: { x: 150, y: 195, width: 160, height: 45 },
-  fieldExecutive: { x: 360, y: 140, width: 160, height: 45 },
+  fieldExecutive: { x: 375, y: 145, width: 160, height: 45 },
 };
 
 /* ================= MARITAL STATUS COORDS ================= */
 // Adjust these coordinates to cover the "Divorced" text on the PDF
-const MARITAL_COORDS = { x: 150, y: 375, width: 200, height: 20 };
+const MARITAL_COORDS = { x: 180, y: 425, width: 200, height: 20 };
 
 /* ================= CLOUDINARY CONFIG ================= */
 const CLOUD_NAME = "dfpykheky";
@@ -288,29 +289,64 @@ export default function CESFormScreen() {
 
   return (
     <ScrollView style={{ padding: 16 }}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <Ionicons name="arrow-back" size={24} color="#333" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>CES Form</Text>
+      </View>
+
       {Object.keys(TEXT_FIELDS).map(k => (
-        <TextInput
-          key={k}
-          placeholder={k}
-          style={styles.input}
-          value={form[k]}
-          onChangeText={v => setForm({ ...form, [k]: v })}
-        />
+        <View key={k} style={styles.inputRow}>
+          <TextInput
+            placeholder={k}
+            style={styles.input}
+            value={form[k]}
+            onChangeText={v => setForm({ ...form, [k]: v })}
+          />
+          {k === 'detailsVerified' && (
+            <TouchableOpacity onPress={() => {
+              const now = new Date();
+              const dateTimeStr = `${now.getDate().toString().padStart(2, '0')}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getFullYear()} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+              setForm({ ...form, detailsVerified: dateTimeStr });
+            }}>
+              <Ionicons name="time-outline" size={24} color="black" style={styles.icon} />
+            </TouchableOpacity>
+          )}
+        </View>
       ))}
 
-      <TextInput
-        placeholder="Stay From Date (DD-MM-YYYY)"
-        style={styles.input}
-        value={form.stayFromDate}
-        onChangeText={v => setForm({ ...form, stayFromDate: v })}
-      />
+      <View style={styles.inputRow}>
+        <TextInput
+          placeholder="Stay From Date (DD-MM-YYYY)"
+          style={styles.input}
+          value={form.stayFromDate}
+          onChangeText={v => setForm({ ...form, stayFromDate: v })}
+        />
+        <TouchableOpacity onPress={() => {
+          const now = new Date();
+          const dateStr = `${now.getDate().toString().padStart(2, '0')}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getFullYear()}`;
+          setForm({ ...form, stayFromDate: dateStr });
+        }}>
+          <Ionicons name="time-outline" size={24} color="black" style={styles.icon} />
+        </TouchableOpacity>
+      </View>
 
-      <TextInput
-        placeholder="Stay To Date (DD-MM-YYYY)"
-        style={styles.input}
-        value={form.stayToDate}
-        onChangeText={v => setForm({ ...form, stayToDate: v })}
-      />
+      <View style={styles.inputRow}>
+        <TextInput
+          placeholder="Stay To Date (DD-MM-YYYY)"
+          style={styles.input}
+          value={form.stayToDate}
+          onChangeText={v => setForm({ ...form, stayToDate: v })}
+        />
+        <TouchableOpacity onPress={() => {
+          const now = new Date();
+          const dateStr = `${now.getDate().toString().padStart(2, '0')}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getFullYear()}`;
+          setForm({ ...form, stayToDate: dateStr });
+        }}>
+          <Ionicons name="time-outline" size={24} color="black" style={styles.icon} />
+        </TouchableOpacity>
+      </View>
 
       <RadioGroup title="Type of Address" value={form.addressType}
         onChange={v => setForm({ ...form, addressType: v })}
@@ -420,7 +456,13 @@ export default function CESFormScreen() {
 
 /* ================= STYLES ================= */
 const styles = StyleSheet.create({
-  input: { borderWidth: 1, padding: 10, marginBottom: 12 },
+  header: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
+  backButton: { marginRight: 15 },
+  headerTitle: { fontSize: 20, fontWeight: "bold" },
+  inputRow: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#ccc', borderRadius: 5, marginBottom: 12 },
+  input: { flex: 1, padding: 10 },
+  icon: { paddingHorizontal: 10 },
+
   sig: { height: 90, borderWidth: 1, marginBottom: 12, alignItems: "center", justifyContent: "center", backgroundColor: "#e0e0e0" },
   submit: { backgroundColor: "green", padding: 16, alignItems: "center" },
   group: { marginBottom: 16 },

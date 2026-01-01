@@ -28,6 +28,7 @@ import CompletedCasesScreen from "./app/CompletedCasesScreen";
 import Dashboard from "./app/Dashboard";
 import DaywiseTrackerScreen from "./app/DaywiseTrackerScreen";
 import DevDashboardScreen from "./app/DevDashboardScreen";
+import DHIFormScreen from "./app/DHIFormScreen";
 import DigitalIDCard from "./app/DigitalIDCard";
 import DSRScreen from "./app/DSRScreen";
 import ForgotPasswordScreen from "./app/ForgotPasswordScreen";
@@ -95,6 +96,7 @@ function AdminStack() {
       <Stack.Screen name="RevertedCasesScreen" component={RevertedCasesScreen} />
       <Stack.Screen name="FormScreen" component={FormScreen} />
       <Stack.Screen name="MatrixFormScreen" component={MatrixFormScreen} />
+      <Stack.Screen name="DHIFormScreen" component={DHIFormScreen} />
       <Stack.Screen name="TeamDSRScreen" component={TeamDSRScreen} />
       <Stack.Screen name="DevDashboardScreen" component={DevDashboardScreen} />
       <Stack.Screen
@@ -144,6 +146,7 @@ function MemberStack() {
       <Stack.Screen name="AllCasesScreen" component={AllCasesScreen} />
       <Stack.Screen name="FormScreen" component={FormScreen} />
       <Stack.Screen name="MatrixFormScreen" component={MatrixFormScreen} />
+      <Stack.Screen name="DHIFormScreen" component={DHIFormScreen} />
       <Stack.Screen name="CameraGPSScreen" component={CameraGPSScreen} />
       <Stack.Screen name="Updatescreen" component={Updatescreen} />
       <Stack.Screen name="DigitalIDCard" component={DigitalIDCard} />

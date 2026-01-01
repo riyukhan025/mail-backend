@@ -43,6 +43,14 @@ export default function DigitalIDCard({ navigation, route }) {
                 <Text style={styles.detailLabel}>Email:</Text>
                 <Text style={styles.detailValue}>{user?.email || "email@example.com"}</Text>
             </View>
+            <View style={styles.detailsContainer}>
+                <Text style={styles.detailLabel}>Blood Group:</Text>
+                <Text style={styles.detailValue}>{user?.bloodGroup || "N/A"}</Text>
+            </View>
+            <View style={styles.detailsContainer}>
+                <Text style={styles.detailLabel}>Location:</Text>
+                <Text style={styles.detailValue}>{user?.city || "City"} - {user?.pincode || ""}</Text>
+            </View>
 
             <View style={styles.footer}>
                 <Text style={styles.footerText}>Authorized Personnel</Text>
@@ -72,7 +80,7 @@ const styles = StyleSheet.create({
   },
   idCard: {
     width: "100%",
-    maxWidth: 350,
+    maxWidth: 320,
     borderRadius: 15,
     padding: 20,
     alignItems: "center",
@@ -107,7 +115,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   photo: { width: "100%", height: "100%" },
-  name: { fontSize: 22, fontWeight: "bold", color: "#333", marginBottom: 5 },
+  name: { fontSize: 22, fontWeight: "bold", color: "#333", marginBottom: 5, textAlign: 'center' },
   role: { fontSize: 16, color: "#666", marginBottom: 20, textTransform: "uppercase", letterSpacing: 1 },
   detailsContainer: {
     flexDirection: "row",

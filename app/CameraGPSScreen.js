@@ -8,6 +8,7 @@ export default function CameraGPSScreen({ navigation, route }) {
   const [permission, requestPermission] = useCameraPermissions();
   const [hasLocationPermission, setHasLocationPermission] = useState(null);
   const [flash, setFlash] = useState("off");
+  const [facing, setFacing] = useState("back");
   const cameraRef = useRef(null);
   const { onPhotosCapture, category } = route.params || {};
   const [currentLocation, setCurrentLocation] = useState(null);
@@ -69,7 +70,7 @@ export default function CameraGPSScreen({ navigation, route }) {
   const takePicture = async () => {
     if (cameraRef.current) {
       try {
-        const photo = await cameraRef.current.takePictureAsync();
+        const photo = await cameraRef.current.takePictureAsync({ quality: 0.5 });
         let location = currentLocation;
         if (!location) {
            try { location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }); } catch(e){}
@@ -100,12 +101,16 @@ export default function CameraGPSScreen({ navigation, route }) {
     setFlash((current) => (current === "off" ? "on" : "off"));
   };
 
+  const toggleCameraFacing = () => {
+    setFacing(current => (current === 'back' ? 'front' : 'back'));
+  }
+
   if (!permission || !permission.granted) return <View style={styles.container}><Text style={styles.text}>Requesting permissions...</Text></View>;
   if (hasLocationPermission === false) return <View style={styles.container}><Text style={styles.text}>Location permission required</Text></View>;
 
   return (
     <View style={styles.container}>
-      <CameraView style={styles.camera} ref={cameraRef} facing="back" flash={flash}>
+      <CameraView style={styles.camera} ref={cameraRef} facing={facing} flash={flash}>
         <View style={styles.overlay}>
           <Text style={styles.overlayText}>{currentTime.toLocaleString()}</Text>
           <Text style={styles.overlayText}>
@@ -114,8 +119,8 @@ export default function CameraGPSScreen({ navigation, route }) {
           <Text style={styles.overlayText}>{currentAddress}</Text>
         </View>
         <View style={styles.controlsContainer}>
-          <TouchableOpacity style={styles.iconButton} onPress={() => navigation.goBack()}>
-             <Ionicons name="close" size={30} color="white" />
+          <TouchableOpacity style={styles.iconButton} onPress={toggleCameraFacing}>
+             <Ionicons name="camera-reverse" size={30} color="white" />
           </TouchableOpacity>
           
           <TouchableOpacity style={styles.captureButton} onPress={takePicture}>

@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
 import {
   Alert,
@@ -23,36 +24,35 @@ import firebase from "../firebase";
 /* ================= ACROFIELDS ================= */
 
 const TEXT_FIELDS = {
-  matrixRefNo: "Textbox1",
-  candidateName: "Textbox2",
-  verificationDateTime: "Textbox3",
-  candidateAddressPeriod: "Textbox4",
-  respondentPeriodStay: "Textbox5",
-  modeOfConfirmation: "Textbox6",
-  respondentName: "Textbox7",
-  respondentRelationship: "Textbox8",
-  residenceStatus: "Textbox9",
-  addressProofDetails: "Textbox10",
-
-  /* ✅ Neighbour Confirmation (YES / NO / NA) */
-  neighbourConfirmation: "Textbox11",
-
-  landmark: "Textbox15",
-  policeStation: "Textbox16",
-  verificationComments: "Textbox17",
+  candidateName: "Multi_1",
+  verificationDateTime: "Multi_2",
+  candidateAddressPeriod: "Multi_3",
+  respondentPeriodStay: "Multi_4",
+  modeOfConfirmation: "Multi_5",
+  respondentName: "Multi_6",
+  respondentRelationship: "Multi_7",
+  residenceStatus: "Multi_8",
+  addressProofDetails: "Multi_9",
+  neighbourConfirmation: "Multi_10",
+  natureLocation: "Multi_11",
+  landmark: "Multi_12",
+  policeStation: "Multi_13",
+  verificationComments: "Multi_14",
+  matrixRepNameDate: "Multi_15",
+  matrixRefNo: "Multi_16",
 };
 
-/* ✅ Nature of Location Checkboxes */
-const NATURE_LOCATION_CHECK = {
-  lower: "Check Box12",
-  middle: "Check Box13",
-  upper: "Check Box14",
+/* ✅ Address Proof Checkboxes */
+const CHECKBOX_FIELDS = {
+  gasBill: "Check_1",
+  rationCard: "Check_2",
+  voterId: "Check_3",
 };
 
 /* ================= SIGNATURE POSITIONS ================= */
 const SIGNATURE_COORDS = {
-  respondent: { x: 100, y: 160, width: 180, height: 45 },
-  matrixRep: { x: 360, y: 160, width: 180, height: 45 },
+  respondent: { x: 190, y: 240, width: 180, height: 45 },
+  matrixRep: { x: 190, y: 195, width: 180, height: 45 },
 };
 
 /* ================= CLOUDINARY CONFIG ================= */
@@ -79,7 +79,7 @@ async function uploadPdfToCloudinary(pdfUri, identifier) {
 
 /* ================= COMPONENT ================= */
 
-export default function MatrixPVFormScreen() {
+export default function MatrixFormScreen() {
   const navigation = useNavigation();
   const route = useRoute();
   const { caseId } = route.params || {};
@@ -105,12 +105,13 @@ export default function MatrixPVFormScreen() {
     landmark: "",
     policeStation: "",
     verificationComments: "",
+    matrixRepNameDate: "",
 
-    /* Nature of Location */
-    natureLocation: {
-      lower: false,
-      middle: false,
-      upper: false,
+    natureLocation: "",
+    addressProof: {
+      gasBill: false,
+      rationCard: false,
+      voterId: false,
     },
 
     respondentSignature: "",
@@ -178,17 +179,17 @@ export default function MatrixPVFormScreen() {
         }
       });
 
-      /* Nature of Location */
-      Object.entries(NATURE_LOCATION_CHECK).forEach(([key, acro]) => {
+      /* CHECKBOXES */
+      Object.entries(CHECKBOX_FIELDS).forEach(([key, acro]) => {
         try {
           const cb = pdfForm.getCheckBox(acro);
-          if (form.natureLocation[key]) {
+          if (form.addressProof[key]) {
             cb.check();
           } else {
             cb.uncheck();
           }
         } catch (err) {
-          console.log(`Checkbox ${acro} not found`);
+          console.log(`Checkbox ${acro} not found: ${err.message}`);
         }
       });
 
@@ -234,47 +235,72 @@ export default function MatrixPVFormScreen() {
 
   return (
     <ScrollView style={{ padding: 16 }}>
-      <Text style={styles.headerTitle}>
-        Matrix Residential Address Check
-      </Text>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <Ionicons name="arrow-back" size={24} color="#333" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>
+          Matrix Residential Address Check
+        </Text>
+      </View>
 
-      {Object.keys(TEXT_FIELDS).map(k => (
-        <TextInput
-          key={k}
-          placeholder={k === "neighbourConfirmation"
-            ? "Address confirmed with Neighbours? (Yes / No / NA)"
-            : k}
-          style={styles.input}
-          value={form[k]}
-          onChangeText={v => setForm({ ...form, [k]: v })}
-        />
-      ))}
+      {Object.keys(TEXT_FIELDS).map(k => {
+        if (k === 'verificationDateTime') {
+          return (
+            <View key={k} style={styles.inputRow}>
+              <TextInput
+                placeholder={k}
+                style={styles.input}
+                value={form[k]}
+                onChangeText={v => setForm({ ...form, [k]: v })}
+              />
+              <TouchableOpacity onPress={() => {
+                const now = new Date();
+                const dateTimeStr = `${now.getDate().toString().padStart(2, '0')}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getFullYear()} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+                setForm({ ...form, verificationDateTime: dateTimeStr });
+              }}>
+                <Ionicons name="time-outline" size={24} color="black" style={styles.icon} />
+              </TouchableOpacity>
+            </View>
+          );
+        }
+        return (
+          <TextInput
+            key={k}
+            placeholder={k === "neighbourConfirmation"
+              ? "Address confirmed with Neighbours? (Yes / No / NA)"
+              : k}
+            style={styles.input}
+            value={form[k]}
+            onChangeText={v => setForm({ ...form, [k]: v })}
+          />
+        );
+      })}
 
-      <Text style={styles.title}>Nature of Location</Text>
-
-      {Object.keys(NATURE_LOCATION_CHECK).map(k => (
+      <Text style={styles.title}>Address Proof Verified</Text>
+      {Object.keys(CHECKBOX_FIELDS).map(k => (
         <TouchableOpacity
           key={k}
           style={styles.checkboxRow}
           onPress={() =>
             setForm(f => ({
               ...f,
-              natureLocation: {
-                lower: false,
-                middle: false,
-                upper: false,
-                [k]: true,
-              },
+              addressProof: { ...f.addressProof, [k]: !f.addressProof[k] }
             }))
           }
         >
           <View
             style={[
               styles.checkbox,
-              form.natureLocation[k] && styles.checked,
+              form.addressProof[k] && styles.checked,
             ]}
           />
-          <Text>{k.toUpperCase()}</Text>
+          <Text>
+            {k === 'voterId' 
+              ? 'Voter ID / Other' 
+              : k.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())
+            }
+          </Text>
         </TouchableOpacity>
       ))}
 
@@ -337,12 +363,21 @@ export default function MatrixPVFormScreen() {
 }
 
 const styles = StyleSheet.create({
-  headerTitle: { fontSize: 20, fontWeight: "bold", marginBottom: 20, textAlign: "center" },
-  input: { borderWidth: 1, borderColor: "#ccc", padding: 10, marginBottom: 12, borderRadius: 5 },
+  header: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
+  backButton: { marginRight: 15 },
+  headerTitle: { fontSize: 20, fontWeight: "bold", textAlign: "center", flex: 1 },
+  inputRow: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#ccc', borderRadius: 5, marginBottom: 12 },
+  input: { flex: 1, padding: 10 },
+  icon: { paddingHorizontal: 10 },
+
   title: { fontSize: 16, fontWeight: "bold", marginTop: 10, marginBottom: 10 },
   checkboxRow: { flexDirection: "row", alignItems: "center", marginBottom: 10 },
   checkbox: { width: 20, height: 20, borderWidth: 1, marginRight: 10 },
   checked: { backgroundColor: "#000" },
+  radioBtn: { padding: 10, borderWidth: 1, borderColor: '#ccc', borderRadius: 5 },
+  radioBtnSelected: { backgroundColor: '#007AFF', borderColor: '#007AFF' },
+  radioText: { color: '#000' },
+  radioTextSelected: { color: '#fff' },
   sig: { height: 100, borderWidth: 1, marginBottom: 20, justifyContent: "center", alignItems: "center" },
   sigImg: { width: "100%", height: "100%", resizeMode: "contain" },
   submit: { backgroundColor: "#007AFF", padding: 15, alignItems: "center", borderRadius: 5 },

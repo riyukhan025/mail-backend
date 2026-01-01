@@ -10,8 +10,10 @@ import {
   Image,
   ImageBackground,
   KeyboardAvoidingView,
+  LogBox,
   Modal,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -25,10 +27,22 @@ import { logErrorToFirebase } from "./errorUtils";
 
 const AnimatedBG = Animated.createAnimatedComponent(ImageBackground);
 
+// Suppress Expo Go SDK 53 notification error
+LogBox.ignoreLogs([
+  "expo-notifications: Android Push notifications (remote notifications) functionality provided by expo-notifications was removed",
+]);
+
 export default function AuthScreen({ navigation }) {
   const { login } = useContext(AuthContext);
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
+  
+  // Signup States
+  const [isSignup, setIsSignup] = useState(false);
+  const [name, setName] = useState("");
+  const [city, setCity] = useState("");
+  const [pincode, setPincode] = useState("");
+  const [bloodGroup, setBloodGroup] = useState("");
 
   const [otpInput, setOtpInput] = useState("");
   const [otpPhase, setOtpPhase] = useState(false);
@@ -129,6 +143,52 @@ export default function AuthScreen({ navigation }) {
     } catch (e) {
       logErrorToFirebase(e, "Login");
       showMessage("Login failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /* ---------- SIGNUP ---------- */
+  const handleSignup = async () => {
+    if (!name || !identifier || !password || !city || !pincode || !bloodGroup) {
+      return showMessage("Please fill all fields");
+    }
+
+    try {
+      setLoading(true);
+      // Create user in Firebase Auth
+      const userCredential = await firebase.auth().createUserWithEmailAndPassword(identifier, password);
+      const uid = userCredential.user.uid;
+
+      // Generate 4-digit Unique ID
+      const uniqueId = Math.floor(1000 + Math.random() * 9000).toString();
+
+      const userData = {
+        name,
+        email: identifier,
+        password, // Note: Storing password in DB is generally not recommended but maintained for consistency with existing login logic
+        city,
+        pincode,
+        bloodGroup,
+        uniqueId,
+        role: "member",
+        createdAt: Date.now(),
+        photoURL: ""
+      };
+
+      // Save to Realtime Database
+      await firebase.database().ref(`users/${uid}`).set(userData);
+
+      if (Platform.OS === 'web') {
+        alert(`Signup Successful! Your Unique ID is ${uniqueId}`);
+      } else {
+        Alert.alert("Signup Successful", `Your Unique ID is ${uniqueId}`);
+      }
+      
+      setIsSignup(false);
+    } catch (error) {
+      logErrorToFirebase(error, "Signup");
+      showMessage(error.message);
     } finally {
       setLoading(false);
     }
@@ -238,7 +298,7 @@ export default function AuthScreen({ navigation }) {
       : "Verify OTP"
     : loading
     ? "Generating OTP..."
-    : "Login";
+    : (isSignup ? "Sign Up" : "Login");
 
   const buttonColor = otpPhase
     ? loading
@@ -248,7 +308,7 @@ export default function AuthScreen({ navigation }) {
     ? "#ca8a04"
     : "#facc15";
 
-  const buttonAction = otpPhase ? handleVerifyOtp : handleLogin;
+  const buttonAction = otpPhase ? handleVerifyOtp : (isSignup ? handleSignup : handleLogin);
 
   return (
     <View style={{ flex: 1 }}>
@@ -267,20 +327,67 @@ export default function AuthScreen({ navigation }) {
               source={require("../assets/logo.png")}
               style={styles.logo}
             />
+            <ScrollView showsVerticalScrollIndicator={false} style={{ flexShrink: 1 }}>
 
             <Text style={styles.header}>
-              {otpPhase ? "Verify OTP" : "Login"}
+              {otpPhase ? "Verify OTP" : (isSignup ? "Sign Up" : "Login")}
             </Text>
 
             {message ? <Text style={styles.message}>{message}</Text> : null}
 
             {!otpPhase && (
               <>
+                {isSignup && (
+                  <>
+                    <View style={styles.inputRow}>
+                      <Ionicons name="person-outline" size={20} color="#fff" />
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Full Name"
+                        placeholderTextColor="#ccc"
+                        value={name}
+                        onChangeText={setName}
+                      />
+                    </View>
+                    <View style={styles.inputRow}>
+                      <Ionicons name="location-outline" size={20} color="#fff" />
+                      <TextInput
+                        style={styles.input}
+                        placeholder="City"
+                        placeholderTextColor="#ccc"
+                        value={city}
+                        onChangeText={setCity}
+                      />
+                    </View>
+                    <View style={styles.inputRow}>
+                      <Ionicons name="map-outline" size={20} color="#fff" />
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Pincode"
+                        placeholderTextColor="#ccc"
+                        value={pincode}
+                        onChangeText={setPincode}
+                        keyboardType="numeric"
+                      />
+                    </View>
+                    <View style={styles.inputRow}>
+                      <Ionicons name="water-outline" size={20} color="#fff" />
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Blood Group"
+                        placeholderTextColor="#ccc"
+                        value={bloodGroup}
+                        onChangeText={setBloodGroup}
+                      />
+                    </View>
+                  </>
+                )}
+
                 <View style={styles.inputRow}>
-                  <Ionicons name="key-outline" size={20} color="#fff" />
+                  <Ionicons name={isSignup ? "mail-outline" : "key-outline"} size={20} color="#fff" />
                   <TextInput
                     style={styles.input}
-                    placeholder="Unique ID or Email"
+                    placeholder={isSignup ? "Email Address" : "Unique ID or Email"}
                     placeholderTextColor="#ccc"
                     value={identifier}
                     onChangeText={setIdentifier}
@@ -308,24 +415,6 @@ export default function AuthScreen({ navigation }) {
                   </TouchableOpacity>
                 </View>
 
-                <View style={styles.extraActions}>
-                  <TouchableOpacity
-                    onPress={() => navigation.navigate("ForgotPassword")}
-                    style={styles.forgotBtn}
-                  >
-                    <Text style={styles.forgotText}>Forgot Password?</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={handleRetrieveUniqueId}
-                    style={styles.retrieveBtn}
-                  >
-                    <Ionicons name="finger-print" size={16} color="#facc15" />
-                    <Text style={styles.retrieveText}>
-                      Retrieve Unique ID
-                    </Text>
-                  </TouchableOpacity>
-                </View>
               </>
             )}
 
@@ -373,6 +462,37 @@ export default function AuthScreen({ navigation }) {
             >
               <Text style={styles.buttonText}>{buttonText}</Text>
             </TouchableOpacity>
+
+            {!otpPhase && !isSignup && (
+              <View style={styles.extraActions}>
+                <TouchableOpacity
+                  onPress={handleRetrieveUniqueId}
+                  style={styles.retrieveBtn}
+                >
+                  <Ionicons name="finger-print" size={16} color="#facc15" />
+                  <Text style={styles.retrieveText}>
+                    Retrieve Unique ID
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => navigation.navigate("ForgotPassword")}
+                  style={styles.forgotBtn}
+                >
+                  <Text style={styles.forgotText}>Forgot Password?</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {!otpPhase && (
+              <TouchableOpacity onPress={() => setIsSignup(!isSignup)} style={{ marginTop: 15, marginBottom: 20 }}>
+                <Text style={{ color: "#fff", textAlign: "center", textDecorationLine: "underline" }}>
+                  {isSignup ? "Already have an account? Login" : "New User? Sign Up"}
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            </ScrollView>
           </BlurView>
         </KeyboardAvoidingView>
       </AnimatedBG>
@@ -439,19 +559,20 @@ const styles = StyleSheet.create({
     padding: 20,
     width: "100%",
     maxWidth: 400,
+    maxHeight: "85%",
   },
   logo: {
-    width: 90,
-    height: 90,
+    width: 50,
+    height: 50,
     alignSelf: "center",
-    marginBottom: 10,
+    marginBottom: 5,
   },
   header: {
     fontSize: 22,
     fontWeight: "700",
     color: "#fff",
     textAlign: "center",
-    marginBottom: 12,
+    marginBottom: 5,
   },
   message: {
     textAlign: "center",
@@ -463,9 +584,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "rgba(255,255,255,0.15)",
     borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    marginBottom: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 6,
   },
   input: {
     flex: 1,
@@ -486,7 +607,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   button: {
-    padding: 16,
+    padding: 12,
     borderRadius: 14,
     marginTop: 10,
   },
@@ -498,10 +619,11 @@ const styles = StyleSheet.create({
   },
   extraActions: {
     alignItems: "center",
-    marginBottom: 10,
+    marginTop: 15,
   },
   forgotBtn: {
-    marginBottom: 10,
+    marginTop: 10,
+    marginBottom: 5,
   },
   forgotText: {
     color: "#ccc",

@@ -99,6 +99,7 @@ export default function CaseDetailScreen({ navigation, route }) {
     const [formCompleted, setFormCompleted] = useState(false);
     const cameraRef = useRef(null); // Keep for other potential uses, though not for capture here
     const [isClosing, setIsClosing] = useState(false);
+    const [isUploadingPhotos, setIsUploadingPhotos] = useState(false);
 
     const [optionalCategories, setOptionalCategories] = useState([]);
     const [addPhotoModalVisible, setAddPhotoModalVisible] = useState(false);
@@ -107,6 +108,23 @@ export default function CaseDetailScreen({ navigation, route }) {
     const displayStatus = role === "member" && status === "assigned" ? "open" : status;
     console.log(`[RENDER] status=${status}, role=${role}, displayStatus=${displayStatus}`);
     // --- NEW: Calculate total photos and if all requirements are met ---
+
+    // Robust check for "RA Associates"
+    const cleanString = (str) => (str || "").toLowerCase().replace(/[\s.-]/g, '');
+    const companyName = cleanString(caseData?.company);
+    const clientName = cleanString(caseData?.client);
+    const isRAAssociates = companyName.includes("raassociates") || clientName.includes("raassociates");
+
+    // --- NEW: Explicit check for Close Button visibility ---
+    const shouldShowCloseButton = () => {
+        if (displayStatus !== 'open' && !forceEdit) return false;
+        if (forceClose) return true;
+        // For RA Associates, only photos are needed
+        if (isRAAssociates) return allRequirementsMet;
+        // For all other companies, photos AND form are needed
+        return allRequirementsMet && formCompleted;
+    };
+
 
     // If user object is passed, we are authenticated.
     useEffect(() => {
@@ -269,6 +287,31 @@ export default function CaseDetailScreen({ navigation, route }) {
         );
     };
 
+    // --- NEW: Helper to upload single image to Cloudinary ---
+    const uploadImageToCloudinary = async (uri, category, index) => {
+        try {
+            const formData = new FormData();
+            formData.append("file", { uri: uri, type: "image/jpeg", name: `${category}_${Date.now()}_${index}.jpg` });
+            formData.append("upload_preset", UPLOAD_PRESET);
+            formData.append("folder", `cases/${caseData.RefNo || caseId}`);
+
+            const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
+                method: "POST",
+                body: formData,
+            });
+
+            const data = await response.json();
+            if (data.secure_url) {
+                return data.secure_url;
+            } else {
+                throw new Error(data.error?.message || "Upload failed");
+            }
+        } catch (error) {
+            console.error("Cloudinary upload error:", error);
+            return null;
+        }
+    };
+
     // Pick image
     const pickImage = async (category) => {
         if (!category) return Alert.alert("Error", "Photo category not specified.");
@@ -290,6 +333,7 @@ export default function CaseDetailScreen({ navigation, route }) {
                 const newPhotoAssets = result.assets || [result];
                 const compressedPhotos = [];
 
+                setIsUploadingPhotos(true);
                 // --- NEW: Compress gallery images before adding them ---
                 for (const asset of newPhotoAssets) {
                     console.log(`[OPTIMIZATION] Compressing gallery image: ${asset.uri}`);
@@ -301,13 +345,38 @@ export default function CaseDetailScreen({ navigation, route }) {
                     compressedPhotos.push({ uri: manipulatedImage.uri });
                 }
 
-                setPhotos(prev => {
-                    const updatedCategory = [...(prev[category] || []), ...compressedPhotos];
-                    return { ...prev, [category]: updatedCategory };
-                });
+                // --- NEW: Immediate Upload to Cloudinary & Firebase Update ---
+                const currentCategoryPhotos = photos[category] || [];
+                const newUploadedPhotos = [];
+
+                for (let i = 0; i < compressedPhotos.length; i++) {
+                    const localUri = compressedPhotos[i].uri;
+                    const cloudUrl = await uploadImageToCloudinary(localUri, category, i);
+                    
+                    if (cloudUrl) {
+                        newUploadedPhotos.push({
+                            uri: cloudUrl,
+                            timestamp: new Date().toLocaleString(),
+                            geotag: null, // Gallery images might not have geotag extracted here easily without Exif
+                            address: "Gallery Upload",
+                            category: category,
+                            id: `${Date.now()}-${Math.random()}`
+                        });
+                    }
+                }
+
+                if (newUploadedPhotos.length > 0) {
+                    const updatedList = [...currentCategoryPhotos, ...newUploadedPhotos];
+                    await firebase.database().ref(`cases/${caseId}/photosFolder/${category}`).set(updatedList);
+                    console.log(`[UPLOAD] Saved ${newUploadedPhotos.length} photos to Firebase for ${category}`);
+                } else {
+                    Alert.alert("Upload Failed", "Could not upload photos to server.");
+                }
+                setIsUploadingPhotos(false);
             }
         } catch (error) {
             console.log("❌ Image pick error:", error);
+            setIsUploadingPhotos(false);
         }
     };
 
@@ -335,16 +404,41 @@ export default function CaseDetailScreen({ navigation, route }) {
             category,
             onPhotosCapture: (newPhotos) => {
                 console.log('[CaseDetailScreen] Received photos from callback:', newPhotos);
-                setPhotos(prevPhotos => {
-                    const updated = { ...prevPhotos };
-                    for (const photo of newPhotos) {
-                        const cat = photo.category;
-                        if (!updated[cat]) updated[cat] = [];
-                        updated[cat].push(photo);
+                
+                // --- NEW: Immediate Upload for Camera Photos ---
+                (async () => {
+                    setIsUploadingPhotos(true);
+                    const photosByCat = {};
+                    
+                    // Group by category first
+                    newPhotos.forEach(p => {
+                        if (!photosByCat[p.category]) photosByCat[p.category] = [];
+                        photosByCat[p.category].push(p);
+                    });
+
+                    // Upload and save per category
+                    for (const cat in photosByCat) {
+                        const currentList = photos[cat] || [];
+                        // Camera photos are already uploaded to Cloudinary in CameraGPSScreen? 
+                        // Wait, CameraGPSScreen usually returns local URIs. 
+                        // Assuming they are local, we upload them here.
+                        
+                        const uploadedList = [];
+                        for (let i = 0; i < photosByCat[cat].length; i++) {
+                            const p = photosByCat[cat][i];
+                            const cloudUrl = await uploadImageToCloudinary(p.uri, cat, i);
+                            if (cloudUrl) {
+                                uploadedList.push({ ...p, uri: cloudUrl });
+                            }
+                        }
+
+                        if (uploadedList.length > 0) {
+                            const finalList = [...currentList, ...uploadedList];
+                            await firebase.database().ref(`cases/${caseId}/photosFolder/${cat}`).set(finalList);
+                        }
                     }
-                    console.log('[CaseDetailScreen] ✅ Photos state updated via callback:', updated);
-                    return updated;
-                });
+                    setIsUploadingPhotos(false);
+                })();
             }
         });
     };
@@ -358,13 +452,15 @@ const handleCloseCase = async () => {
     console.log("🔒 Closing case...");
     setIsClosing(true);
 
-    if (!formCompleted) {
+    if (!formCompleted && !isRAAssociates) {
         Alert.alert("Error", "Please fill in the form before closing the case.");
+        setIsClosing(false);
         return;
     }
 
     if (!allRequirementsMet) {
         Alert.alert("Error", "Please complete the photo checklist before closing the case.");
+        setIsClosing(false);
         return;
     }
 
@@ -511,10 +607,19 @@ const handleCloseCase = async () => {
                 console.log(`[PDF-LOG]   - Adding photo ${i + 1}/${photosInCategory.length} (Total: ${totalPhotosAdded}). URI: ${photo.uri}`);
 
                 try {
-                    const imgResponse = await fetch(photo.uri);
+                    // Optimize Cloudinary images to reduce PDF size
+                    let imageUri = photo.uri;
+                    let isPng = imageUri.toLowerCase().endsWith('.png');
+
+                    if (imageUri.includes("cloudinary.com") && imageUri.includes("/upload/")) {
+                        imageUri = imageUri.replace("/upload/", "/upload/w_800,q_60,f_jpg/");
+                        isPng = false;
+                    }
+
+                    const imgResponse = await fetch(imageUri);
                     const imgBytes = await imgResponse.arrayBuffer();
 
-                    const image = photo.uri.toLowerCase().endsWith('.png') ? await pdfDoc.embedPng(imgBytes) : await pdfDoc.embedJpg(imgBytes);
+                    const image = isPng ? await pdfDoc.embedPng(imgBytes) : await pdfDoc.embedJpg(imgBytes);
                     // Reduce max height to leave space for heading and metadata
                     const dims = image.scaleToFit(page.getWidth() - 100, 300); // Reduced from 350
 
@@ -789,6 +894,17 @@ const handleCloseCase = async () => {
         setAddPhotoModalVisible(false);
     };
 
+    // --- NEW: WhatsApp Query Handler ---
+    const handleQuery = () => {
+        const adminPhoneNumber = "919962873989"; // Country code + number
+        const text = `Client: ${caseData.client || caseData.company || ''}\nRef No: ${caseData.RefNo || caseId}\nQuery: `;
+        const url = `whatsapp://send?phone=${adminPhoneNumber}&text=${encodeURIComponent(text)}`;
+        Linking.openURL(url).catch(() => {
+             // Fallback for web or if WhatsApp is not installed
+             Linking.openURL(`https://wa.me/${adminPhoneNumber}?text=${encodeURIComponent(text)}`);
+        });
+    };
+
 
 
     if (!authChecked || !caseData) {
@@ -824,8 +940,8 @@ const handleCloseCase = async () => {
                     <Ionicons name="arrow-back" size={24} color="#fff" />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>Case Details</Text>
-                <TouchableOpacity onPress={() => setDetailsModalVisible(true)} style={styles.iconButton}>
-                    <Ionicons name="ellipsis-vertical" size={24} color="#fff" />
+                <TouchableOpacity onPress={handleQuery} style={styles.iconButton}>
+                    <Ionicons name="help-circle-outline" size={24} color="#fff" />
                 </TouchableOpacity>
             </View>
 
@@ -923,6 +1039,13 @@ const handleCloseCase = async () => {
                                     </TouchableOpacity>
                                 )}
                             </View>
+
+                            {isUploadingPhotos && (
+                                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+                                    <ActivityIndicator size="small" color="#fff" />
+                                    <Text style={{ color: '#ccc', marginLeft: 8, fontSize: 12 }}>Uploading photos...</Text>
+                                </View>
+                            )}
                             
                             {photos[req.id]?.length > 0 ? (
                                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.photoScroll}>
@@ -1009,6 +1132,8 @@ const handleCloseCase = async () => {
                                 // Navigate to FormScreen with selected company
                                 if (company === "Matrix") {
                                     navigation.navigate("MatrixFormScreen", { company, caseId });
+                                } else if (company === "DHI") {
+                                    navigation.navigate("DHIFormScreen", { company, caseId });
                                 } else {
                                     navigation.navigate("FormScreen", { company, caseId });
                                 }
@@ -1065,15 +1190,21 @@ const handleCloseCase = async () => {
                                     const rawClient = caseData?.client;
                                     const isMatrix = (rawCompany || "").toLowerCase().trim() === "matrix" || 
                                                      (rawClient || "").toLowerCase().trim() === "matrix";
+                                    const isDHI = (rawCompany || "").toLowerCase().trim() === "dhi" || 
+                                                     (rawClient || "").toLowerCase().trim() === "dhi";
 
                                     console.log("[CaseDetailScreen] Redirect Debug:");
                                     console.log(" - caseData.company:", rawCompany);
                                     console.log(" - caseData.client:", rawClient);
                                     console.log(" - Is Matrix detected:", isMatrix);
+                                    console.log(" - Is DHI detected:", isDHI);
 
                                     if (isMatrix) {
                                         console.log(" -> Navigating to MatrixFormScreen");
                                         navigation.navigate("MatrixFormScreen", { caseId, company: "Matrix" });
+                                    } else if (isDHI) {
+                                        console.log(" -> Navigating to DHIFormScreen");
+                                        navigation.navigate("DHIFormScreen", { caseId, company: "DHI" });
                                     } else {
                                         console.log(" -> Navigating to FormScreen (Default)");
                                         navigation.navigate("FormScreen", { caseId, company: caseData?.company || caseData?.client });
@@ -1087,7 +1218,7 @@ const handleCloseCase = async () => {
                             </LinearGradient>
                         </TouchableOpacity>
 
-                        {(allRequirementsMet && formCompleted || forceClose) && (displayStatus === 'open' || forceEdit) && (
+                        {shouldShowCloseButton() && (
                              <TouchableOpacity style={styles.bottomBtn} onPress={handleCloseCase} disabled={isClosing}>
                                 <LinearGradient colors={["#11998e", "#38ef7d"]} style={styles.bottomBtnGradient}>
                                     {isClosing ? <ActivityIndicator color="#fff" /> : <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />}
