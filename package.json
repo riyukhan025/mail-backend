@@ -2,15 +2,15 @@
   "name": "finalapp",
   "main": "node_modules/expo/AppEntry.js",
   "version": "1.0.0",
-"scripts": {
-  "start": "expo start",
-  "dev": "expo start",
-  "build": "expo export --platform web",
-  "reset-project": "node ./scripts/reset-project.js",
-  "android": "expo start --android",
-  "ios": "expo start --ios",
-  "lint": "expo lint"
-},
+  "scripts": {
+    "start": "expo start",
+    "dev": "expo start",
+    "build": "expo export --platform web",
+    "reset-project": "node ./scripts/reset-project.js",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "lint": "expo lint"
+  },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
     "@react-native-async-storage/async-storage": "^2.2.0",
@@ -38,6 +38,7 @@
     "expo-linear-gradient": "~15.0.8",
     "expo-linking": "~8.0.11",
     "expo-location": "~19.0.8",
+    "expo-mail-composer": "^15.0.8",
     "expo-notifications": "~0.32.15",
     "expo-print": "~15.0.8",
     "expo-router": "~6.0.21",
