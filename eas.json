@@ -17,6 +17,9 @@
       "distribution": "store",
       "android": {
         "buildType": "aab"
+      },
+      "hooks": {
+        "postInstall": "eas-hooks/eas-build-pre-install.sh"
       }
     }
   },
