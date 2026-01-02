@@ -1,10 +1,6 @@
 services:
-  - type: web
+  - type: static_site
     name: finalapp-web
-    env: static
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist
-    envVars:
-      - key: NODE_ENV
-        value: production
 
