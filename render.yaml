@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: finalapp-web
+    env: static
+    buildCommand: npm run build
+    staticPublishPath: ./dist
+    routes:
+      - path: /*
+        matchType: prefix
+        dest: /index.html
