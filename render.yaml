@@ -2,9 +2,9 @@ services:
   - type: web
     name: finalapp-web
     env: static
-    buildCommand: npm run build
+    buildCommand: npm install && npm run build
     staticPublishPath: ./dist
-    routes:
-      - path: /*
-        matchType: prefix
-        dest: /index.html
+    envVars:
+      - key: NODE_ENV
+        value: production
+
