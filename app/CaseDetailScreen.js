@@ -766,8 +766,9 @@ const handleCloseCase = async () => {
                 formData.append('upload_preset', UPLOAD_PRESET);
                 formData.append('folder', `cases/${caseData.RefNo || caseId}`);
                 formData.append('public_id', uniquePdfPublicId);
+                formData.append('resource_type', 'raw');
 
-                const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/upload`;
+                const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/raw/upload`;
                 console.log('[PDF-UPLOAD] Uploading to:', uploadUrl);
                 
                 const resp = await Promise.race([

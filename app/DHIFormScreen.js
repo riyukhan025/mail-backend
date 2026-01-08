@@ -1,17 +1,17 @@
+import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    Image,
-    Modal,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  Image,
+  Modal,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
 
 import { decode as atob } from "base-64";
 import { Asset } from "expo-asset";
@@ -56,8 +56,9 @@ async function uploadPdfToCloudinary(pdfUri, caseId) {
   });
   formData.append('upload_preset', UPLOAD_PRESET);
   formData.append('folder', `cases/${caseId}`);
+  formData.append('resource_type', 'raw');
 
-  const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/upload`, { method: 'POST', body: formData });
+  const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/raw/upload`, { method: 'POST', body: formData });
   const data = await response.json();
   return data.secure_url;
 }

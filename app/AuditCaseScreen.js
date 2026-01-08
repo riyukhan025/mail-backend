@@ -1,6 +1,4 @@
 import { Ionicons } from "@expo/vector-icons";
-import { encode as btoa } from 'base-64';
-import Constants from "expo-constants";
 import * as FileSystem from "expo-file-system/legacy";
 import { LinearGradient } from "expo-linear-gradient";
 import * as MailComposer from "expo-mail-composer";
@@ -120,193 +118,97 @@ Thank you,
 Spacesolutions Team
       `.trim();
 
-      // --- ATTEMPT 1: GMAIL API (Background Send - Works on Web & Native) ---
-      try {
-        // Helper to get env vars from various sources (process.env, EXPO_PUBLIC_, or app.config.js extra)
-        // Note: Accessing EXPO_PUBLIC_ variables explicitly is required for the bundler to inline them.
-        const GMAIL_CLIENT_ID = process.env.EXPO_PUBLIC_GMAIL_CLIENT_ID || 
-                                Constants.expoConfig?.extra?.GMAIL_CLIENT_ID || 
-                                Constants.manifest?.extra?.GMAIL_CLIENT_ID;
-        const GMAIL_CLIENT_SECRET = process.env.EXPO_PUBLIC_GMAIL_CLIENT_SECRET || 
-                                    Constants.expoConfig?.extra?.GMAIL_CLIENT_SECRET || 
-                                    Constants.manifest?.extra?.GMAIL_CLIENT_SECRET;
-        const GMAIL_REFRESH_TOKEN = process.env.EXPO_PUBLIC_GMAIL_REFRESH_TOKEN || 
-                                    Constants.expoConfig?.extra?.GMAIL_REFRESH_TOKEN || 
-                                    Constants.manifest?.extra?.GMAIL_REFRESH_TOKEN;
+      // --- WEB HANDLING ---
+      if (Platform.OS === 'web') {
+        emailBody += `\n\nAttachments:\n`;
+        if (caseData.photosFolderLink) emailBody += `Report: ${caseData.photosFolderLink}\n`;
+        if (caseData.filledForm?.url) emailBody += `Form: ${caseData.filledForm.url}\n`;
 
-        console.log(`[Gmail API] Credentials Check: ID=${!!GMAIL_CLIENT_ID}, Secret=${!!GMAIL_CLIENT_SECRET}, Token=${!!GMAIL_REFRESH_TOKEN}`);
-
-        if (GMAIL_CLIENT_ID && GMAIL_CLIENT_SECRET && GMAIL_REFRESH_TOKEN) {
-            console.log("🔄 Refreshing Gmail OAuth token...");
-            const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: new URLSearchParams({
-                client_id: GMAIL_CLIENT_ID,
-                client_secret: GMAIL_CLIENT_SECRET,
-                refresh_token: GMAIL_REFRESH_TOKEN,
-                grant_type: 'refresh_token',
-              }).toString(),
-            });
-
-            const tokenData = await tokenRes.json();
-            if (!tokenData.access_token) {
-              throw new Error("Failed to refresh Gmail token: " + (tokenData.error || "Unknown error"));
-            }
-
-            console.log("✅ Gmail token refreshed successfully");
-
-            // Fetch Attachments as Base64
-            const attachments = [];
-            const fetchAsBase64 = async (url, filename) => {
-              try {
-                console.log(`📥 Fetching attachment: ${filename}`);
-                const resp = await fetch(url);
-                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                const blob = await resp.blob();
-                return new Promise((resolve, reject) => {
-                  const reader = new FileReader();
-                  reader.onloadend = () => resolve({ filename, data: reader.result.split(',')[1] });
-                  reader.onerror = reject;
-                  reader.readAsDataURL(blob);
-                });
-              } catch (e) {
-                console.warn(`⚠️ Failed to fetch ${filename}:`, e.message);
-                return null;
-              }
-            };
-
-            if (caseData.photosFolderLink) {
-              const att = await fetchAsBase64(caseData.photosFolderLink, `CaseReport_${caseData.RefNo || caseId}.pdf`);
-              if (att) attachments.push(att);
-            }
-            if (caseData.filledForm?.url) {
-              const att = await fetchAsBase64(caseData.filledForm.url, `FilledForm_${caseData.RefNo || caseId}.pdf`);
-              if (att) attachments.push(att);
-            }
-
-            // Construct MIME Message
-            const boundary = "foo_bar_baz";
-            let rawMessage = [
-              `MIME-Version: 1.0`,
-              `To: ${selectedTo}`,
-              selectedCc.length > 0 ? `Cc: ${selectedCc.join(', ')}` : null,
-              `Subject: Case Approved: ${caseData.RefNo || caseId}`,
-              `Content-Type: multipart/mixed; boundary="${boundary}"`,
-              "",
-              `--${boundary}`,
-              `Content-Type: text/plain; charset="UTF-8"`,
-              `Content-Transfer-Encoding: 8bit`,
-              "",
-              emailBody,
-              ""
-            ].filter(Boolean).join("\r\n");
-
-            attachments.forEach(att => {
-              rawMessage += `\r\n--${boundary}\r\n`;
-              rawMessage += `Content-Type: application/pdf; name="${att.filename}"\r\n`;
-              rawMessage += `Content-Disposition: attachment; filename="${att.filename}"\r\n`;
-              rawMessage += `Content-Transfer-Encoding: base64\r\n\r\n`;
-              rawMessage += att.data + `\r\n`;
-            });
-
-            rawMessage += `\r\n--${boundary}--`;
-
-            // Send via Gmail API
-            console.log("📧 Sending email via Gmail API...");
-            // Ensure UTF-8 characters are handled correctly in Base64
-            const raw = btoa(unescape(encodeURIComponent(rawMessage))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-            
-            const sendRes = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${tokenData.access_token}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({ raw }),
-            });
-
-            if (!sendRes.ok) {
-              const errData = await sendRes.json();
-              throw new Error("Gmail API Error: " + (errData.error?.message || sendRes.statusText));
-            }
-
-            console.log("✅ Email sent successfully via Gmail API");
-            await completeCase();
-            setIsSending(false);
-            return;
-        } else {
-            throw new Error("Gmail credentials missing. Ensure EXPO_PUBLIC_GMAIL_CLIENT_ID etc. are set in .env");
+        const subject = `Case Approved: ${caseData.RefNo || caseId}`;
+        
+        // Build params array to avoid empty 'cc=' which can confuse some mail clients
+        const params = [];
+        if (selectedCc && selectedCc.length > 0) {
+            params.push(`cc=${encodeURIComponent(selectedCc.join(','))}`);
         }
-      } catch (apiError) {
-        console.warn("⚠️ Gmail API failed, falling back to native/web mailer:", apiError.message);
-        // Fall through to existing logic
+        params.push(`subject=${encodeURIComponent(subject)}`);
+        params.push(`body=${encodeURIComponent(emailBody)}`);
+
+        const mailtoUrl = `mailto:${selectedTo}?${params.join('&')}`;
+        console.log("🔗 Opening mailto link on Web...");
+        try {
+            await Linking.openURL(mailtoUrl);
+            Alert.alert(
+                "Email Action",
+                "We attempted to open your email client. If it didn't open, please ensure you have a default mail app configured.\n\nDid you send the email?",
+                [
+                    { text: "No", style: "cancel" },
+                    { text: "Yes, Mark Completed", onPress: completeCase }
+                ]
+            );
+        } catch (err) {
+            console.error("Failed to open mailto:", err);
+            Alert.alert("Error", "Could not open email client. Please check your device settings.");
+        }
+        setIsSending(false);
+        return;
       }
 
-        if (Platform.OS === "web") {
-          // --- WEB FALLBACK (Gmail Web Compose) ---
-          const subject = `Case Approved: ${caseData.RefNo || caseId}`;
-          const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(selectedTo)}&cc=${encodeURIComponent(selectedCc.join(','))}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(emailBody)}`;
-          Linking.openURL(gmailUrl);
-          setIsSending(false);
-          return;
-        } else {
-          // --- NATIVE IMPLEMENTATION (MAIL COMPOSER) ---
-        const isAvailable = await MailComposer.isAvailableAsync();
-        if (!isAvailable) {
-          Alert.alert("Error", "Mail services are not available on this device.");
-          setIsSending(false);
-          return;
-        }
+      // --- NATIVE MAIL COMPOSER IMPLEMENTATION ---
+      const isAvailable = await MailComposer.isAvailableAsync();
+      if (!isAvailable) {
+        Alert.alert("Error", "Mail services are not available on this device.");
+        setIsSending(false);
+        return;
+      }
 
-        const attachments = [];
-        const downloadToCache = async (url, fileName) => {
-          if (!url) return null;
+      const attachments = [];
+      const downloadToCache = async (url, fileName) => {
+        if (!url) return null;
+        try {
           const fileUri = FileSystem.cacheDirectory + fileName;
-          try {
-            const { uri } = await FileSystem.downloadAsync(url, fileUri);
-            return uri;
-          } catch (e) {
-            console.error("Download error:", e);
-            return null;
-          }
-        };
-
-        const safeRef = (caseData.RefNo || caseId).replace(/[^a-zA-Z0-9-_]/g, '_');
-
-        if (caseData.photosFolderLink) {
-          const uri = await downloadToCache(caseData.photosFolderLink, `CaseReport_${safeRef}.pdf`);
-          if (uri) attachments.push(uri);
+          const { uri } = await FileSystem.downloadAsync(url, fileUri);
+          return uri;
+        } catch (e) {
+          console.warn("Failed to download attachment:", e);
+          return null;
         }
-        if (caseData.filledForm?.url) {
-          const uri = await downloadToCache(caseData.filledForm.url, `FilledForm_${safeRef}.pdf`);
-          if (uri) attachments.push(uri);
-        }
+      };
 
-        const result = await MailComposer.composeAsync({
-          recipients: [selectedTo],
-          ccRecipients: selectedCc,
-          subject: `Case Approved: ${caseData.RefNo || caseId}`,
-          body: emailBody,
-          attachments: attachments,
-        });
+      console.log("📥 Downloading PDFs for attachment...");
+      if (caseData.photosFolderLink) {
+        const uri = await downloadToCache(caseData.photosFolderLink, `CaseReport_${caseData.RefNo || caseId}.pdf`);
+        if (uri) attachments.push(uri);
+      }
+      if (caseData.filledForm?.url) {
+        const uri = await downloadToCache(caseData.filledForm.url, `FilledForm_${caseData.RefNo || caseId}.pdf`);
+        if (uri) attachments.push(uri);
+      }
 
-        if (result.status === 'sent') {
-          await completeCase();
-        } else if (result.status === 'undetermined' && Platform.OS === 'android') {
-          Alert.alert(
-            "Email Confirmation",
-            "The email app was opened. Did you press 'Send' and see the email leave your outbox?",
-            [
-              { text: "No, I cancelled", style: "cancel" },
-              { text: "Yes, I sent it", onPress: completeCase },
-            ]
-          );
-        }
-        }
+      console.log("📧 Opening Mail Composer...");
+      const result = await MailComposer.composeAsync({
+        recipients: [selectedTo],
+        ccRecipients: selectedCc,
+        subject: `Case Approved: ${caseData.RefNo || caseId}`,
+        body: emailBody,
+        attachments: attachments,
+      });
+
+      if (result.status === 'sent') {
+        await completeCase();
+      } else {
+        Alert.alert(
+          "Email Status",
+          "Did you send the email successfully?",
+          [
+            { text: "No", style: "cancel" },
+            { text: "Yes", onPress: completeCase }
+          ]
+        );
+      }
     } catch (error) {
-      console.error("Email Error:", error);
-      Alert.alert("Error", "Failed to process email: " + error.message);
+      console.error("MailComposer Error:", error);
+      Alert.alert("Error", "Failed to open email app: " + error.message);
     } finally {
       setIsSending(false);
     }

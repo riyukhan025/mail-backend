@@ -94,12 +94,17 @@ async function uploadPdfToCloudinary(pdfUri, caseId) {
   });
   formData.append('upload_preset', UPLOAD_PRESET);
   formData.append('folder', `cases/${caseId}`);
+  formData.append('resource_type', 'raw');
 
-  const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/upload`, { method: 'POST', body: formData });
+  const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/raw/upload`, { method: 'POST', body: formData });
   const data = await response.json();
+
+  if (data.error) {
+    throw new Error(data.error.message || "Cloudinary upload failed");
+  }
+
   return data.secure_url;
 }
-
 /* ================= RADIO UI ================= */
 const RadioGroup = ({ title, value, onChange, options }) => (
   <View style={styles.group}>
@@ -262,6 +267,8 @@ export default function CESFormScreen() {
       setProgressMessage("Uploading to Cloud...");
       // UPLOAD TO CLOUDINARY
       const uploadUrl = await uploadPdfToCloudinary(path, form.caseReferenceNumber);
+
+      if (!uploadUrl) throw new Error("Upload failed: No URL returned");
 
       setProgress(0.9);
       setProgressMessage("Finalizing...");
