@@ -34,19 +34,18 @@ const TEXT_FIELDS = {
   residenceStatus: "Multi_8",
   addressProofDetails: "Multi_9",
   neighbourConfirmation: "Multi_10",
-  natureLocation: "Multi_11",
-  landmark: "Multi_12",
-  policeStation: "Multi_13",
-  verificationComments: "Multi_14",
-  matrixRepNameDate: "Multi_15",
+  landmark: "Multi_11",
+  policeStation: "Multi_12",
+  verificationComments: "Multi_13",
+  matrixRepNameDate: "Multi_14",
   matrixRefNo: "Multi_16",
 };
 
 /* ✅ Address Proof Checkboxes */
 const CHECKBOX_FIELDS = {
-  gasBill: "Check_1",
-  rationCard: "Check_2",
-  voterId: "Check_3",
+  Lowerclass: "Check_1",
+  middleclass: "Check_2",
+  upperclass: "Check_3",
 };
 
 /* ================= SIGNATURE POSITIONS ================= */
@@ -68,12 +67,19 @@ async function uploadPdfToCloudinary(pdfUri, identifier) {
   });
   formData.append("upload_preset", UPLOAD_PRESET);
   formData.append("folder", `cases/${identifier}`);
+  // Fix: Explicitly set resource_type to 'raw' for PDFs to avoid timeouts/errors on large files
+  formData.append("resource_type", "raw");
 
+  console.log("Uploading PDF to Cloudinary...");
   const response = await fetch(
     `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/upload`,
     { method: "POST", body: formData }
   );
   const data = await response.json();
+  if (data.error) {
+    console.error("Cloudinary Error:", data.error);
+    throw new Error(data.error.message || "Cloudinary upload failed");
+  }
   return data.secure_url;
 }
 
@@ -121,18 +127,41 @@ export default function MatrixFormScreen() {
   /* ================= LOAD DATA ================= */
   useEffect(() => {
     if (!caseId) return;
-    firebase.database().ref(`cases/${caseId}`).once("value").then(snapshot => {
-      const data = snapshot.val();
-      if (data) {
+
+    const loadData = (data) => {
+      if (!data) return;
         setForm(prev => ({
           ...prev,
           matrixRefNo: data.matrixRefNo || data.RefNo || "",
           candidateName: data.candidateName || "",
-          candidateAddressPeriod: data.address || "",
+          verificationDateTime: data.verificationDateTime || "",
+          candidateAddressPeriod: data.candidateAddressPeriod || data.address || "",
+          respondentPeriodStay: data.respondentPeriodStay || "",
+          modeOfConfirmation: data.modeOfConfirmation || "",
+          respondentName: data.respondentName || "",
+          respondentRelationship: data.respondentRelationship || "",
+          residenceStatus: data.residenceStatus || "",
+          addressProofDetails: data.addressProofDetails || "",
+          neighbourConfirmation: data.neighbourConfirmation || "",
+          landmark: data.landmark || "",
+          policeStation: data.policeStation || "",
+          verificationComments: data.verificationComments || "",
+          matrixRepNameDate: data.matrixRepNameDate || "",
+          natureLocation: data.natureLocation || "",
+          addressProof: data.addressProof || prev.addressProof,
+          respondentSignature: data.respondentSignature || "",
+          matrixRepSignature: data.matrixRepSignature || "",
         }));
-      }
-    });
-  }, [caseId]);
+    };
+
+    if (route.params?.existingData) {
+      loadData(route.params.existingData);
+    } else {
+      firebase.database().ref(`cases/${caseId}`).once("value").then(snapshot => {
+        loadData(snapshot.val());
+      });
+    }
+  }, [caseId, route.params]);
 
   /* ================= SIGNATURE HANDLER ================= */
 
@@ -156,22 +185,27 @@ export default function MatrixFormScreen() {
   const generatePdf = async () => {
     try {
       setSaving(true);
+      console.log("Starting PDF generation...");
 
       const asset = Asset.fromModule(
         require("../assets/Matrix_Form.pdf")
       );
+      console.log("Downloading asset...");
       await asset.downloadAsync();
 
+      console.log("Reading asset...");
       const base64 = await FileSystem.readAsStringAsync(asset.localUri, {
         encoding: FileSystem.EncodingType.Base64,
       });
 
+      console.log("Loading PDF document...");
       const pdfDoc = await PDFDocument.load(
         Uint8Array.from(atob(base64), c => c.charCodeAt(0))
       );
 
       const pdfForm = pdfDoc.getForm();
 
+      console.log("Filling form fields...");
       /* TEXT FIELDS */
       Object.entries(TEXT_FIELDS).forEach(([key, acro]) => {
         if (form[key]) {
@@ -194,11 +228,14 @@ export default function MatrixFormScreen() {
       });
 
       /* SIGNATURES */
+      console.log("Embedding signatures...");
       await embedSignature(pdfDoc, form.respondentSignature, SIGNATURE_COORDS.respondent);
       await embedSignature(pdfDoc, form.matrixRepSignature, SIGNATURE_COORDS.matrixRep);
 
+      console.log("Flattening PDF...");
       pdfForm.flatten();
 
+      console.log("Saving PDF...");
       const out = await pdfDoc.saveAsBase64();
       const path =
         FileSystem.documentDirectory +
@@ -208,24 +245,27 @@ export default function MatrixFormScreen() {
         encoding: FileSystem.EncodingType.Base64,
       });
 
+      console.log("Uploading PDF...");
       const uploadUrl = await uploadPdfToCloudinary(
         path,
         form.matrixRefNo || caseId
       );
 
+      console.log("Updating Firebase...");
       await firebase.database().ref(`cases/${caseId}`).update({
         formCompleted: true,
         filledForm: {
           url: uploadUrl,
           updatedAt: new Date().toISOString(),
         },
+        ...form
       });
 
       Alert.alert("Success", "Matrix PV PDF Generated & Uploaded");
       navigation.goBack();
     } catch (e) {
-      console.error(e);
-      Alert.alert("Error", "Matrix PDF generation failed");
+      console.error("PDF Generation Error:", e);
+      Alert.alert("Error", "Matrix PDF generation failed: " + e.message);
     } finally {
       setSaving(false);
     }
@@ -245,35 +285,40 @@ export default function MatrixFormScreen() {
       </View>
 
       {Object.keys(TEXT_FIELDS).map(k => {
+        const label = k.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+
         if (k === 'verificationDateTime') {
           return (
-            <View key={k} style={styles.inputRow}>
-              <TextInput
-                placeholder={k}
-                style={styles.input}
-                value={form[k]}
-                onChangeText={v => setForm({ ...form, [k]: v })}
-              />
-              <TouchableOpacity onPress={() => {
-                const now = new Date();
-                const dateTimeStr = `${now.getDate().toString().padStart(2, '0')}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getFullYear()} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-                setForm({ ...form, verificationDateTime: dateTimeStr });
-              }}>
-                <Ionicons name="time-outline" size={24} color="black" style={styles.icon} />
-              </TouchableOpacity>
+            <View key={k} style={styles.fieldContainer}>
+              <Text style={styles.label}>{label}</Text>
+              <View style={styles.inputRow}>
+                <TextInput
+                  placeholder={label}
+                  style={styles.input}
+                  value={form[k]}
+                  onChangeText={v => setForm({ ...form, [k]: v })}
+                />
+                <TouchableOpacity onPress={() => {
+                  const now = new Date();
+                  const dateTimeStr = `${now.getDate().toString().padStart(2, '0')}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getFullYear()} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+                  setForm({ ...form, verificationDateTime: dateTimeStr });
+                }}>
+                  <Ionicons name="time-outline" size={24} color="black" style={styles.icon} />
+                </TouchableOpacity>
+              </View>
             </View>
           );
         }
         return (
-          <TextInput
-            key={k}
-            placeholder={k === "neighbourConfirmation"
-              ? "Address confirmed with Neighbours? (Yes / No / NA)"
-              : k}
-            style={styles.input}
-            value={form[k]}
-            onChangeText={v => setForm({ ...form, [k]: v })}
-          />
+          <View key={k} style={styles.fieldContainer}>
+            <Text style={styles.label}>{label}</Text>
+            <TextInput
+              placeholder={k === "neighbourConfirmation" ? "Address confirmed with Neighbours? (Yes / No / NA)" : `Enter ${label}`}
+              style={styles.textInput}
+              value={form[k]}
+              onChangeText={v => setForm({ ...form, [k]: v })}
+            />
+          </View>
         );
       })}
 
@@ -366,8 +411,11 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
   backButton: { marginRight: 15 },
   headerTitle: { fontSize: 20, fontWeight: "bold", textAlign: "center", flex: 1 },
-  inputRow: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#ccc', borderRadius: 5, marginBottom: 12 },
+  fieldContainer: { marginBottom: 15 },
+  label: { fontSize: 14, fontWeight: "bold", color: "#333", marginBottom: 5 },
+  inputRow: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#ccc', borderRadius: 5, backgroundColor: '#fff' },
   input: { flex: 1, padding: 10 },
+  textInput: { borderWidth: 1, borderColor: "#ccc", borderRadius: 5, padding: 10, backgroundColor: "#fff", fontSize: 16 },
   icon: { paddingHorizontal: 10 },
 
   title: { fontSize: 16, fontWeight: "bold", marginTop: 10, marginBottom: 10 },

@@ -95,6 +95,9 @@ export default function AuditCaseScreen({ navigation, route }) {
     setIsSending(true);
     setEmailModalVisible(false);
 
+    const subject = `Case Approved: ${caseData.RefNo || caseId}`;
+    const safeRef = (caseData.RefNo || caseId).replace(/[^a-zA-Z0-9-_]/g, '_');
+
     if (!selectedTo) {
         Alert.alert("Error", "Please select a recipient email.");
         setIsSending(false);
@@ -120,37 +123,49 @@ Spacesolutions Team
 
       // --- WEB HANDLING ---
       if (Platform.OS === 'web') {
-        emailBody += `\n\nAttachments:\n`;
-        if (caseData.photosFolderLink) emailBody += `Report: ${caseData.photosFolderLink}\n`;
-        if (caseData.filledForm?.url) emailBody += `Form: ${caseData.filledForm.url}\n`;
-
-        const subject = `Case Approved: ${caseData.RefNo || caseId}`;
+        // Sequential checks to avoid popup blockers on Web
         
-        // Build params array to avoid empty 'cc=' which can confuse some mail clients
-        const params = [];
-        if (selectedCc && selectedCc.length > 0) {
-            params.push(`cc=${encodeURIComponent(selectedCc.join(','))}`);
+        // 1. Download Report
+        if (caseData.photosFolderLink) {
+            if (window.confirm("Step 1: Download Report PDF?\n\nClick OK to open it in a new tab.")) {
+                window.open(caseData.photosFolderLink, "_blank");
+            }
         }
-        params.push(`subject=${encodeURIComponent(subject)}`);
-        params.push(`body=${encodeURIComponent(emailBody)}`);
 
-        const mailtoUrl = `mailto:${selectedTo}?${params.join('&')}`;
-        console.log("🔗 Opening mailto link on Web...");
-        try {
-            await Linking.openURL(mailtoUrl);
-            Alert.alert(
-                "Email Action",
-                "We attempted to open your email client. If it didn't open, please ensure you have a default mail app configured.\n\nDid you send the email?",
-                [
-                    { text: "No", style: "cancel" },
-                    { text: "Yes, Mark Completed", onPress: completeCase }
-                ]
-            );
-        } catch (err) {
-            console.error("Failed to open mailto:", err);
-            Alert.alert("Error", "Could not open email client. Please check your device settings.");
+        // 2. Download Form
+        if (caseData.filledForm?.url) {
+            if (window.confirm("Step 2: Download Filled Form?\n\nClick OK to open it in a new tab.")) {
+                window.open(caseData.filledForm.url, "_blank");
+            }
         }
-        setIsSending(false);
+
+        // 3. Open Email
+        if (window.confirm("Step 3: Open Gmail?\n\nClick OK to compose the email in your browser.")) {
+             // Append links to body for web
+             let webBody = emailBody + `\n\nAttachments:\n`;
+             if (caseData.photosFolderLink) webBody += `Report: ${caseData.photosFolderLink}\n`;
+             if (caseData.filledForm?.url) webBody += `Form: ${caseData.filledForm.url}\n`;
+             
+             // Construct Gmail URL (Web Browser Mail)
+             const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1` +
+                `&to=${encodeURIComponent(selectedTo)}` +
+                `&cc=${encodeURIComponent(selectedCc.join(','))}` +
+                `&su=${encodeURIComponent(subject)}` +
+                `&body=${encodeURIComponent(webBody)}`;
+             
+             // Open Gmail in new tab
+             window.open(gmailUrl, "_blank");
+
+             // 4. Final Confirmation
+             setTimeout(async () => {
+                 if (window.confirm("Final Step: Did you send the email?\n\nClick OK to mark case as completed.")) {
+                     await completeCase();
+                 }
+                 setIsSending(false);
+             }, 1000);
+        } else {
+             setIsSending(false);
+        }
         return;
       }
 
@@ -165,31 +180,51 @@ Spacesolutions Team
       const attachments = [];
       const downloadToCache = async (url, fileName) => {
         if (!url) return null;
+
         try {
-          const fileUri = FileSystem.cacheDirectory + fileName;
-          const { uri } = await FileSystem.downloadAsync(url, fileUri);
+          const uniqueName = `${Date.now()}_${fileName}`;
+          const fileUri = FileSystem.cacheDirectory + uniqueName;
+
+          const { uri, status } = await FileSystem.downloadAsync(url, fileUri);
+
+          if (status !== 200) {
+            console.warn("Download failed:", status);
+            return null;
+          }
+
+          console.log("✅ File downloaded:", uri);
           return uri;
         } catch (e) {
-          console.warn("Failed to download attachment:", e);
+          console.warn("❌ Download error:", e);
           return null;
         }
       };
 
       console.log("📥 Downloading PDFs for attachment...");
       if (caseData.photosFolderLink) {
-        const uri = await downloadToCache(caseData.photosFolderLink, `CaseReport_${caseData.RefNo || caseId}.pdf`);
+        const uri = await downloadToCache(caseData.photosFolderLink, `CaseReport_${safeRef}.pdf`);
         if (uri) attachments.push(uri);
       }
       if (caseData.filledForm?.url) {
-        const uri = await downloadToCache(caseData.filledForm.url, `FilledForm_${caseData.RefNo || caseId}.pdf`);
+        const uri = await downloadToCache(caseData.filledForm.url, `FilledForm_${safeRef}.pdf`);
         if (uri) attachments.push(uri);
       }
 
+      if (attachments.length === 0) {
+        console.warn("No attachments downloaded. Adding links to body.");
+        emailBody += `\n\nAttachments (Links):\n`;
+        if (caseData.photosFolderLink) emailBody += `Report: ${caseData.photosFolderLink}\n`;
+        if (caseData.filledForm?.url) emailBody += `Form: ${caseData.filledForm.url}\n`;
+        
+        Alert.alert("Notice", "Could not download attachments. Links have been added to the email body instead.");
+      }
+
+      console.log("📎 Attachments being sent:", attachments);
       console.log("📧 Opening Mail Composer...");
       const result = await MailComposer.composeAsync({
         recipients: [selectedTo],
         ccRecipients: selectedCc,
-        subject: `Case Approved: ${caseData.RefNo || caseId}`,
+        subject: subject,
         body: emailBody,
         attachments: attachments,
       });
@@ -197,20 +232,15 @@ Spacesolutions Team
       if (result.status === 'sent') {
         await completeCase();
       } else {
-        Alert.alert(
-          "Email Status",
-          "Did you send the email successfully?",
-          [
-            { text: "No", style: "cancel" },
-            { text: "Yes", onPress: completeCase }
-          ]
-        );
+        Alert.alert("Cancelled", "Email not sent");
       }
     } catch (error) {
       console.error("MailComposer Error:", error);
       Alert.alert("Error", "Failed to open email app: " + error.message);
     } finally {
-      setIsSending(false);
+      if (Platform.OS !== 'web') {
+        setIsSending(false);
+      }
     }
   };
 
