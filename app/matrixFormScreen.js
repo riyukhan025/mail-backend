@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Image,
   Modal,
@@ -91,6 +92,7 @@ export default function MatrixFormScreen() {
   const { caseId } = route.params || {};
 
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [signingField, setSigningField] = useState(null);
 
   const [form, setForm] = useState({
@@ -156,9 +158,11 @@ export default function MatrixFormScreen() {
 
     if (route.params?.existingData) {
       loadData(route.params.existingData);
+      setLoading(false);
     } else {
       firebase.database().ref(`cases/${caseId}`).once("value").then(snapshot => {
         loadData(snapshot.val());
+        setLoading(false);
       });
     }
   }, [caseId, route.params]);
@@ -273,6 +277,8 @@ export default function MatrixFormScreen() {
 
   /* ================= UI ================= */
 
+  if (loading) return <ActivityIndicator style={{ marginTop: 50 }} size="large" color="#007AFF" />;
+
   return (
     <ScrollView style={{ padding: 16 }}>
       <View style={styles.header}>
@@ -287,28 +293,6 @@ export default function MatrixFormScreen() {
       {Object.keys(TEXT_FIELDS).map(k => {
         const label = k.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
 
-        if (k === 'verificationDateTime') {
-          return (
-            <View key={k} style={styles.fieldContainer}>
-              <Text style={styles.label}>{label}</Text>
-              <View style={styles.inputRow}>
-                <TextInput
-                  placeholder={label}
-                  style={styles.input}
-                  value={form[k]}
-                  onChangeText={v => setForm({ ...form, [k]: v })}
-                />
-                <TouchableOpacity onPress={() => {
-                  const now = new Date();
-                  const dateTimeStr = `${now.getDate().toString().padStart(2, '0')}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getFullYear()} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-                  setForm({ ...form, verificationDateTime: dateTimeStr });
-                }}>
-                  <Ionicons name="time-outline" size={24} color="black" style={styles.icon} />
-                </TouchableOpacity>
-              </View>
-            </View>
-          );
-        }
         return (
           <View key={k} style={styles.fieldContainer}>
             <Text style={styles.label}>{label}</Text>
@@ -350,33 +334,24 @@ export default function MatrixFormScreen() {
       ))}
 
       {/* SIGNATURES */}
-      <TouchableOpacity
-        style={styles.sig}
-        onPress={() => setSigningField("respondentSignature")}
-      >
-        {form.respondentSignature ? (
-          <Image
-            source={{ uri: `data:image/png;base64,${form.respondentSignature}` }}
-            style={styles.sigImg}
-          />
-        ) : (
-          <Text>Tap to Sign (Respondent)</Text>
-        )}
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={styles.sig}
-        onPress={() => setSigningField("matrixRepSignature")}
-      >
-        {form.matrixRepSignature ? (
-          <Image
-            source={{ uri: `data:image/png;base64,${form.matrixRepSignature}` }}
-            style={styles.sigImg}
-          />
-        ) : (
-          <Text>Tap to Sign (Matrix Representative)</Text>
-        )}
-      </TouchableOpacity>
+      {[
+        { key: "respondentSignature", label: "Respondent Signature" },
+        { key: "matrixRepSignature", label: "Matrix Representative Signature" }
+      ].map(item => (
+        <View key={item.key} style={{ marginBottom: 12 }}>
+          <Text style={{ fontWeight: 'bold', marginBottom: 5 }}>{item.label}</Text>
+          <TouchableOpacity style={styles.sig} onPress={() => setSigningField(item.key)}>
+            {form[item.key] ? (
+              <Image
+                source={{ uri: `data:image/png;base64,${form[item.key]}` }}
+                style={styles.sigImg}
+              />
+            ) : (
+              <Text>Tap to Sign</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      ))}
 
       <TouchableOpacity style={styles.submit} onPress={generatePdf}>
         <Text style={{ color: "#fff" }}>

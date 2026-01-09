@@ -21,8 +21,20 @@ import { APPWRITE_CONFIG, databases, ID } from "./appwrite";
 const PHOTO_CATEGORIES = ['selfie', 'proof', 'street', 'house', 'landmark'];
 
 export default function AuditCaseScreen({ navigation, route }) {
-  const { caseId, caseData, user } = route.params || {};
+  const { caseId, caseData: initialCaseData, user } = route.params || {};
+  const [caseData, setCaseData] = useState(initialCaseData || {});
   
+  useEffect(() => {
+    const caseRef = firebase.database().ref(`cases/${caseId}`);
+    const listener = caseRef.on("value", (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        setCaseData((prev) => ({ ...prev, ...data }));
+      }
+    });
+    return () => caseRef.off("value", listener);
+  }, [caseId]);
+
   const [rectifyModalVisible, setRectifyModalVisible] = useState(false);
   const [revertModalVisible, setRevertModalVisible] = useState(false);
   const [emailModalVisible, setEmailModalVisible] = useState(false);
@@ -35,14 +47,42 @@ export default function AuditCaseScreen({ navigation, route }) {
   // Email State
   const [selectedTo, setSelectedTo] = useState("");
   const [selectedCc, setSelectedCc] = useState([]);
-  const [availableEmails, setAvailableEmails] = useState([
-      "riyu7379@gmail.com", 
-      "client@example.com"
-  ]);
+  const [availableEmails, setAvailableEmails] = useState([]);
 
   useEffect(() => {
-      if (availableEmails.length > 0) setSelectedTo(availableEmails[0]);
-  }, []);
+      const clientName = (caseData?.company || caseData?.client || "").toLowerCase();
+      let emails = ["spacesolution2017@gmail.com"]; // Default fallback
+
+      if (clientName.includes("matrix")) {
+          emails = [
+              "saranya.subramani@matrixbsindia.com",
+              "radhika.e@matrixbsindia.com",
+              "ananth.n@matrixbsindia.com",
+              "prasanna.arivazhagan@matrixbsindia.com",
+              "spacesolution2017@gmail.com",
+              "chennaioutstation@matrixbsindia.com"
+          ];
+      } else if (clientName.includes("dhi")) {
+          emails = [
+              "Anushkj@dhiverification.com",
+              "fieldverifier4@dhiverification.com",
+              "dhiinsurance1@dhiverification.com",
+              "hr@dhiverification.com",
+              "fieldverifier1@dhiverification.com",
+              "fieldverifier3@dhiverification.com",
+              "spacesolution2017@gmail.com"
+          ];
+      } else if (clientName.includes("ces")) {
+          emails = [
+              "verifier1@credessentials.com",
+              "spacesolution2017@gmail.com",
+              "verifier2@credessentials.com"
+          ];
+      }
+
+      setAvailableEmails(emails);
+      if (emails.length > 0) setSelectedTo(emails[0]);
+  }, [caseData]);
 
   const handleApprove = () => {
     setEmailModalVisible(true);
@@ -84,7 +124,7 @@ export default function AuditCaseScreen({ navigation, route }) {
         }
 
         Alert.alert("Success", "Case approved. Please ensure the email was sent from your mail app.");
-        navigation.navigate("MailsSentScreen", { successMessage: "Email sent successfully!" });
+        navigation.replace("MailsSentScreen", { successMessage: "Email sent successfully!" });
     } catch (error) {
         console.error("Complete Case Error:", error);
         Alert.alert("Error", "Failed to complete case in database.");
@@ -123,24 +163,9 @@ Spacesolutions Team
 
       // --- WEB HANDLING ---
       if (Platform.OS === 'web') {
-        // Sequential checks to avoid popup blockers on Web
-        
-        // 1. Download Report
-        if (caseData.photosFolderLink) {
-            if (window.confirm("Step 1: Download Report PDF?\n\nClick OK to open it in a new tab.")) {
-                window.open(caseData.photosFolderLink, "_blank");
-            }
-        }
+        const hasDownloaded = window.confirm("Did you download both the Report and Form PDFs?");
 
-        // 2. Download Form
-        if (caseData.filledForm?.url) {
-            if (window.confirm("Step 2: Download Filled Form?\n\nClick OK to open it in a new tab.")) {
-                window.open(caseData.filledForm.url, "_blank");
-            }
-        }
-
-        // 3. Open Email
-        if (window.confirm("Step 3: Open Gmail?\n\nClick OK to compose the email in your browser.")) {
+        if (hasDownloaded) {
              // Append links to body for web
              let webBody = emailBody + `\n\nAttachments:\n`;
              if (caseData.photosFolderLink) webBody += `Report: ${caseData.photosFolderLink}\n`;
@@ -156,16 +181,20 @@ Spacesolutions Team
              // Open Gmail in new tab
              window.open(gmailUrl, "_blank");
 
-             // 4. Final Confirmation
-             setTimeout(async () => {
-                 if (window.confirm("Final Step: Did you send the email?\n\nClick OK to mark case as completed.")) {
-                     await completeCase();
-                 }
-                 setIsSending(false);
-             }, 1000);
+             // Navigate to MailsSentScreen for manual confirmation
+             navigation.navigate("MailsSentScreen", { 
+                 manualVerification: true,
+                 caseId: caseId,
+                 caseData: caseData,
+                 recipient: selectedTo
+             });
         } else {
-             setIsSending(false);
+            if (window.confirm("Click OK to download the files now.")) {
+                if (caseData.photosFolderLink) window.open(caseData.photosFolderLink, "_blank");
+                if (caseData.filledForm?.url) window.open(caseData.filledForm.url, "_blank");
+            }
         }
+        setIsSending(false);
         return;
       }
 
@@ -185,14 +214,23 @@ Spacesolutions Team
           const uniqueName = `${Date.now()}_${fileName}`;
           const fileUri = FileSystem.cacheDirectory + uniqueName;
 
+          console.log(`⬇️ Downloading ${fileName} to ${fileUri}`);
           const { uri, status } = await FileSystem.downloadAsync(url, fileUri);
 
           if (status !== 200) {
-            console.warn("Download failed:", status);
+            console.warn(`❌ Download failed with status ${status}`);
             return null;
           }
 
-          console.log("✅ File downloaded:", uri);
+          // Verify file exists and has size
+          const info = await FileSystem.getInfoAsync(uri);
+          if (!info.exists) {
+             console.warn(`❌ File does not exist at ${uri}`);
+             return null;
+          }
+
+          console.log(`✅ File downloaded: ${uri} (Size: ${info.size})`);
+
           return uri;
         } catch (e) {
           console.warn("❌ Download error:", e);
@@ -210,16 +248,17 @@ Spacesolutions Team
         if (uri) attachments.push(uri);
       }
 
+      console.log(`📎 Attachments prepared (${attachments.length}):`, attachments);
+
       if (attachments.length === 0) {
         console.warn("No attachments downloaded. Adding links to body.");
         emailBody += `\n\nAttachments (Links):\n`;
         if (caseData.photosFolderLink) emailBody += `Report: ${caseData.photosFolderLink}\n`;
         if (caseData.filledForm?.url) emailBody += `Form: ${caseData.filledForm.url}\n`;
         
-        Alert.alert("Notice", "Could not download attachments. Links have been added to the email body instead.");
+        // Alert.alert("Notice", "Could not download attachments. Links have been added to the email body instead.");
       }
 
-      console.log("📎 Attachments being sent:", attachments);
       console.log("📧 Opening Mail Composer...");
       const result = await MailComposer.composeAsync({
         recipients: [selectedTo],
@@ -229,11 +268,15 @@ Spacesolutions Team
         attachments: attachments,
       });
 
-      if (result.status === 'sent') {
-        await completeCase();
-      } else {
-        Alert.alert("Cancelled", "Email not sent");
-      }
+      console.log("📧 MailComposer result:", result);
+
+      // Navigate to MailsSentScreen for manual confirmation (Safe Check)
+      navigation.navigate("MailsSentScreen", { 
+          manualVerification: true,
+          caseId: caseId,
+          caseData: caseData,
+          recipient: selectedTo
+      });
     } catch (error) {
       console.error("MailComposer Error:", error);
       Alert.alert("Error", "Failed to open email app: " + error.message);
@@ -497,7 +540,17 @@ Spacesolutions Team
               ))}
             </ScrollView>
 
-            <Text style={styles.label}>CC (Select Multiple):</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, marginBottom: 5 }}>
+              <Text style={styles.label}>CC (Select Multiple):</Text>
+              <TouchableOpacity onPress={() => {
+                  if (selectedCc.length === availableEmails.length) setSelectedCc([]);
+                  else setSelectedCc([...availableEmails]);
+              }}>
+                <Text style={{ color: '#007AFF', fontSize: 14, fontWeight: 'bold' }}>
+                  {selectedCc.length === availableEmails.length ? "Unselect All" : "Select All"}
+                </Text>
+              </TouchableOpacity>
+            </View>
             <ScrollView style={{ maxHeight: 150 }}>
               {availableEmails.map(email => (
                 <TouchableOpacity key={email} style={styles.emailOption} onPress={() => {

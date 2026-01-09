@@ -27,12 +27,20 @@ export default function CompletedCasesScreen({ navigation }) {
       <Text style={styles.text}>
         Completed: {item.completedAt ? new Date(item.completedAt).toLocaleDateString() : "N/A"}
       </Text>
-      <TouchableOpacity
-        style={styles.button}
-        onPress={() => navigation.navigate("CaseDetail", { caseId: item.id })}
-      >
-        <Text style={styles.buttonText}>View Details</Text>
-      </TouchableOpacity>
+      <View style={styles.actionRow}>
+        <TouchableOpacity
+          style={[styles.button, { backgroundColor: "#28a745", flex: 1, marginRight: 5 }]}
+          onPress={() => navigation.navigate("CaseDetail", { caseId: item.id })}
+        >
+          <Text style={styles.buttonText}>View Details</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.button, { backgroundColor: "#FF9800", flex: 1, marginLeft: 5 }]}
+          onPress={() => navigation.navigate("AuditCaseScreen", { caseId: item.id, caseData: item })}
+        >
+          <Text style={styles.buttonText}>Rectify / Resend</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 
@@ -76,9 +84,8 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 18, fontWeight: "bold", color: "#fff", marginBottom: 5 },
   text: { color: "#ccc", marginBottom: 5 },
+  actionRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 10 },
   button: {
-    marginTop: 10,
-    backgroundColor: "#28a745",
     padding: 10,
     borderRadius: 5,
     alignItems: "center",

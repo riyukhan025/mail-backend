@@ -93,19 +93,34 @@ export default function DHIFormScreen() {
 
   /* ================= LOAD ================= */
   useEffect(() => {
-    (async () => {
-      const snap = await get(ref(db, `cases/${caseId}`));
-      const data = snap.val() || {};
-      setForm(f => ({
-        ...f,
-        caseReferenceNumber: data.RefNo || caseId,
+    const loadData = (data) => {
+      if (!data) return;
+      setForm(prev => ({
+        ...prev,
+        caseReferenceNumber: data.caseReferenceNumber || data.RefNo || caseId,
         candidateName: data.candidateName || "",
+        fatherName: data.fatherName || "",
         address: data.address || "",
         contactNumber: data.contactNumber || "",
+        respondentName: data.respondentName || "",
+        relationship: data.relationship || "",
+        verifierName: data.verifierName || "",
+        remarks: data.remarks || "",
+        respondentSignature: data.respondentSignature || "",
+        verifierSignature: data.verifierSignature || "",
       }));
+    };
+
+    if (route.params?.existingData) {
+      loadData(route.params.existingData);
       setLoading(false);
-    })();
-  }, []);
+    } else {
+      get(ref(db, `cases/${caseId}`)).then((snap) => {
+        loadData(snap.val() || {});
+        setLoading(false);
+      });
+    }
+  }, [caseId, route.params]);
 
   /* ================= SIGNATURE HANDLER ================= */
   const handleSignature = sig => {
@@ -186,7 +201,7 @@ export default function DHIFormScreen() {
         filledForm: {
           url: uploadUrl,
           updatedAt: new Date().toISOString()
-        }
+        }, ...form
       });
 
       setProgress(1.0);

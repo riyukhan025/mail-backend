@@ -74,7 +74,7 @@ const MARITAL_STATUS = "Dropdown-m2CY7O4n-W";
 /* ================= SIGNATURE COORDS ================= */
 const SIGNATURE_COORDS = {
   respondent: { x: 150, y: 195, width: 160, height: 45 },
-  fieldExecutive: { x: 375, y: 145, width: 160, height: 45 },
+  fieldExecutive: { x: 375, y: 148, width: 160, height: 45 },
 };
 
 /* ================= MARITAL STATUS COORDS ================= */
@@ -161,18 +161,42 @@ export default function CESFormScreen() {
 
   /* ================= LOAD ================= */
   useEffect(() => {
-    (async () => {
-      const snap = await get(ref(db, `cases/${caseId}`));
-      const data = snap.val() || {};
-      setForm(f => ({
-        ...f,
-        caseReferenceNumber: data.RefNo || caseId,
+    const loadData = (data) => {
+      if (!data) return;
+      setForm(prev => ({
+        ...prev,
+        caseReferenceNumber: data.caseReferenceNumber || data.RefNo || caseId,
         candidateName: data.candidateName || "",
+        fatherName: data.fatherName || "",
         address: data.address || "",
+        contactNumber: data.contactNumber || "",
+        detailsVerified: data.detailsVerified || "",
+        respondentName: data.respondentName || "",
+        relationship: data.relationship || "",
+        fieldExecutiveName: data.fieldExecutiveName || "",
+        stayFromDate: data.stayFromDate || "",
+        stayToDate: data.stayToDate || "",
+        addressType: data.addressType || "",
+        maritalStatus: data.maritalStatus || "",
+        residenceType: data.residenceType || "",
+        locationType: data.locationType || "",
+        siteVisit: data.siteVisit || "",
+        verificationStatus: data.verificationStatus || "",
+        respondentSignature: data.respondentSignature || "",
+        fieldExecutiveSignature: data.fieldExecutiveSignature || "",
       }));
+    };
+
+    if (route.params?.existingData) {
+      loadData(route.params.existingData);
       setLoading(false);
-    })();
-  }, []);
+    } else {
+      get(ref(db, `cases/${caseId}`)).then((snap) => {
+        loadData(snap.val() || {});
+        setLoading(false);
+      });
+    }
+  }, [caseId, route.params]);
 
   /* ================= SIGNATURE FIX (IMPORTANT) ================= */
   const handleSignature = sig => {
@@ -278,7 +302,8 @@ export default function CESFormScreen() {
         filledForm: {
           url: uploadUrl,
           updatedAt: new Date().toISOString()
-        }
+        },
+        ...form
       });
 
       setProgress(1.0);
@@ -311,15 +336,6 @@ export default function CESFormScreen() {
             value={form[k]}
             onChangeText={v => setForm({ ...form, [k]: v })}
           />
-          {k === 'detailsVerified' && (
-            <TouchableOpacity onPress={() => {
-              const now = new Date();
-              const dateTimeStr = `${now.getDate().toString().padStart(2, '0')}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getFullYear()} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-              setForm({ ...form, detailsVerified: dateTimeStr });
-            }}>
-              <Ionicons name="time-outline" size={24} color="black" style={styles.icon} />
-            </TouchableOpacity>
-          )}
         </View>
       ))}
 
@@ -335,7 +351,7 @@ export default function CESFormScreen() {
           const dateStr = `${now.getDate().toString().padStart(2, '0')}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getFullYear()}`;
           setForm({ ...form, stayFromDate: dateStr });
         }}>
-          <Ionicons name="time-outline" size={24} color="black" style={styles.icon} />
+          <Ionicons name="calendar-outline" size={24} color="black" style={styles.icon} />
         </TouchableOpacity>
       </View>
 
@@ -351,7 +367,7 @@ export default function CESFormScreen() {
           const dateStr = `${now.getDate().toString().padStart(2, '0')}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getFullYear()}`;
           setForm({ ...form, stayToDate: dateStr });
         }}>
-          <Ionicons name="time-outline" size={24} color="black" style={styles.icon} />
+          <Ionicons name="calendar-outline" size={24} color="black" style={styles.icon} />
         </TouchableOpacity>
       </View>
 
@@ -410,17 +426,23 @@ export default function CESFormScreen() {
       />
 
       {/* SIGNATURES */}
-      {["respondentSignature", "fieldExecutiveSignature"].map(f => (
-        <TouchableOpacity key={f} style={styles.sig} onPress={() => setSigningField(f)}>
-          {form[f] ? (
-            <Image
-              source={{ uri: `data:image/png;base64,${form[f]}` }}
-              style={{ width: "100%", height: "100%", resizeMode: "contain" }}
-            />
-          ) : (
-            <Text>Tap to Sign</Text>
-          )}
-        </TouchableOpacity>
+      {[
+        { key: "respondentSignature", label: "Respondent Signature" },
+        { key: "fieldExecutiveSignature", label: "Field Executive Signature" }
+      ].map(item => (
+        <View key={item.key} style={{ marginBottom: 12 }}>
+          <Text style={{ fontWeight: 'bold', marginBottom: 5 }}>{item.label}</Text>
+          <TouchableOpacity style={styles.sig} onPress={() => setSigningField(item.key)}>
+            {form[item.key] ? (
+              <Image
+                source={{ uri: `data:image/png;base64,${form[item.key]}` }}
+                style={{ width: "100%", height: "100%", resizeMode: "contain" }}
+              />
+            ) : (
+              <Text>Tap to Sign</Text>
+            )}
+          </TouchableOpacity>
+        </View>
       ))}
 
       <TouchableOpacity style={styles.submit} onPress={generatePdf}>

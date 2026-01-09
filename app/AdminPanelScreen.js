@@ -3,7 +3,7 @@ import { Picker } from "@react-native-picker/picker";
 import { BlurView } from "expo-blur";
 import * as DocumentPicker from "expo-document-picker";
 import { LinearGradient } from "expo-linear-gradient";
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Animated,
@@ -20,12 +20,14 @@ import {
 } from "react-native";
 import * as XLSX from "xlsx";
 import firebase from "../firebase";
+import { AuthContext } from "./AuthContext";
 
 const SCREEN_HEIGHT = Dimensions.get("window").height;
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const MENU_WIDTH = SCREEN_WIDTH * 0.5;
 
 export default function AdminPanelScreen({ navigation }) {
+  const { logout } = useContext(AuthContext);
   const [cases, setCases] = useState([]);
   const [members, setMembers] = useState([]);
   const [searchText, setSearchText] = useState("");
@@ -492,7 +494,7 @@ export default function AdminPanelScreen({ navigation }) {
   };
 
   return (
-    <LinearGradient colors={isLightTheme ? ["#ffffff", "#87ceeb"] : ["#1a1a2e", "#16213e", "#0f3460"]} style={{ flex: 1 }}>
+    <LinearGradient colors={isLightTheme ? ["#ffffff", "#87ceeb"] : ["#1a1a2e", "#16213e", "#0f3460"]} style={{ flex: 1 }}>{/* Hamburger Menu Overlay */}
       {/* Hamburger Menu Overlay */}
       {menuOpen && (
         <View style={styles.menuOverlay}>
@@ -512,6 +514,20 @@ export default function AdminPanelScreen({ navigation }) {
             </TouchableOpacity>
             <TouchableOpacity style={styles.menuItem} onPress={() => { closeMenu(); navigation.navigate("MemberDSRScreen"); }}>
               <Text style={styles.menuText}>Member DSR</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuItem} onPress={() => { closeMenu(); navigation.navigate("MailRecordsScreen"); }}>
+              <Text style={styles.menuText}>Mail Records</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuItem} onPress={() => { 
+                closeMenu(); 
+                firebase.auth().signOut().then(() => {
+                  logout(); // This updates App.js state and switches to AuthStack
+                }).catch((error) => {
+                  if (Platform.OS === 'web') alert("Error: Failed to log off: " + error.message);
+                  else Alert.alert("Error", "Failed to log off: " + error.message);
+                });
+            }}>
+              <Text style={[styles.menuText, { color: "#ff4444" }]}>Log Off</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.menuItem} onPress={closeMenu}>
               <Text style={[styles.menuText, { color: "red" }]}>Close Menu</Text>
@@ -691,8 +707,8 @@ export default function AdminPanelScreen({ navigation }) {
 
       {/* Table Section - Takes remaining space */}
       <View style={{ flex: 1, paddingHorizontal: 8 }}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={{ width: Object.values(columnWidths).reduce((a, b) => a + b, 0) }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexGrow: 1 }}>
+          <View style={{ width: Object.values(columnWidths).reduce((a, b) => a + b, 0), flex: 1 }}>
             <View style={[styles.tableHeader, isLightTheme && { backgroundColor: "#e0e0e0", borderColor: "#ccc" }]}>
               {Object.keys(columnWidths).map((key) => (
                 <Text
@@ -740,11 +756,11 @@ export default function AdminPanelScreen({ navigation }) {
               </View>
             )}
             <FlatList
-              style={{ height: SCREEN_HEIGHT - 320 }}
+              style={{ flex: 1 }}
               data={fullyFilteredCases}
               renderItem={renderCase}
               initialNumToRender={1000}
-              maxToRenderPerBatch={100}
+              maxToRenderPerBatch={200}
               windowSize={60}
               keyExtractor={(item) => item.id}
               removeClippedSubviews={false}

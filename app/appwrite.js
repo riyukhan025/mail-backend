@@ -6,6 +6,7 @@ export const APPWRITE_CONFIG = {
     databaseId: "6921d17f0022f5f0cf10",
     dsrCollectionId: "dsr_reports",
     userPlansCollectionId: "user_plans", // Ensure this collection exists in your Appwrite console
+    sentEmailsCollectionId: "sent_emails", // Replace with your actual Collection ID for Sent Emails
 };
 
 export const client = new Client()
@@ -14,3 +15,4 @@ export const client = new Client()
 
 export const databases = new Databases(client);
 export { ID, Query };
+

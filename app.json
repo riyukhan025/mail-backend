@@ -19,7 +19,8 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.riyaz123202.Spacesolutions",
-      "permissions": ["READ_EXTERNAL_STORAGE"]
+      "permissions": ["READ_EXTERNAL_STORAGE"],
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "output": "static",
