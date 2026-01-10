@@ -5,12 +5,13 @@ import {
   Alert,
   Image,
   Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  View,
+  View
 } from "react-native";
 
 import { decode as atob } from "base-64";
@@ -85,13 +86,23 @@ const MARITAL_COORDS = { x: 180, y: 425, width: 200, height: 20 };
 const CLOUD_NAME = "dfpykheky";
 const UPLOAD_PRESET = "cases_upload";
 
-async function uploadPdfToCloudinary(pdfUri, caseId) {
+async function uploadPdfToCloudinary(pdfData, caseId) {
   const formData = new FormData();
-  formData.append('file', {
-    uri: pdfUri,
-    type: 'application/pdf',
-    name: `CES_${caseId}.pdf`,
-  });
+  if (Platform.OS === 'web') {
+    // Convert base64 to Blob to ensure filename is preserved in Cloudinary raw upload
+    const binaryString = atob(pdfData);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+    const blob = new Blob([bytes], { type: "application/pdf" });
+    formData.append("file", blob, `CES_${caseId}.pdf`);
+  } else {
+    formData.append('file', {
+      uri: pdfData,
+      type: 'application/pdf',
+      name: `CES_${caseId}.pdf`,
+    });
+  }
   formData.append('upload_preset', UPLOAD_PRESET);
   formData.append('folder', `cases/${caseId}`);
   formData.append('resource_type', 'raw');
@@ -165,7 +176,7 @@ export default function CESFormScreen() {
       if (!data) return;
       setForm(prev => ({
         ...prev,
-        caseReferenceNumber: data.caseReferenceNumber || data.RefNo || caseId,
+        caseReferenceNumber: data.matrixRefNo || data.caseReferenceNumber || data.RefNo || "",
         candidateName: data.candidateName || "",
         fatherName: data.fatherName || "",
         address: data.address || "",
@@ -232,13 +243,21 @@ export default function CESFormScreen() {
 
       setProgress(0.2);
       setProgressMessage("Reading template...");
-      const base64 = await FileSystem.readAsStringAsync(asset.localUri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-
-      const pdfDoc = await PDFDocument.load(
-        Uint8Array.from(atob(base64), c => c.charCodeAt(0))
-      );
+      
+      let pdfDoc;
+      if (Platform.OS === 'web') {
+        const res = await fetch(asset.uri);
+        const blob = await res.arrayBuffer();
+        pdfDoc = await PDFDocument.load(blob);
+      } else {
+        const base64 = await FileSystem.readAsStringAsync(asset.localUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        pdfDoc = await PDFDocument.load(
+          Uint8Array.from(atob(base64), c => c.charCodeAt(0))
+        );
+      }
+      
       const pdfForm = pdfDoc.getForm();
 
       setProgress(0.4);
@@ -260,6 +279,8 @@ export default function CESFormScreen() {
       await embedSignature(pdfDoc, form.respondentSignature, SIGNATURE_COORDS.respondent);
       await embedSignature(pdfDoc, form.fieldExecutiveSignature, SIGNATURE_COORDS.fieldExecutive);
 
+      // Fix for blue boxes: make all fields read-only before flattening
+      pdfForm.getFields().forEach(field => field.enableReadOnly());
       pdfForm.flatten();
 
       /* ================= DRAW OVERLAY AFTER FLATTEN ================= */
@@ -282,15 +303,22 @@ export default function CESFormScreen() {
       setProgress(0.7);
       setProgressMessage("Saving PDF...");
       const out = await pdfDoc.saveAsBase64();
-      const path = FileSystem.documentDirectory + `CES_${form.caseReferenceNumber}.pdf`;
-      await FileSystem.writeAsStringAsync(path, out, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      
+      let uploadInput;
+      if (Platform.OS === 'web') {
+        uploadInput = out;
+      } else {
+        const path = FileSystem.documentDirectory + `CES_${form.caseReferenceNumber}.pdf`;
+        await FileSystem.writeAsStringAsync(path, out, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        uploadInput = path;
+      }
 
       setProgress(0.8);
       setProgressMessage("Uploading to Cloud...");
       // UPLOAD TO CLOUDINARY
-      const uploadUrl = await uploadPdfToCloudinary(path, form.caseReferenceNumber);
+      const uploadUrl = await uploadPdfToCloudinary(uploadInput, form.caseReferenceNumber);
 
       if (!uploadUrl) throw new Error("Upload failed: No URL returned");
 

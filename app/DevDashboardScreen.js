@@ -1,10 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
+import Constants from "expo-constants";
 import { LinearGradient } from "expo-linear-gradient";
 import { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Dimensions,
-
   FlatList,
   NativeModules,
   Platform,
@@ -18,11 +19,16 @@ import {
   TouchableOpacity,
   View
 } from "react-native";
+import firebase from "../firebase";
 
 // --- CONSTANTS & CONFIGURATION ---
 const APP_VERSION = "1.0.4 (Build 203)";
 const API_URL = "https://api.production.example.com";
 const ENV_NAME = "STAGING";
+
+const manifest = Constants.manifest;
+const localIp = manifest?.debuggerHost?.split(':').shift() || "localhost";
+const SERVER_URL = `http://${localIp}:3000`;
 
 const TABS = [
   { id: "overview", label: "Overview", icon: "grid-outline" },
@@ -31,6 +37,7 @@ const TABS = [
   { id: "logs", label: "Logs", icon: "terminal-outline" },
   { id: "network", label: "Network", icon: "wifi-outline" },
   { id: "utils", label: "Utils", icon: "construct-outline" },
+  { id: "maintenance", label: "Maintenance", icon: "trash-outline" },
 ];
 
 // --- REAL DATA INTERCEPTORS ---
@@ -118,6 +125,7 @@ export default function DevDashboardScreen({ navigation }) {
     maintenanceMode: false,
     debugLogging: true,
   });
+  const [archiving, setArchiving] = useState(false);
 
   // Subscribe to real data updates
   useEffect(() => {
@@ -132,41 +140,96 @@ export default function DevDashboardScreen({ navigation }) {
   // Fetch real users when tab is active
   useEffect(() => {
     if (activeTab === "users") {
-      fetch(`${API_URL}/users`)
-        .then(res => res.json())
-        .then(data => {
-          if (Array.isArray(data)) setUsers(data);
-        })
-        .catch(err => {
-          console.warn("DevDashboard: Failed to fetch users", err);
-          // Fallback UI if API fails
-          setUsers([{ id: "err", name: "Fetch Failed", email: "Check API_URL", role: "error", status: "banned", lastActive: "Now" }]);
-        });
+      const ref = firebase.database().ref("users");
+      const listener = ref.on("value", (snapshot) => {
+        const data = snapshot.val() || {};
+        const list = Object.keys(data).map((key) => ({ id: key, ...data[key] }));
+        setUsers(list);
+      });
+      return () => ref.off("value", listener);
     }
   }, [activeTab]);
 
+  // --- LIVE ACTIVITY TRACKING ---
+  useEffect(() => {
+    const ref = firebase.database().ref("cases");
+    const onChildChanged = ref.on("child_changed", (snapshot) => {
+      const val = snapshot.val();
+      if (val) {
+        const refNo = val.matrixRefNo || val.RefNo || snapshot.key;
+        const status = val.status;
+        const updatedBy = val.finalizedBy || val.assignedTo || "Unknown";
+        console.log(`[EVENT] Case ${refNo} updated: Status '${status}' (User: ${updatedBy})`);
+      }
+    });
+    return () => ref.off("child_changed", onChildChanged);
+  }, []);
+
   // --- ACTIONS ---
   const handleRevokeAccess = (userId) => {
-    Alert.alert(
-      "Revoke Access",
-      `Are you sure you want to revoke access for user ${userId}? This will invalidate their session immediately.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Revoke",
-          style: "destructive",
-          onPress: () => {
-            // Attempt real revoke
-            fetch(`${API_URL}/users/${userId}/revoke`, { method: 'POST' })
-              .then(() => {
-                setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, status: "banned" } : u)));
-                Alert.alert("Success", "User access has been revoked.");
-              })
-              .catch(err => Alert.alert("Error", "Failed to revoke access: " + err.message));
-          },
-        },
-      ]
-    );
+    const message = `Are you sure you want to revoke access for user ${userId}? This will invalidate their session immediately.`;
+    
+    const executeRevoke = async () => {
+        try {
+            // Real revoke via Firebase
+            await firebase.database().ref(`users/${userId}`).update({ status: "banned" });
+            if (Platform.OS === 'web') alert("Success: User access has been revoked.");
+            else Alert.alert("Success", "User access has been revoked.");
+        } catch (err) {
+            if (Platform.OS === 'web') alert("Error: Failed to revoke access: " + err.message);
+            else Alert.alert("Error", "Failed to revoke access: " + err.message);
+        }
+    };
+
+    if (Platform.OS === 'web') {
+        if (confirm(message)) executeRevoke();
+    } else {
+        Alert.alert(
+          "Revoke Access",
+          message,
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Revoke",
+              style: "destructive",
+              onPress: executeRevoke,
+            },
+          ]
+        );
+    }
+  };
+
+  const handleGrantAccess = (userId) => {
+    const message = `Are you sure you want to grant access for user ${userId}?`;
+    
+    const executeGrant = async () => {
+        try {
+            // Real grant via Firebase
+            await firebase.database().ref(`users/${userId}`).update({ status: "active" });
+            if (Platform.OS === 'web') alert("Success: User access has been granted.");
+            else Alert.alert("Success", "User access has been granted.");
+        } catch (err) {
+            if (Platform.OS === 'web') alert("Error: Failed to grant access: " + err.message);
+            else Alert.alert("Error", "Failed to grant access: " + err.message);
+        }
+    };
+
+    if (Platform.OS === 'web') {
+        if (confirm(message)) executeGrant();
+    } else {
+        Alert.alert(
+          "Grant Access",
+          message,
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Grant",
+              style: "default",
+              onPress: executeGrant,
+            },
+          ]
+        );
+    }
   };
 
   const handleClearLogs = () => {
@@ -183,12 +246,118 @@ export default function DevDashboardScreen({ navigation }) {
     setFeatureFlags((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  const handleArchiveOldCases = async () => {
+    if (archiving) return;
+    
+    setArchiving(true);
+    try {
+      // 1. Fetch all cases (snapshot)
+      const snapshot = await firebase.database().ref("cases").once("value");
+      const data = snapshot.val() || {};
+      const allCases = Object.keys(data).map(key => ({ id: key, ...data[key] }));
+
+      // 2. Filter for completed cases (Any time)
+      const toArchive = allCases.filter(c => {
+        return c.status === 'completed';
+      });
+
+      if (toArchive.length === 0) {
+        if (Platform.OS === 'web') alert("Maintenance: No completed cases found to archive.");
+        else Alert.alert("Maintenance", "No completed cases found to archive.");
+        setArchiving(false);
+        return;
+      }
+
+      const count = toArchive.length;
+      const message = `Found ${count} completed cases.\n\nThis will:\n1. Delete them from Firebase.\n2. Delete photos/PDFs from Cloudinary.\n3. Update the 'Archived Count' to preserve Admin stats.\n\nProceed?`;
+      
+      const executeArchive = async () => {
+        try {
+          // 3. Update Counter in Firebase
+          try {
+            const statsRef = firebase.database().ref("metadata/statistics/archivedCount");
+            const statsSnap = await statsRef.once("value");
+            const currentCount = statsSnap.val() || 0;
+            await statsRef.set(currentCount + count);
+          } catch (statErr) {
+            console.warn("Permission denied for stats update, skipping counter increment.", statErr);
+          }
+
+          // 4. Delete Cases & Resources
+          for (const c of toArchive) {
+              // Collect URLs to delete
+              const urlsToDelete = [];
+              if (c.photosFolderLink) urlsToDelete.push(c.photosFolderLink);
+              if (c.filledForm?.url) urlsToDelete.push(c.filledForm.url);
+              if (c.photosFolder) {
+                Object.values(c.photosFolder).forEach(list => {
+                  if (Array.isArray(list)) {
+                    list.forEach(p => {
+                      if (p.uri && p.uri.includes("cloudinary")) urlsToDelete.push(p.uri);
+                    });
+                  }
+                });
+              }
+
+              // Call server to delete resources (Best Effort)
+              for (const url of urlsToDelete) {
+                try {
+                  await fetch(`${SERVER_URL}/cloudinary/destroy-from-url`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ url, resource_type: url.endsWith('.pdf') ? 'raw' : 'image' }),
+                  }).catch(e => console.warn("Failed to delete resource", e));
+                } catch (e) {}
+              }
+
+              // Delete from Firebase
+              await firebase.database().ref(`cases/${c.id}`).remove();
+          }
+          
+          if (Platform.OS === 'web') alert(`Success: Archived ${count} cases successfully.`);
+          else Alert.alert("Success", `Archived ${count} cases successfully.`);
+        } catch (e) {
+          if (Platform.OS === 'web') alert("Error: Failed during archive: " + e.message);
+          else Alert.alert("Error", "Failed during archive: " + e.message);
+        } finally {
+          setArchiving(false);
+        }
+      };
+
+      if (Platform.OS === 'web') {
+        if (confirm(message)) {
+          executeArchive();
+        } else {
+          setArchiving(false);
+        }
+      } else {
+        Alert.alert(
+          "Confirm Archive",
+          message,
+          [
+            { text: "Cancel", onPress: () => setArchiving(false), style: "cancel" },
+            { 
+              text: "Archive", 
+              style: "destructive",
+              onPress: executeArchive
+            }
+          ]
+        );
+      }
+
+    } catch (e) {
+      if (Platform.OS === 'web') alert("Error: " + e.message);
+      else Alert.alert("Error", e.message);
+      setArchiving(false);
+    }
+  };
+
   const renderContent = () => {
     switch (activeTab) {
       case "overview":
         return <OverviewTab featureFlags={featureFlags} toggleFeatureFlag={toggleFeatureFlag} />;
       case "users":
-        return <UsersTab users={users} onRevoke={handleRevokeAccess} />;
+        return <UsersTab users={users} onRevoke={handleRevokeAccess} onGrant={handleGrantAccess} />;
       case "tracking":
         return <TrackingTab />;
       case "logs":
@@ -197,6 +366,8 @@ export default function DevDashboardScreen({ navigation }) {
         return <NetworkTab requests={networkRequests} onClear={handleClearNetwork} />;
       case "utils":
         return <UtilsTab />;
+      case "maintenance":
+        return <MaintenanceTab onArchive={handleArchiveOldCases} archiving={archiving} />;
       default:
         return <OverviewTab />;
     }
@@ -250,13 +421,25 @@ export default function DevDashboardScreen({ navigation }) {
 // --- TAB COMPONENTS ---
 
 function OverviewTab({ featureFlags, toggleFeatureFlag }) {
+  const handleReload = () => {
+    if (Platform.OS === 'web') {
+      window.location.reload();
+    } else if (NativeModules.DevSettings) {
+      NativeModules.DevSettings.reload();
+    } else {
+      Alert.alert("Reload", "Not supported in this environment.");
+    }
+  };
+
+  const cardStyle = featureFlags.enableNewUI ? [styles.card, { backgroundColor: 'rgba(255,255,255,0.1)', borderColor: '#8e24aa' }] : styles.card;
+
   return (
     <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Environment Info</Text>
-        <View style={styles.card}>
+        <View style={cardStyle}>
           <InfoRow label="Environment" value={ENV_NAME} />
-          <InfoRow label="API URL" value={API_URL} />
+          <InfoRow label="Backend" value="Firebase Realtime DB" />
           <InfoRow label="Build Version" value={APP_VERSION} />
           <InfoRow label="React Native" value="0.72.6" />
           <InfoRow label="Expo SDK" value="49.0.0" />
@@ -265,7 +448,7 @@ function OverviewTab({ featureFlags, toggleFeatureFlag }) {
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Feature Flags</Text>
-        <View style={styles.card}>
+        <View style={cardStyle}>
           {Object.entries(featureFlags).map(([key, value]) => (
             <View key={key} style={styles.switchRow}>
               <Text style={styles.switchLabel}>{key.replace(/([A-Z])/g, ' $1').trim()}</Text>
@@ -283,21 +466,20 @@ function OverviewTab({ featureFlags, toggleFeatureFlag }) {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Quick Actions</Text>
         <View style={styles.grid}>
-          <ActionButton icon="refresh" label="Reload App" onPress={() => NativeModules.DevSettings.reload()} />
+          <ActionButton icon="refresh" label="Reload App" onPress={handleReload} />
           <ActionButton icon="share-social" label="Export Logs" onPress={() => Share.share({ message: JSON.stringify(LOG_BUFFER, null, 2) })} />
-          <ActionButton icon="warning" label="Test Crash" color="#ff4444" onPress={() => { throw new Error("Test Crash Triggered"); }} />
         </View>
       </View>
     </ScrollView>
   );
 }
 
-function UsersTab({ users, onRevoke }) {
+function UsersTab({ users, onRevoke, onGrant }) {
   const [search, setSearch] = useState("");
   
   const filteredUsers = users.filter(u => 
-    u.name.toLowerCase().includes(search.toLowerCase()) || 
-    u.email.toLowerCase().includes(search.toLowerCase())
+    (u.name || "").toLowerCase().includes(search.toLowerCase()) || 
+    (u.email || "").toLowerCase().includes(search.toLowerCase())
   );
 
   return (
@@ -320,14 +502,14 @@ function UsersTab({ users, onRevoke }) {
           <View style={styles.userCard}>
             <View style={styles.userHeader}>
               <View style={styles.userAvatar}>
-                <Text style={styles.userAvatarText}>{item.name.charAt(0)}</Text>
+                <Text style={styles.userAvatarText}>{(item.name || "?").charAt(0)}</Text>
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.userName}>{item.name}</Text>
                 <Text style={styles.userEmail}>{item.email}</Text>
               </View>
-              <View style={[styles.badge, { backgroundColor: getStatusColor(item.status) }]}>
-                <Text style={styles.badgeText}>{item.status.toUpperCase()}</Text>
+              <View style={[styles.badge, { backgroundColor: getStatusColor(item.status || 'active') }]}>
+                <Text style={styles.badgeText}>{(item.status || 'active').toUpperCase()}</Text>
               </View>
             </View>
             <View style={styles.userDetails}>
@@ -336,15 +518,28 @@ function UsersTab({ users, onRevoke }) {
               <Text style={styles.detailText}>Active: {item.lastActive}</Text>
             </View>
             <View style={styles.userActions}>
-              <TouchableOpacity style={styles.actionBtnSmall} onPress={() => Alert.alert("Details", JSON.stringify(item, null, 2))}>
+              <TouchableOpacity style={styles.actionBtnSmall} onPress={() => {
+                  const json = JSON.stringify(item, null, 2);
+                  if (Platform.OS === 'web') alert(json);
+                  else Alert.alert("Details", json);
+              }}>
                 <Text style={styles.actionBtnText}>View JSON</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.actionBtnSmall, { backgroundColor: "#ff4444" }]} 
-                onPress={() => onRevoke(item.id)}
-              >
-                <Text style={styles.actionBtnText}>Revoke Access</Text>
-              </TouchableOpacity>
+              {item.status === 'banned' ? (
+                <TouchableOpacity 
+                  style={[styles.actionBtnSmall, { backgroundColor: "#4caf50" }]} 
+                  onPress={() => onGrant(item.id)}
+                >
+                  <Text style={styles.actionBtnText}>Grant Access</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity 
+                  style={[styles.actionBtnSmall, { backgroundColor: "#ff4444" }]} 
+                  onPress={() => onRevoke(item.id)}
+                >
+                  <Text style={styles.actionBtnText}>Revoke Access</Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
         )}
@@ -493,6 +688,32 @@ function UtilsTab() {
           <InfoRow label="OS" value={`${Platform.OS} ${Platform.Version}`} />
           <InfoRow label="Screen" value={`${Math.round(Dimensions.get('window').width)} x ${Math.round(Dimensions.get('window').height)}`} />
           <InfoRow label="Pixel Ratio" value={Dimensions.get('window').scale.toString()} />
+        </View>
+      </View>
+    </ScrollView>
+  );
+}
+
+function MaintenanceTab({ onArchive, archiving }) {
+  return (
+    <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Data Retention</Text>
+        <View style={styles.card}>
+          <Text style={{color:'#ccc', marginBottom: 15, lineHeight: 20}}>
+            Clear ALL cases with status 'completed'.
+            This will remove them from the active database and delete associated files from Cloudinary to save space.
+            {"\n\n"}
+            <Text style={{fontWeight:'bold', color:'#fff'}}>Note:</Text> The "Total" and "Done" counts in the Admin Panel will be preserved by adding these archived cases to a separate counter.
+          </Text>
+          <TouchableOpacity 
+            style={[styles.actionButton, { width: '100%', backgroundColor: '#d32f2f', flexDirection: 'row', justifyContent: 'center' }]} 
+            onPress={onArchive}
+            disabled={archiving}
+          >
+            {archiving ? <ActivityIndicator color="#fff" style={{marginRight: 10}} /> : <Ionicons name="trash-bin" size={20} color="#fff" style={{marginRight: 10}} />}
+            <Text style={styles.actionLabel}>Archive All Completed Cases</Text>
+          </TouchableOpacity>
         </View>
       </View>
     </ScrollView>

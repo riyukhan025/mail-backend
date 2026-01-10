@@ -27,7 +27,7 @@ const SCREEN_WIDTH = Dimensions.get("window").width;
 const MENU_WIDTH = SCREEN_WIDTH * 0.5;
 
 export default function AdminPanelScreen({ navigation }) {
-  const { logout } = useContext(AuthContext);
+  const { user, logout } = useContext(AuthContext);
   const [cases, setCases] = useState([]);
   const [members, setMembers] = useState([]);
   const [searchText, setSearchText] = useState("");
@@ -46,6 +46,7 @@ export default function AdminPanelScreen({ navigation }) {
   const [uploadModalVisible, setUploadModalVisible] = useState(false);
   const [pendingUploadData, setPendingUploadData] = useState(null);
   const [isLightTheme, setIsLightTheme] = useState(false);
+  const [archivedCount, setArchivedCount] = useState(0);
 
   // Animation for Menu
   const slideAnim = useRef(new Animated.Value(-MENU_WIDTH)).current;
@@ -60,6 +61,27 @@ export default function AdminPanelScreen({ navigation }) {
       }).start();
     }
   }, [menuOpen]);
+
+  // Listen for account status changes (Revoke Access)
+  useEffect(() => {
+    if (user?.uid) {
+      const statusRef = firebase.database().ref(`users/${user.uid}/status`);
+      const listener = statusRef.on("value", (snapshot) => {
+        if (snapshot.val() === "banned") {
+          Alert.alert(
+            "Access Revoked",
+            "Access revoked due to unofficial activity? Contact dev.",
+            [{ text: "OK", onPress: async () => {
+                try { await firebase.auth().signOut(); } catch(e) {}
+                logout();
+            }}],
+            { cancelable: false }
+          );
+        }
+      });
+      return () => statusRef.off("value", listener);
+    }
+  }, [user]);
 
   const openMenu = () => {
     setMenuOpen(true);
@@ -93,12 +115,21 @@ export default function AdminPanelScreen({ navigation }) {
     });
   }, []);
 
+  // Fetch archived count
+  useEffect(() => {
+    const statsRef = firebase.database().ref("metadata/statistics/archivedCount");
+    const listener = statsRef.on("value", (snapshot) => {
+      setArchivedCount(snapshot.val() || 0);
+    });
+    return () => statsRef.off("value", listener);
+  }, []);
+
   // Counters
-  const assignedTL = cases.length;
+  const assignedTL = cases.length + archivedCount;
   const reverted = cases.filter((c) => c.status === "reverted").length;
   const assignedFE = cases.filter((c) => c.status === "assigned").length;
   const audited = cases.filter((c) => c.status === "audit").length;
-  const completed = cases.filter((c) => c.status === "completed").length;
+  const completed = cases.filter((c) => c.status === "completed").length + archivedCount;
 
   // Filtered cases
   const filteredCases = cases.filter((c) => {
@@ -201,16 +232,10 @@ export default function AdminPanelScreen({ navigation }) {
   const processExcelData = async (jsonData, mode) => {
     let addedCount = 0;
     let duplicateCount = 0;
-    const existingIds = new Set(cases.map((c) => c.id));
 
     for (const row of jsonData) {
       const refNo = row["Reference ID"]?.toString() || "";
       if (!refNo) continue;
-
-      if (existingIds.has(refNo)) {
-        duplicateCount++;
-        continue;
-      }
 
       const caseData = {
         client: row["Client"] || "",
@@ -247,6 +272,28 @@ export default function AdminPanelScreen({ navigation }) {
         comments: row["comments"] || "",
       };
 
+      // Check for exact duplicates (all fields match) to prevent re-uploading same file
+      const isDuplicate = cases.some((existing) => {
+        return (
+          (existing.matrixRefNo || "").toString().trim() === (caseData.matrixRefNo || "").toString().trim() &&
+          (existing.candidateName || "").toString().trim() === (caseData.candidateName || "").toString().trim() &&
+          (existing.checkType || "").toString().trim() === (caseData.checkType || "").toString().trim() &&
+          (existing.chkType || "").toString().trim() === (caseData.chkType || "").toString().trim() &&
+          (existing.client || "").toString().trim() === (caseData.client || "").toString().trim() &&
+          (existing.company || "").toString().trim() === (caseData.company || "").toString().trim() &&
+          (existing.address || "").toString().trim() === (caseData.address || "").toString().trim() &&
+          (existing.city || "").toString().trim() === (caseData.city || "").toString().trim() &&
+          (existing.state || "").toString().trim() === (caseData.state || "").toString().trim() &&
+          (existing.pincode || "").toString().trim() === (caseData.pincode || "").toString().trim() &&
+          (existing.contactNumber || "").toString().trim() === (caseData.contactNumber || "").toString().trim()
+        );
+      });
+
+      if (isDuplicate) {
+        duplicateCount++;
+        continue;
+      }
+
       if (mode === "automate") {
         const feName = row["fe name"];
         if (feName) {
@@ -261,11 +308,11 @@ export default function AdminPanelScreen({ navigation }) {
         }
       }
 
-      await firebase.database().ref(`cases/${caseData.matrixRefNo}`).set(caseData);
+      await firebase.database().ref(`cases`).push(caseData);
       addedCount++;
     }
-    if (Platform.OS === "web") alert(`Upload Complete\nAdded: ${addedCount}\nSkipped (Duplicates): ${duplicateCount}`);
-    else Alert.alert("Upload Complete", `Added: ${addedCount}\nSkipped (Duplicates): ${duplicateCount}`);
+    if (Platform.OS === "web") alert(`Upload Complete\nAdded: ${addedCount}\nSkipped (Exact Duplicates): ${duplicateCount}`);
+    else Alert.alert("Upload Complete", `Added: ${addedCount}\nSkipped (Exact Duplicates): ${duplicateCount}`);
   };
 
   const uploadExcel = async () => {

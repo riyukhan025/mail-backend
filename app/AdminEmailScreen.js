@@ -3,6 +3,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useEffect, useState } from "react";
 import {
     Alert,
+    NativeModules,
     Platform,
     ScrollView,
     StyleSheet,
@@ -15,7 +16,9 @@ import firebase from "../firebase";
 import { GlowButton } from "./GlowButton";
 
 // Server URL for sending email - Use your laptop's local IP address
-const SERVER_URL = "http://192.168.1.4:3000";
+const scriptURL = NativeModules.SourceCode?.scriptURL;
+const localIp = scriptURL ? scriptURL.split('://')[1].split(':')[0] : "localhost";
+const SERVER_URL = `http://${localIp}:3000`;
 
 export default function AdminEmailScreen({ navigation, route }) {
     const { caseData, caseId, user } = route.params;
@@ -34,7 +37,7 @@ export default function AdminEmailScreen({ navigation, route }) {
             const recipientEmail = "client-email@example.com"; // Placeholder
             setTo(recipientEmail);
 
-            const emailSubject = `Case Approved: ${caseData.RefNo || caseId}`;
+            const emailSubject = `Case Approved: ${caseData.matrixRefNo || caseData.RefNo || caseId}`;
             setSubject(emailSubject);
 
             const emailBody = `
@@ -44,7 +47,7 @@ This is to inform you that the verification for the following case has been comp
 
 Case Details:
 --------------------
-Reference No: ${caseData.RefNo || caseId}
+Reference No: ${caseData.matrixRefNo || caseData.RefNo || caseId}
 Candidate Name: ${caseData.candidateName || 'N/A'}
 Check Type: ${caseData.chkType || 'N/A'}
 City: ${caseData.city || 'N/A'} 
@@ -86,11 +89,11 @@ Spacesolutions Team
                     subject,
                     body,
                     caseId,
-                    RefNo: caseData.RefNo, // Pass RefNo for logging
+                    RefNo: caseData.matrixRefNo || caseData.RefNo || caseId, // Pass RefNo for logging
                     // Send an array of attachments for the server to process
                     attachments: [
-                        { url: caseData.photosFolderLink, filename: `CaseReport_${caseData.RefNo || caseId}.pdf` },
-                        { url: caseData.filledForm?.url, filename: `FilledForm_${caseData.RefNo || caseId}.pdf` }
+                        { url: caseData.photosFolderLink, filename: `CaseReport_${caseData.matrixRefNo || caseData.RefNo || caseId}.pdf` },
+                        { url: caseData.filledForm?.url, filename: `FilledForm_${caseData.matrixRefNo || caseData.RefNo || caseId}.pdf` }
                     ].filter(att => att.url) // Filter out any attachments that don't have a URL
                 }),
             });

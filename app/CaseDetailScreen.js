@@ -108,6 +108,8 @@ export default function CaseDetailScreen({ navigation, route }) {
     const displayStatus = role === "member" && status === "assigned" ? "open" : status;
     console.log(`[RENDER] status=${status}, role=${role}, displayStatus=${displayStatus}`);
     // --- NEW: Calculate total photos and if all requirements are met ---
+    
+    const isAuditFail = (caseData?.auditFeedback || (caseData?.photosToRedo && caseData?.photosToRedo.length > 0)) && displayStatus === 'open';
 
     // Robust check for "RA Associates"
     const cleanString = (str) => (str || "").toLowerCase().replace(/[\s.-]/g, '');
@@ -388,10 +390,6 @@ export default function CaseDetailScreen({ navigation, route }) {
                 {
                     text: "Take Photo with GPS",
                     onPress: () => openCamera(category),
-                },
-                {
-                    text: "Choose from Gallery",
-                    onPress: () => pickImage(category),
                 },
                 { text: "Cancel", style: "cancel" },
             ]
@@ -953,12 +951,12 @@ const handleCloseCase = async () => {
                 {/* Case Info Card */}
                 <View style={styles.card}>
                     <View style={styles.cardHeader}>
-                        <View>
-                            <Text style={styles.caseRef}>{caseData.RefNo || caseId}</Text>
+                        <View style={{ flex: 1, paddingRight: 110 }}>
+                            <Text style={styles.caseRef}>{caseData.matrixRefNo || caseData.RefNo || caseId}</Text>
                             <Text style={styles.companyName}>{caseData.company || "Unknown Company"}</Text>
                         </View>
-                        <View style={[styles.statusBadge, { backgroundColor: displayStatus === 'completed' ? '#4caf50' : '#ff9800' }]}>
-                            <Text style={styles.statusText}>{displayStatus.toUpperCase()}</Text>
+                        <View style={[styles.statusBadge, { position: 'absolute', top: 0, right: 0, backgroundColor: isAuditFail ? '#ff4444' : (displayStatus === 'completed' ? '#4caf50' : '#ff9800') }]}>
+                            <Text style={styles.statusText}>{isAuditFail ? "AUDIT FAIL" : displayStatus.toUpperCase()}</Text>
                         </View>
                     </View>
 

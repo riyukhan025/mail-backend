@@ -1,12 +1,14 @@
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
-import { useContext, useEffect, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import {
+  Alert,
   Dimensions,
   FlatList,
   Image,
   Linking,
+  Modal,
   Platform,
   StyleSheet,
   Text,
@@ -36,12 +38,38 @@ export default function Dashboard({ navigation }) {
   const [revertReason, setRevertReason] = useState("");
   const [selectedCase, setSelectedCase] = useState(null);
 
+  // Alert System State
+  const [newCaseAlert, setNewCaseAlert] = useState(null);
+  const knownCaseIds = useRef(new Set());
+  const isFirstLoad = useRef(true);
+
   useEffect(() => {
     if (user?.uid) {
       console.log("Loading cases for UID:", user.uid);
       loadCases(user.uid);
     }
     setLoading(false);
+  }, [user]);
+
+  // Listen for account status changes (Revoke Access)
+  useEffect(() => {
+    if (user?.uid) {
+      const statusRef = firebase.database().ref(`users/${user.uid}/status`);
+      const listener = statusRef.on("value", (snapshot) => {
+        if (snapshot.val() === "banned") {
+          Alert.alert(
+            "Access Revoked",
+            "Access revoked due to unofficial activity? Contact dev.",
+            [{ text: "OK", onPress: async () => {
+                try { await firebase.auth().signOut(); } catch(e) {}
+                logout();
+            }}],
+            { cancelable: false }
+          );
+        }
+      });
+      return () => statusRef.off("value", listener);
+    }
   }, [user]);
 
   const loadCases = (uid) => {
@@ -57,6 +85,24 @@ export default function Dashboard({ navigation }) {
               ...snapshot.val()[key],
             }))
           : [];
+
+        // Alert System Logic
+        if (isFirstLoad.current) {
+          // First load: just populate known IDs, don't alert
+          data.forEach(c => knownCaseIds.current.add(c.id));
+          isFirstLoad.current = false;
+        } else {
+          // Subsequent updates: check for new IDs
+          data.forEach(c => {
+            if (!knownCaseIds.current.has(c.id)) {
+              if (c.status === 'assigned') {
+                setNewCaseAlert(c);
+              }
+              knownCaseIds.current.add(c.id);
+            }
+          });
+        }
+
         setCases(data.filter((c) => c.status !== "reverted"));
       });
   };
@@ -407,22 +453,25 @@ export default function Dashboard({ navigation }) {
             <View style={[styles.caseCard, item.highPriority && styles.highPriorityCard]}>
               {/* Header */}
               <View style={styles.cardHeader}>
-                <View style={styles.headerLeft}>
+                <View style={[styles.headerLeft, { flex: 1, paddingRight: 110 }]}>
                   <View style={styles.iconCircle}>
                     <Ionicons name="briefcase" size={16} color="#fff" />
                   </View>
-                  <Text style={styles.caseTitle}>{item.matrixRefNo || item.RefNo || item.id}</Text>
-                  {(item.auditFeedback || (item.photosToRedo && item.photosToRedo.length > 0)) && item.status === 'assigned' && (
-                    <View style={styles.auditFailBadge}>
-                      <Text style={styles.auditFailText}>AUDIT FAIL</Text>
-                    </View>
-                  )}
+                  <Text style={[styles.caseTitle, { flexShrink: 1 }]}>{item.matrixRefNo || item.RefNo || item.id}</Text>
                 </View>
-                {item.highPriority && (
-                  <View style={styles.priorityBadge}>
-                    <Text style={styles.priorityText}>HIGH PRIORITY</Text>
-                  </View>
-                )}
+                
+                <View style={{ position: 'absolute', top: 0, right: 0, alignItems: 'flex-end' }}>
+                    {item.highPriority && (
+                      <View style={[styles.priorityBadge, { marginBottom: 4 }]}>
+                        <Text style={styles.priorityText}>HIGH PRIORITY</Text>
+                      </View>
+                    )}
+                    {(item.auditFeedback || (item.photosToRedo && item.photosToRedo.length > 0)) && item.status === 'assigned' && (
+                        <View style={[styles.auditFailBadge, { marginLeft: 0 }]}>
+                          <Text style={styles.auditFailText}>AUDIT FAIL</Text>
+                        </View>
+                    )}
+                </View>
               </View>
 
               {/* Content */}
@@ -513,6 +562,40 @@ export default function Dashboard({ navigation }) {
           </View>
         </View>
       )}
+
+      {/* New Case Alert Modal */}
+      <Modal
+        visible={!!newCaseAlert}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setNewCaseAlert(null)}
+      >
+        <View style={styles.alertOverlay}>
+          <View style={styles.alertBox}>
+            <Ionicons name="notifications" size={50} color="#ffd700" style={{ marginBottom: 10 }} />
+            <Text style={styles.alertTitle}>New Case Allocated!</Text>
+            <Text style={styles.alertRef}>{newCaseAlert?.matrixRefNo || newCaseAlert?.RefNo || newCaseAlert?.id}</Text>
+            <Text style={styles.alertSub}>A new case has been assigned to you.</Text>
+            
+            <TouchableOpacity 
+                style={styles.alertButton} 
+                onPress={() => {
+                    const caseId = newCaseAlert.id;
+                    setNewCaseAlert(null);
+                    navigation.navigate("CaseDetail", { caseId, user });
+                }}
+            >
+                <LinearGradient colors={["#4e0360", "#c471ed"]} style={styles.alertGradient}>
+                    <Text style={styles.alertButtonText}>View Now</Text>
+                </LinearGradient>
+            </TouchableOpacity>
+            
+            <TouchableOpacity style={styles.alertClose} onPress={() => setNewCaseAlert(null)}>
+                <Text style={styles.alertCloseText}>Dismiss</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* Sign Out & Chat */}
       <View style={{ width: '100%', alignItems: 'center' }}>
@@ -616,4 +699,16 @@ const styles = StyleSheet.create({
   statItem: { alignItems: 'center' },
   statValue: { fontSize: 20, fontWeight: 'bold', color: '#333' },
   statLabel: { fontSize: 12, color: '#555', fontWeight: '600' },
+  
+  // Alert Modal Styles
+  alertOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", alignItems: "center", padding: 20 },
+  alertBox: { backgroundColor: "#fff", width: "85%", borderRadius: 20, padding: 25, alignItems: "center", elevation: 10 },
+  alertTitle: { fontSize: 22, fontWeight: "bold", color: "#333", marginBottom: 5 },
+  alertRef: { fontSize: 18, fontWeight: "bold", color: "#4e0360", marginBottom: 10, backgroundColor: "#f3e5f5", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 5, overflow: 'hidden' },
+  alertSub: { fontSize: 14, color: "#666", textAlign: "center", marginBottom: 20 },
+  alertButton: { width: "100%", borderRadius: 10, overflow: "hidden", marginBottom: 15 },
+  alertGradient: { paddingVertical: 12, alignItems: "center", justifyContent: "center" },
+  alertButtonText: { color: "#fff", fontWeight: "bold", fontSize: 16 },
+  alertClose: { padding: 10 },
+  alertCloseText: { color: "#888", fontWeight: "600" },
 });

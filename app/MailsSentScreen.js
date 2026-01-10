@@ -31,9 +31,9 @@ export default function MailsSentScreen({ navigation, route }) {
             collectionId,
             ID.unique(),
             {
-              subject: `Case Approved: ${caseData?.RefNo || caseId}`,
+              subject: `Case Approved: ${caseData?.matrixRefNo || caseData?.RefNo || caseId}`,
               recipient: recipient || "Manual Web",
-              RefNo: caseData?.RefNo || caseId,
+              RefNo: caseData?.matrixRefNo || caseData?.RefNo || caseId,
               caseId: caseId,
               sentAt: new Date().toISOString(),
               sentBy: "admin"

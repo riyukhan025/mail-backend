@@ -5,6 +5,7 @@ import {
   Alert,
   Image,
   Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -59,13 +60,25 @@ const SIGNATURE_COORDS = {
 const CLOUD_NAME = "dfpykheky";
 const UPLOAD_PRESET = "cases_upload";
 
-async function uploadPdfToCloudinary(pdfUri, identifier) {
+async function uploadPdfToCloudinary(pdfData, identifier) {
   const formData = new FormData();
-  formData.append("file", {
-    uri: pdfUri,
-    type: "application/pdf",
-    name: `Matrix_${identifier}.pdf`,
-  });
+  
+  if (Platform.OS === 'web') {
+    // Convert base64 to Blob to ensure filename is preserved in Cloudinary raw upload
+    const binaryString = atob(pdfData);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+    const blob = new Blob([bytes], { type: "application/pdf" });
+    formData.append("file", blob, `Matrix_${identifier}.pdf`);
+  } else {
+    formData.append("file", {
+      uri: pdfData,
+      type: "application/pdf",
+      name: `Matrix_${identifier}.pdf`,
+    });
+  }
+
   formData.append("upload_preset", UPLOAD_PRESET);
   formData.append("folder", `cases/${identifier}`);
   // Fix: Explicitly set resource_type to 'raw' for PDFs to avoid timeouts/errors on large files
@@ -198,14 +211,19 @@ export default function MatrixFormScreen() {
       await asset.downloadAsync();
 
       console.log("Reading asset...");
-      const base64 = await FileSystem.readAsStringAsync(asset.localUri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-
-      console.log("Loading PDF document...");
-      const pdfDoc = await PDFDocument.load(
-        Uint8Array.from(atob(base64), c => c.charCodeAt(0))
-      );
+      let pdfDoc;
+      if (Platform.OS === 'web') {
+        const res = await fetch(asset.uri);
+        const blob = await res.arrayBuffer();
+        pdfDoc = await PDFDocument.load(blob);
+      } else {
+        const base64 = await FileSystem.readAsStringAsync(asset.localUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        pdfDoc = await PDFDocument.load(
+          Uint8Array.from(atob(base64), c => c.charCodeAt(0))
+        );
+      }
 
       const pdfForm = pdfDoc.getForm();
 
@@ -236,22 +254,28 @@ export default function MatrixFormScreen() {
       await embedSignature(pdfDoc, form.respondentSignature, SIGNATURE_COORDS.respondent);
       await embedSignature(pdfDoc, form.matrixRepSignature, SIGNATURE_COORDS.matrixRep);
 
+      // Flattening removes interactive fields, preventing blue highlights
+
       console.log("Flattening PDF...");
       pdfForm.flatten();
 
       console.log("Saving PDF...");
       const out = await pdfDoc.saveAsBase64();
-      const path =
-        FileSystem.documentDirectory +
-        `MatrixPV_${form.matrixRefNo || caseId}.pdf`;
+      let uploadInput;
 
-      await FileSystem.writeAsStringAsync(path, out, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      if (Platform.OS === 'web') {
+        uploadInput = out;
+      } else {
+        const path = FileSystem.documentDirectory + `MatrixPV_${form.matrixRefNo || caseId}.pdf`;
+        await FileSystem.writeAsStringAsync(path, out, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        uploadInput = path;
+      }
 
       console.log("Uploading PDF...");
       const uploadUrl = await uploadPdfToCloudinary(
-        path,
+        uploadInput,
         form.matrixRefNo || caseId
       );
 

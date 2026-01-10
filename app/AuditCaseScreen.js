@@ -45,12 +45,13 @@ export default function AuditCaseScreen({ navigation, route }) {
   const [isSending, setIsSending] = useState(false);
 
   // Email State
-  const [selectedTo, setSelectedTo] = useState("");
+  const [selectedTo, setSelectedTo] = useState([]);
   const [selectedCc, setSelectedCc] = useState([]);
   const [availableEmails, setAvailableEmails] = useState([]);
 
   useEffect(() => {
-      const clientName = (caseData?.company || caseData?.client || "").toLowerCase();
+      // Concatenate both fields to ensure we find the keyword regardless of which field it's in
+      const clientName = ((caseData?.company || "") + " " + (caseData?.client || "")).toLowerCase();
       let emails = ["spacesolution2017@gmail.com"]; // Default fallback
 
       if (clientName.includes("matrix")) {
@@ -81,8 +82,25 @@ export default function AuditCaseScreen({ navigation, route }) {
       }
 
       setAvailableEmails(emails);
-      if (emails.length > 0) setSelectedTo(emails[0]);
+      if (emails.length > 0) setSelectedTo([emails[0]]);
   }, [caseData]);
+
+  const handleDownloadAll = async () => {
+    if (Platform.OS === 'web') {
+        if (caseData.photosFolderLink) window.open(caseData.photosFolderLink, "_blank");
+        if (caseData.filledForm?.url) {
+            setTimeout(() => window.open(caseData.filledForm.url, "_blank"), 500);
+        }
+    } else {
+        if (caseData.photosFolderLink) {
+            await Linking.openURL(caseData.photosFolderLink);
+        }
+        if (caseData.filledForm?.url) {
+            // Small delay to ensure the device handles the second intent correctly
+            setTimeout(() => Linking.openURL(caseData.filledForm.url), 1000);
+        }
+    }
+  };
 
   const handleApprove = () => {
     setEmailModalVisible(true);
@@ -107,9 +125,9 @@ export default function AuditCaseScreen({ navigation, route }) {
                     collectionId,
                     ID.unique(),
                     {
-                        subject: `Case Approved: ${caseData.RefNo || caseId}`,
-                        recipient: selectedTo,
-                        RefNo: caseData.RefNo || caseId,
+                        subject: `Case Approved: ${caseData.matrixRefNo || caseData.RefNo || caseId}`,
+                        recipient: selectedTo.join(", "),
+                        RefNo: caseData.matrixRefNo || caseData.RefNo || caseId,
                         caseId: caseId,
                         sentAt: new Date().toISOString(),
                         sentBy: user?.uid || "admin"
@@ -135,10 +153,10 @@ export default function AuditCaseScreen({ navigation, route }) {
     setIsSending(true);
     setEmailModalVisible(false);
 
-    const subject = `Case Approved: ${caseData.RefNo || caseId}`;
-    const safeRef = (caseData.RefNo || caseId).replace(/[^a-zA-Z0-9-_]/g, '_');
+    const subject = `Case Approved: ${caseData.matrixRefNo || caseData.RefNo || caseId}`;
+    const safeRef = (caseData.matrixRefNo || caseData.RefNo || caseId).replace(/[^a-zA-Z0-9-_]/g, '_');
 
-    if (!selectedTo) {
+    if (selectedTo.length === 0) {
         Alert.alert("Error", "Please select a recipient email.");
         setIsSending(false);
         return;
@@ -152,7 +170,7 @@ This is to inform you that the verification for the following case has been comp
 
 Case Details:
 --------------------
-Reference No: ${caseData.RefNo || caseId}
+Reference No: ${caseData.matrixRefNo || caseData.RefNo || caseId}
 Candidate Name: ${caseData.candidateName || 'N/A'}
 Check Type: ${caseData.chkType || 'N/A'}
 City: ${caseData.city || 'N/A'} 
@@ -173,7 +191,7 @@ Spacesolutions Team
              
              // Construct Gmail URL (Web Browser Mail)
              const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1` +
-                `&to=${encodeURIComponent(selectedTo)}` +
+                `&to=${encodeURIComponent(selectedTo.join(','))}` +
                 `&cc=${encodeURIComponent(selectedCc.join(','))}` +
                 `&su=${encodeURIComponent(subject)}` +
                 `&body=${encodeURIComponent(webBody)}`;
@@ -186,7 +204,7 @@ Spacesolutions Team
                  manualVerification: true,
                  caseId: caseId,
                  caseData: caseData,
-                 recipient: selectedTo
+                 recipient: selectedTo.join(", ")
              });
         } else {
             if (window.confirm("Click OK to download the files now.")) {
@@ -261,7 +279,7 @@ Spacesolutions Team
 
       console.log("📧 Opening Mail Composer...");
       const result = await MailComposer.composeAsync({
-        recipients: [selectedTo],
+        recipients: selectedTo,
         ccRecipients: selectedCc,
         subject: subject,
         body: emailBody,
@@ -275,7 +293,7 @@ Spacesolutions Team
           manualVerification: true,
           caseId: caseId,
           caseData: caseData,
-          recipient: selectedTo
+          recipient: selectedTo.join(", ")
       });
     } catch (error) {
       console.error("MailComposer Error:", error);
@@ -404,6 +422,16 @@ Spacesolutions Team
                 <Text style={styles.downloadButtonText}>Filled Form</Text>
               </TouchableOpacity>
             )}
+
+            {(caseData.photosFolderLink && caseData.filledForm?.url) && (
+              <TouchableOpacity 
+                style={[styles.downloadButton, { backgroundColor: "#00897b", flex: 1 }]}
+                onPress={handleDownloadAll}
+              >
+                <Ionicons name="layers-outline" size={20} color="#fff" />
+                <Text style={styles.downloadButtonText}>Both</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           <View style={styles.actionRow}>
@@ -530,11 +558,24 @@ Spacesolutions Team
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Select Recipients</Text>
             
-            <Text style={styles.label}>To (Select One):</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+              <Text style={styles.label}>To (Select Multiple):</Text>
+              <TouchableOpacity onPress={() => {
+                  if (selectedTo.length === availableEmails.length) setSelectedTo([]);
+                  else setSelectedTo([...availableEmails]);
+              }}>
+                <Text style={{ color: '#007AFF', fontSize: 14, fontWeight: 'bold' }}>
+                  {selectedTo.length === availableEmails.length ? "Unselect All" : "Select All"}
+                </Text>
+              </TouchableOpacity>
+            </View>
             <ScrollView style={{ maxHeight: 150, marginBottom: 15 }}>
               {availableEmails.map(email => (
-                <TouchableOpacity key={email} style={styles.emailOption} onPress={() => setSelectedTo(email)}>
-                  <Ionicons name={selectedTo === email ? "radio-button-on" : "radio-button-off"} size={20} color="#007AFF" />
+                <TouchableOpacity key={email} style={styles.emailOption} onPress={() => {
+                   if (selectedTo.includes(email)) setSelectedTo(prev => prev.filter(e => e !== email));
+                   else setSelectedTo(prev => [...prev, email]);
+                }}>
+                  <Ionicons name={selectedTo.includes(email) ? "checkbox" : "square-outline"} size={20} color="#007AFF" />
                   <Text style={styles.emailText}>{email}</Text>
                 </TouchableOpacity>
               ))}

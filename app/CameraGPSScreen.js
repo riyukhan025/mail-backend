@@ -35,15 +35,21 @@ export default function CameraGPSScreen({ navigation, route }) {
     const startTracking = async () => {
       if (hasLocationPermission) {
         try {
-          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-          handleLocationUpdate(loc);
+          // 1. Get last known position immediately for speed (avoids "Fetching..." stuck)
+          const lastKnown = await Location.getLastKnownPositionAsync();
+          if (lastKnown) {
+            handleLocationUpdate(lastKnown);
+          }
+
+          // 2. Start watching for high-accuracy updates
           subscription = await Location.watchPositionAsync(
-            { accuracy: Location.Accuracy.High, timeInterval: 3000, distanceInterval: 10 },
+            { accuracy: Location.Accuracy.High, timeInterval: 2000, distanceInterval: 5 },
             (location) => handleLocationUpdate(location)
           );
         } catch (e) {
           console.log("Location error:", e);
-          setCurrentAddress("Location unavailable");
+          // Only show error if we haven't found a location yet
+          setCurrentAddress((prev) => prev === "Fetching location..." ? "Location unavailable" : prev);
         }
       }
     };
@@ -64,6 +70,10 @@ export default function CameraGPSScreen({ navigation, route }) {
       }
     } catch (e) {
       console.log("Geocode error:", e);
+      // If geocoding fails but we have coords, keep previous address or show unavailable
+      if (currentAddress === "Fetching location...") {
+         setCurrentAddress("Address unavailable (GPS Only)");
+      }
     }
   };
 

@@ -1,9 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import { useContext, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,36 +16,82 @@ import {
 import firebase from "../firebase";
 import { AuthContext } from "./AuthContext";
 
+const CLOUD_NAME = "dfpykheky";
+const UPLOAD_PRESET = "cases_upload";
+
 export default function Updatescreen({ navigation }) {
   const { user, login } = useContext(AuthContext);
   const [userData, setUserData] = useState(user || {});
+  const [originalData, setOriginalData] = useState(user || {});
   const [loading, setLoading] = useState(false);
+  const [image, setImage] = useState(null);
 
   useEffect(() => {
     if (user?.uid) {
       const ref = firebase.database().ref(`users/${user.uid}`);
       const listener = ref.on("value", (snapshot) => {
         if (snapshot.exists()) {
-          setUserData({ ...snapshot.val(), uid: user.uid });
+          const data = { ...snapshot.val(), uid: user.uid };
+          setUserData(data);
+          setOriginalData(data);
         }
       });
       return () => ref.off("value", listener);
     }
   }, [user]);
 
+  const hasChanges = JSON.stringify(userData) !== JSON.stringify(originalData) || image !== null;
+
+  const pickImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.5,
+    });
+
+    if (!result.canceled) {
+      setImage(result.assets[0].uri);
+    }
+  };
+
   const handleUpdate = async () => {
     try {
       setLoading(true);
-      await firebase.database().ref(`users/${user.uid}`).update({
+      let photoURL = userData.photoURL;
+
+      if (image) {
+        const formData = new FormData();
+        formData.append("file", {
+          uri: image,
+          type: "image/jpeg",
+          name: `profile_${user.uid}.jpg`,
+        });
+        formData.append("upload_preset", UPLOAD_PRESET);
+        formData.append("folder", "members");
+
+        const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
+          method: "POST",
+          body: formData,
+        });
+        const data = await res.json();
+        if (data.secure_url) photoURL = data.secure_url;
+      }
+
+      const updates = {
         name: userData.name,
         city: userData.city,
         pincode: userData.pincode,
         bloodGroup: userData.bloodGroup,
         email: userData.email,
-      });
+        photoURL: photoURL || userData.photoURL || ""
+      };
+
+      await firebase.database().ref(`users/${user.uid}`).update(updates);
       // Update local context
-      login(userData);
+      login({ ...userData, ...updates });
       Alert.alert("Success", "Profile updated successfully!");
+      setImage(null);
     } catch (e) {
       Alert.alert("Error", e.message);
     } finally {
@@ -78,6 +126,22 @@ export default function Updatescreen({ navigation }) {
 
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.card}>
+          <View style={styles.profileContainer}>
+            <TouchableOpacity onPress={pickImage} style={styles.avatarWrapper}>
+              {image || userData.photoURL ? (
+                <Image source={{ uri: image || userData.photoURL }} style={styles.profileImage} />
+              ) : (
+                <View style={styles.placeholderImage}>
+                  <Ionicons name="person" size={40} color="#ccc" />
+                </View>
+              )}
+              <View style={styles.editIconBadge}>
+                <Ionicons name="camera" size={14} color="#fff" />
+              </View>
+            </TouchableOpacity>
+            <Text style={styles.changePhotoText}>Tap to change photo</Text>
+          </View>
+
           <Text style={styles.sectionTitle}>Personal Details</Text>
           
           {renderInput("Full Name", "name", "person-outline")}
@@ -91,7 +155,11 @@ export default function Updatescreen({ navigation }) {
              <Text style={styles.infoValue}>{userData.uniqueId || "N/A"}</Text>
           </View>
 
-          <TouchableOpacity style={styles.updateButton} onPress={handleUpdate} disabled={loading}>
+          <TouchableOpacity 
+            style={[styles.updateButton, !hasChanges && styles.disabledButton]} 
+            onPress={handleUpdate} 
+            disabled={loading || !hasChanges}
+          >
             {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.buttonText}>Update Profile</Text>}
           </TouchableOpacity>
 
@@ -117,6 +185,12 @@ const styles = StyleSheet.create({
   title: { fontSize: 20, fontWeight: "bold", color: "#fff" },
   content: { padding: 20 },
   card: { backgroundColor: "rgba(255,255,255,0.1)", borderRadius: 20, padding: 20 },
+  profileContainer: { alignItems: 'center', marginBottom: 20 },
+  avatarWrapper: { position: 'relative' },
+  profileImage: { width: 100, height: 100, borderRadius: 50, borderWidth: 2, borderColor: '#facc15' },
+  placeholderImage: { width: 100, height: 100, borderRadius: 50, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#facc15' },
+  editIconBadge: { position: 'absolute', bottom: 0, right: 0, backgroundColor: '#007AFF', width: 30, height: 30, borderRadius: 15, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#fff' },
+  changePhotoText: { color: '#aaa', fontSize: 12, marginTop: 8 },
   sectionTitle: { color: "#ffd700", fontSize: 18, fontWeight: "bold", marginBottom: 20, textAlign: "center" },
   inputContainer: { marginBottom: 15 },
   label: { color: "#ccc", fontSize: 14, marginBottom: 5, marginLeft: 5 },
@@ -127,6 +201,7 @@ const styles = StyleSheet.create({
   infoLabel: { color: "#aaa", fontSize: 16 },
   infoValue: { color: "#fff", fontSize: 16, fontWeight: "bold" },
   updateButton: { backgroundColor: "#facc15", padding: 15, borderRadius: 10, alignItems: "center", marginBottom: 15 },
+  disabledButton: { backgroundColor: "#555", opacity: 0.7 },
   buttonText: { color: "#000", fontWeight: "bold", fontSize: 16 },
   idCardButton: { marginTop: 10 },
   gradientBtn: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', padding: 15, borderRadius: 10 },

@@ -7,10 +7,6 @@ import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
-import * as Device from "expo-device";
-import * as Notifications from "expo-notifications";
-
-import { ref, set } from "firebase/database";
 import { AuthContext } from "./app/AuthContext";
 import firebase, { db } from "./firebase";
 
@@ -43,7 +39,6 @@ import MemberDSRScreen from "./app/MemberDSRScreen";
 import MemberViewScreen from "./app/MemberViewScreen";
 import PlanYourDayScreen from "./app/PlanYourDayScreen";
 import RevertedCasesScreen from "./app/RevertedCasesScreen";
-import SendNotificationScreen from "./app/SendNotificationScreen";
 import SplashScreen from "./app/SplashScreen";
 import TeamDSRScreen from "./app/TeamDSRScreen";
 import Updatescreen from "./app/Updatescreen";
@@ -51,17 +46,6 @@ import VerifyProfileScreen from "./app/VerifyProfileScreen";
 
 /* ---------------- Stack ---------------- */
 const Stack = createNativeStackNavigator();
-
-/* ---------------- Notifications ---------------- */
-if (Platform.OS !== "web") {
-  Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowAlert: true,
-      shouldPlaySound: false,
-      shouldSetBadge: false,
-    }),
-  });
-}
 
 /* ---------------- Auth Stack ---------------- */
 function AuthStack() {
@@ -105,10 +89,6 @@ function AdminStack() {
         component={MemberDSRDetailScreen}
       />
       <Stack.Screen name="MemberDSRScreen" component={MemberDSRScreen} />
-      <Stack.Screen
-        name="SendNotificationScreen"
-        component={SendNotificationScreen}
-      />
       <Stack.Screen
         name="AdminEmailScreen"
         component={AdminEmailScreen}
@@ -163,78 +143,6 @@ function MemberStack() {
   );
 }
 
-/* ---------------- Push Notifications Hook ---------------- */
-function usePushNotifications(dbUser) {
-  useEffect(() => {
-    if (Platform.OS === "web") return;
-
-    async function register() {
-      if (!Device.isDevice) {
-        console.log("Push Notifications: Must use physical device.");
-        return;
-      }
-
-      const { status: existingStatus } = await Notifications.getPermissionsAsync();
-      let finalStatus = existingStatus;
-      if (existingStatus !== 'granted') {
-        const { status } = await Notifications.requestPermissionsAsync();
-        finalStatus = status;
-      }
-      if (finalStatus !== 'granted') {
-        console.log('Failed to get push token for push notification!');
-        return;
-      }
-
-      try {
-        const token = await Notifications.getExpoPushTokenAsync({
-          projectId: "86bcda2d-e6ff-42d3-9903-f0c4134779da",
-        });
-        console.log("Expo Push Token:", token.data);
-
-        if (dbUser?.uid) {
-          await set(
-            ref(db, `users/${dbUser.uid}/expoPushToken`),
-            token.data
-          );
-        }
-      } catch (error) {
-        console.error("Error getting push token:", error);
-        if (Platform.OS === 'android' && error.message?.includes("Default FirebaseApp is not initialized")) {
-          Alert.alert(
-            "FCM Configuration Missing",
-            "FCM Config Missing or Outdated Build.\n\n1. Ensure 'google-services.json' is in project root.\n2. Check 'app.json' includes 'googleServicesFile'.\n3. REBUILD APP (EAS Build) to apply changes."
-          );
-        }
-      }
-
-      if (Platform.OS === 'android') {
-        await Notifications.setNotificationChannelAsync('default', {
-          name: 'default',
-          importance: Notifications.AndroidImportance.MAX,
-          vibrationPattern: [0, 250, 250, 250],
-          lightColor: '#FF231F7C',
-        });
-      }
-    }
-
-    register();
-
-    // Listeners for debugging
-    const subscription1 = Notifications.addNotificationReceivedListener(notification => {
-      console.log("🔔 Notification Received:", notification);
-    });
-
-    const subscription2 = Notifications.addNotificationResponseReceivedListener(response => {
-      console.log("🔔 Notification Tapped:", response);
-    });
-
-    return () => {
-      subscription1.remove();
-      subscription2.remove();
-    };
-  }, [dbUser]);
-}
-
 /* ---------------- App Content ---------------- */
 function AppContent() {
   const [dbUser, setDbUser] = useState(null);
@@ -254,8 +162,6 @@ function AppContent() {
     };
     restoreUser();
   }, []);
-
-  usePushNotifications(dbUser);
 
   const authContext = useMemo(() => ({
     user: dbUser,

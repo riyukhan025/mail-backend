@@ -10,7 +10,6 @@ import {
   Image,
   ImageBackground,
   KeyboardAvoidingView,
-  LogBox,
   Modal,
   Platform,
   ScrollView,
@@ -27,16 +26,8 @@ import { logErrorToFirebase } from "./errorUtils";
 
 const AnimatedBG = Animated.createAnimatedComponent(ImageBackground);
 
-// Suppress Expo Go SDK 53 notification error
-LogBox.ignoreLogs([
-  "expo-notifications: Android Push notifications (remote notifications) functionality provided by expo-notifications was removed",
-]);
-
 export default function AuthScreen({ navigation }) {
   const { login } = useContext(AuthContext);
-  const [identifier, setIdentifier] = useState("");
-  const [password, setPassword] = useState("");
-  
   // Signup States
   const [isSignup, setIsSignup] = useState(false);
   const [name, setName] = useState("");
@@ -44,6 +35,8 @@ export default function AuthScreen({ navigation }) {
   const [pincode, setPincode] = useState("");
   const [bloodGroup, setBloodGroup] = useState("");
 
+  const [identifier, setIdentifier] = useState("");
+  const [password, setPassword] = useState("");
   const [otpInput, setOtpInput] = useState("");
   const [otpPhase, setOtpPhase] = useState(false);
   const [currentUid, setCurrentUid] = useState(null);
@@ -133,6 +126,10 @@ export default function AuthScreen({ navigation }) {
 
       const uid = Object.keys(snap.val())[0];
       const user = snap.val()[uid];
+
+      if (user.status === "banned") {
+        return showMessage("Your access was revoked");
+      }
 
       if (user.password !== password)
         return showMessage("Invalid password");
