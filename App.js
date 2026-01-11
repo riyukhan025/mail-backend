@@ -43,6 +43,7 @@ import SplashScreen from "./app/SplashScreen";
 import TeamDSRScreen from "./app/TeamDSRScreen";
 import Updatescreen from "./app/Updatescreen";
 import VerifyProfileScreen from "./app/VerifyProfileScreen";
+import StatisticsScreen from "./app/StatisticsScreen";
 
 /* ---------------- Stack ---------------- */
 const Stack = createNativeStackNavigator();
@@ -95,6 +96,7 @@ function AdminStack() {
       />
       <Stack.Screen name="MailsSentScreen" component={MailsSentScreen} />
       <Stack.Screen name="MailRecordsScreen" component={MailRecordsScreen} />
+      <Stack.Screen name="StatisticsScreen" component={StatisticsScreen} />
     </Stack.Navigator>
   );
 }

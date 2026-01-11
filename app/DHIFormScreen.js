@@ -1,47 +1,74 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    Image,
-    Modal,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  Image,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from "react-native";
 
 import { decode as atob } from "base-64";
 import { Asset } from "expo-asset";
 import * as FileSystem from "expo-file-system/legacy";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, PDFName, StandardFonts, rgb } from "pdf-lib";
 import SignatureScreen from "react-native-signature-canvas";
 
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { get, getDatabase, ref, update } from "firebase/database";
 
 /* ================= ACROFIELDS (DHI) ================= */
-// Note: These field names should match the AcroForm fields in your DHI PDF template.
-// Using generic names similar to CES for now.
 const TEXT_FIELDS = {
-  caseReferenceNumber: "RefNo_Field",
-  candidateName: "CandidateName_Field",
-  fatherName: "FatherName_Field",
-  address: "Address_Field",
-  contactNumber: "Contact_Field",
-  respondentName: "RespondentName_Field",
-  relationship: "Relationship_Field",
-  verifierName: "VerifierName_Field",
-  remarks: "Remarks_Field",
+  companyName: "Multi_1",
+  addressLine1: "Multi_2",
+  addressLine2: "Multi_3",
+  locationDetailsIfNoCompany: "Multi_4",
+  officeSpace: "Multi_5",
+  employeeCount: "Multi_6",
+  businessNature: "Multi_7",
+  respondentDetails: "Multi_8",
+  verifierDetails: "Multi_9",
+  emailIds: "Multi_10",
+  phoneNumbers: "Multi_11",
+  additionalContacts: "Multi_12",
+  neighbor1: "Multi_13",
+  neighbor2: "Multi_14",
+  postalCheck: "Multi_15",
+  courierCheck: "Multi_16",
+  comments: "Multi_17",
+  fieldAssistantSignatureText: "Multi_19",
+  date: "Multi_19",
+  time: "Multi_20"
+};
+
+const CHECKBOX_FIELDS = {
+  // Is Name Board Displayed?
+  nameBoardYes: "Check_1",
+  nameBoardNo: "Check_2",
+
+  // Type of Locality
+  localityResidential: "Check_3",
+  localityCommercial: "Check_4",
+
+  // Does company exist?
+  companyExistsYes: "Check_5",
+  companyExistsNo: "Check_6",
+
+  // Status of Verification
+  statusClear: "Check_7",
+  statusDiscrepant: "Check_8",
+  statusUnable: "Check_9",
 };
 
 /* ================= SIGNATURE COORDS ================= */
 const SIGNATURE_COORDS = {
-  respondent: { x: 150, y: 150, width: 160, height: 45 },
-  verifier: { x: 360, y: 150, width: 160, height: 45 },
+  verifier: { x: 330, y: 95, width: 160, height: 45 },
 };
 
 /* ================= CLOUDINARY CONFIG ================= */
@@ -88,15 +115,30 @@ export default function DHIFormScreen() {
   const [signingField, setSigningField] = useState(null);
 
   const [form, setForm] = useState({
-    caseReferenceNumber: "",
-    candidateName: "",
-    fatherName: "",
-    address: "",
-    contactNumber: "",
-    respondentName: "",
-    relationship: "",
-    verifierName: "",
-    remarks: "",
+    companyName: "",
+    addressLine1: "",
+    addressLine2: "",
+    locationDetailsIfNoCompany: "",
+    officeSpace: "",
+    employeeCount: "",
+    businessNature: "",
+    respondentDetails: "",
+    verifierDetails: "",
+    emailIds: "",
+    phoneNumbers: "",
+    additionalContacts: "",
+    neighbor1: "",
+    neighbor2: "",
+    postalCheck: "",
+    courierCheck: "",
+    fieldAssistantName: "",
+    comments: "",
+    fieldAssistantSignatureText: "",
+    date: new Date().toLocaleDateString(),
+    time: new Date().toLocaleTimeString(),
+    
+    // Checkboxes
+    checkboxes: {},
     
     respondentSignature: "",
     verifierSignature: "",
@@ -108,15 +150,12 @@ export default function DHIFormScreen() {
       if (!data) return;
       setForm(prev => ({
         ...prev,
-        caseReferenceNumber: data.matrixRefNo || data.caseReferenceNumber || data.RefNo || "",
-        candidateName: data.candidateName || "",
-        fatherName: data.fatherName || "",
-        address: data.address || "",
-        contactNumber: data.contactNumber || "",
-        respondentName: data.respondentName || "",
-        relationship: data.relationship || "",
-        verifierName: data.verifierName || "",
-        remarks: data.remarks || "",
+        companyName: data.company || data.client || "",
+        addressLine1: data.address || "",
+        respondentDetails: data.respondentName || "",
+        phoneNumbers: data.contactNumber || "",
+        fieldAssistantName: data.assigneeName || "",
+        checkboxes: data.checkboxes || {},
         respondentSignature: data.respondentSignature || "",
         verifierSignature: data.verifierSignature || "",
       }));
@@ -149,7 +188,10 @@ export default function DHIFormScreen() {
     const img = await pdfDoc.embedPng(
       Uint8Array.from(atob(base64), c => c.charCodeAt(0))
     );
-    pdfDoc.getPages()[0].drawImage(img, coords);
+    const dims = img.scaleToFit(coords.width, coords.height);
+    const x = coords.x + (coords.width - dims.width) / 2;
+    const y = coords.y + (coords.height - dims.height) / 2;
+    pdfDoc.getPages()[0].drawImage(img, { x, y, width: dims.width, height: dims.height });
   };
 
   /* ================= PDF GENERATION ================= */
@@ -160,7 +202,7 @@ export default function DHIFormScreen() {
       setProgressMessage("Initializing...");
 
       // Ensure you have DHI_Format.pdf in your assets folder
-      const asset = Asset.fromModule(require("../assets/DHI_Format.pdf"));
+      const asset = Asset.fromModule(require("../assets/DHI_FORM.pdf"));
       await asset.downloadAsync();
 
       setProgress(0.2);
@@ -182,6 +224,28 @@ export default function DHIFormScreen() {
       
       const pdfForm = pdfDoc.getForm();
 
+      // --- DEBUG: Log all fields found in the PDF ---
+      const fields = pdfForm.getFields();
+      console.log(`[DEBUG] Total Fields Found: ${fields.length}`);
+      let textCount = 0;
+      let checkCount = 0;
+      fields.forEach(f => {
+        const type = f.constructor.name;
+        const name = f.getName();
+        console.log(`[DEBUG] Field: ${name} (${type})`);
+        if (type === 'PDFTextField') textCount++;
+        if (type === 'PDFCheckBox') checkCount++;
+      });
+      console.log(`[DEBUG] Summary: ${textCount} TextFields, ${checkCount} Checkboxes`);
+      // ----------------------------------------------
+
+      /* FIX BLUE BOX ISSUE - Set default appearance */
+      pdfForm.getFields().forEach(field => {
+        try {
+          field.acroField.setDefaultAppearance('/Helv 9 Tf 0 g');
+        } catch (e) {}
+      });
+
       setProgress(0.4);
       setProgressMessage("Filling form data...");
       
@@ -194,23 +258,70 @@ export default function DHIFormScreen() {
         }
       });
 
+      // Fill Checkboxes
+      Object.entries(CHECKBOX_FIELDS).forEach(([key, fieldName]) => {
+        try {
+          const cb = pdfForm.getCheckBox(fieldName);
+          if (form.checkboxes[key]) {
+            cb.check();
+          } else {
+            cb.uncheck();
+          }
+        } catch (err) {
+          console.log(`Checkbox ${fieldName} error: ${err.message}`);
+        }
+      });
+
+      // Manually place Field Assistant Name
+      if (form.fieldAssistantName) {
+        const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+        const page = pdfDoc.getPages()[0];
+        page.drawText(form.fieldAssistantName, {
+            x: 330,
+            y: 145, // Placed above the signature
+            size: 10,
+            font: font,
+            color: rgb(0, 0, 0),
+        });
+      }
+
       setProgress(0.6);
       setProgressMessage("Embedding signatures...");
-      await embedSignature(pdfDoc, form.respondentSignature, SIGNATURE_COORDS.respondent);
       await embedSignature(pdfDoc, form.verifierSignature, SIGNATURE_COORDS.verifier);
 
+      /* FIX BLUE BOX ISSUE - Update appearances and flatten */
+      try {
+        pdfForm.updateFieldAppearances();
+      } catch (e) {
+        console.log("Error updating field appearances:", e);
+      }
+
       // Fix for blue boxes: make all fields read-only before flattening
-      pdfForm.getFields().forEach(field => field.enableReadOnly());
+      pdfForm.getFields().forEach(field => {
+        try { field.enableReadOnly(); } catch (e) {}
+      });
       pdfForm.flatten();
+
+      // Nuclear option: Remove all annotations to ensure no blue boxes
+      pdfDoc.getPages().forEach(page => {
+        page.node.delete(PDFName.of('Annots'));
+      });
 
       setProgress(0.7);
       setProgressMessage("Saving PDF...");
-      const out = await pdfDoc.saveAsBase64();
       
+      let out;
       let uploadInput;
+
       if (Platform.OS === 'web') {
+        // FIX: Use save() instead of saveAsBase64() on WEB to ensure AcroForm removal
+        const bytes = await pdfDoc.save();
+        let binary = '';
+        for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+        out = btoa(binary);
         uploadInput = out;
       } else {
+        out = await pdfDoc.saveAsBase64();
         const path = FileSystem.documentDirectory + `DHI_${form.caseReferenceNumber}.pdf`;
         await FileSystem.writeAsStringAsync(path, out, {
           encoding: FileSystem.EncodingType.Base64,
@@ -220,7 +331,7 @@ export default function DHIFormScreen() {
 
       setProgress(0.8);
       setProgressMessage("Uploading to Cloud...");
-      const uploadUrl = await uploadPdfToCloudinary(uploadInput, form.caseReferenceNumber);
+      const uploadUrl = await uploadPdfToCloudinary(uploadInput, form.companyName || caseId);
 
       setProgress(0.9);
       setProgressMessage("Finalizing...");
@@ -254,29 +365,38 @@ export default function DHIFormScreen() {
         <Text style={styles.headerTitle}>DHI Verification Form</Text>
       </View>
 
+      <Text style={styles.sectionTitle}>Company & Location</Text>
       {Object.keys(TEXT_FIELDS).map(k => (
-        <TextInput
+        <View key={k} style={{ marginBottom: 10 }}>
+          <Text style={styles.label}>{k.replace(/([A-Z])/g, ' $1').trim()}</Text>
+          <TextInput
+            placeholder={`Enter ${k}`}
+            style={styles.input}
+            value={form[k]}
+            onChangeText={v => setForm({ ...form, [k]: v })}
+          />
+        </View>
+      ))}
+
+      <Text style={styles.sectionTitle}>Checklist</Text>
+      {Object.keys(CHECKBOX_FIELDS).map(k => (
+        <TouchableOpacity
           key={k}
-          placeholder={k.replace(/([A-Z])/g, ' $1').trim()} // Format camelCase to Title Case
-          style={styles.input}
-          value={form[k]}
-          onChangeText={v => setForm({ ...form, [k]: v })}
-        />
+          style={styles.checkboxRow}
+          onPress={() =>
+            setForm(f => ({
+              ...f,
+              checkboxes: { ...f.checkboxes, [k]: !f.checkboxes[k] }
+            }))
+          }
+        >
+          <View style={[styles.checkbox, form.checkboxes[k] && styles.checked]} />
+          <Text>{k.replace(/([A-Z])/g, ' $1').trim()}</Text>
+        </TouchableOpacity>
       ))}
 
       {/* SIGNATURES */}
       <Text style={styles.sectionTitle}>Signatures</Text>
-      <TouchableOpacity style={styles.sig} onPress={() => setSigningField("respondentSignature")}>
-        {form.respondentSignature ? (
-          <Image
-            source={{ uri: `data:image/png;base64,${form.respondentSignature}` }}
-            style={{ width: "100%", height: "100%", resizeMode: "contain" }}
-          />
-        ) : (
-          <Text>Respondent Signature</Text>
-        )}
-      </TouchableOpacity>
-
       <TouchableOpacity style={styles.sig} onPress={() => setSigningField("verifierSignature")}>
         {form.verifierSignature ? (
           <Image
@@ -284,7 +404,7 @@ export default function DHIFormScreen() {
             style={{ width: "100%", height: "100%", resizeMode: "contain" }}
           />
         ) : (
-          <Text>Verifier Signature</Text>
+          <Text>Field Assistant Signature</Text>
         )}
       </TouchableOpacity>
 
@@ -301,6 +421,9 @@ export default function DHIFormScreen() {
             descriptionText="Sign above"
             clearText="Clear"
             confirmText="Save"
+            trimWhitespace={true}
+            minWidth={3}
+            maxWidth={5}
             webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 0px; width: 100%; position: absolute; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
           />
           <TouchableOpacity style={styles.close} onPress={() => setSigningField(null)}>
@@ -332,7 +455,11 @@ const styles = StyleSheet.create({
   backButton: { marginRight: 15 },
   headerTitle: { fontSize: 20, fontWeight: "bold", textAlign: "center", flex: 1 },
   sectionTitle: { fontSize: 16, fontWeight: "bold", marginTop: 10, marginBottom: 10 },
+  label: { fontSize: 12, color: "#666", marginBottom: 4 },
   input: { borderWidth: 1, borderColor: "#ccc", padding: 10, marginBottom: 12, borderRadius: 5 },
+  checkboxRow: { flexDirection: "row", alignItems: "center", marginBottom: 10 },
+  checkbox: { width: 20, height: 20, borderWidth: 1, marginRight: 10 },
+  checked: { backgroundColor: "#000" },
   sig: { height: 90, borderWidth: 1, marginBottom: 12, alignItems: "center", justifyContent: "center", backgroundColor: "#e0e0e0", borderRadius: 5 },
   submit: { backgroundColor: "green", padding: 16, alignItems: "center", borderRadius: 5, marginTop: 10 },
   close: { position: "absolute", top: 40, right: 20, backgroundColor: "red", padding: 10, borderRadius: 5 },

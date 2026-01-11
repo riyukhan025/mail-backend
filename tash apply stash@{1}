@@ -1,0 +1,162 @@
+[1mdiff --git a/app/StatisticsScreen.js b/app/StatisticsScreen.js[m
+[1mnew file mode 100644[m
+[1mindex 0000000..84efbb6[m
+[1m--- /dev/null[m
+[1m+++ b/app/StatisticsScreen.js[m
+[36m@@ -0,0 +1,330 @@[m
+[32m+[m[32mimport { Ionicons } from "@expo/vector-icons";[m
+[32m+[m[32mimport { LinearGradient } from "expo-linear-gradient";[m
+[32m+[m[32mimport { useEffect, useState } from "react";[m
+[32m+[m[32mimport {[m
+[32m+[m[32m    ActivityIndicator,[m
+[32m+[m[32m    Alert,[m
+[32m+[m[32m    Dimensions,[m
+[32m+[m[32m    ScrollView,[m
+[32m+[m[32m    StyleSheet,[m
+[32m+[m[32m    Text,[m
+[32m+[m[32m    TouchableOpacity,[m
+[32m+[m[32m    View[m
+[32m+[m[32m} from "react-native";[m
+[32m+[m[32mimport { BarChart, LineChart, PieChart } from "react-native-chart-kit";[m
+[32m+[m[32mimport firebase from "../firebase";[m
+[32m+[m
+[32m+[m[32mconst screenWidth = Dimensions.get("window").width;[m
+[32m+[m
+[32m+[m[32mexport default function StatisticsScreen({ navigation }) {[m
+[32m+[m[32m  const [statsData, setStatsData] = useState(null);[m
+[32m+[m[32m  const [loading, setLoading] = useState(true);[m
+[32m+[m
+[32m+[m[32m  useEffect(() => {[m
+[32m+[m[32m    fetchDataAndCalculate();[m
+[32m+[m[32m  }, []);[m
+[32m+[m
+[32m+[m[32m  const fetchDataAndCalculate = async () => {[m
+[32m+[m[32m    try {[m
+[32m+[m[32m      setLoading(true);[m
+[32m+[m[32m      // 1. Fetch all cases[m
+[32m+[m[32m      const casesSnap = await firebase.database().ref("cases").once("value");[m
+[32m+[m[32m      const casesData = casesSnap.val() || {};[m
+[32m+[m[32m      const allCases = Object.keys(casesData).map(key => ({ id: key, ...casesData[key] }));[m
+[32m+[m
+[32m+[m[32m      // 2. Fetch users (for names)[m
+[32m+[m[32m      const usersSnap = await firebase.database().ref("users").once("value");[m
+[32m+[m[32m      const usersData = usersSnap.val() || {};[m
+[32m+[m[32m      const allUsers = Object.keys(usersData).map(key => ({ id: key, ...usersData[key] }));[m
+[32m+[m
+[32m+[m[32m      // 3. Calculate Stats[m
+[32m+[m[32m      const now = new Date();[m
+[32m+[m[32m      const currentMonth = now.getMonth();[m
+[32m+[m[32m      const currentYear = now.getFullYear();[m
+[32m+[m[32m      const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;[m
+[32m+[m[32m      const prevMonthYear = currentMonth === 0 ? currentYear - 1 : currentYear;[m
+[32m+[m
+[32m+[m[32m      let currentMonthCount = 0;[m
+[32m+[m[32m      let prevMonthCount = 0;[m
+[32m+[m[41m      [m
+[32m+[m[32m      const statusCounts = { completed: 0, pending: 0, reverted: 0, audit: 0 };[m
+[32m+[m[32m      const dailyTrend = {}; // Last 30 days[m
+[32m+[m[32m      const memberCounts = {}; // "uid": count[m
+[32m+[m
+[32m+[m[32m      // Initialize last 30 days[m
+[32m+[m[32m      for (let i = 29; i >= 0; i--) {[m
+[32m+[m[32m        const d = new Date();[m
+[32m+[m[32m        d.setDate(d.getDate() - i);[m
+[32m+[m[32m        const key = `${d.getMonth() + 1}/${d.getDate()}`;[m
+[32m+[m[32m        dailyTrend[key] = 0;[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      allCases.forEach(c => {[m
+[32m+[m[32m        // Status Counts[m
+[32m+[m[32m        if (c.status === 'completed' || c.status === 'closed') statusCounts.completed++;[m
+[32m+[m[32m        else if (c.status === 'reverted') statusCounts.reverted++;[m
+[32m+[m[32m        else if (c.status === 'audit') statusCounts.audit++;[m
+[32m+[m[32m        else statusCounts.pending++;[m
+[32m+[m
+[32m+[m[32m        // Member Performance[m
+[32m+[m[32m        if ((c.status === 'completed' || c.status === 'closed') && c.assignedTo) {[m
+[32m+[m[32m             memberCounts[c.assignedTo] = (memberCounts[c.assignedTo] || 0) + 1;[m
+[32m+[m[32m        }[m
+[32m+[m
+[32m+[m[32m        if ((c.status === 'completed' || c.status === 'audit') && c.completedAt) {[m
+[32m+[m[32m          const d = new Date(c.completedAt);[m
+[32m+[m[41m          [m
+[32m+[m[32m          // Daily Trend[m
+[32m+[m[32m          const dayDiff = Math.floor((now - d) / (1000 * 60 * 60 * 24));[m
+[32m+[m[32m          if (dayDiff < 30 && dayDiff >= 0) {[m
+[32m+[m[32m            const key = `${d.getMonth() + 1}/${d.getDate()}`;[m
+[32m+[m[32m            if (dailyTrend[key] !== undefined) dailyTrend[key]++;[m
+[32m+[m[32m          }[m
+[32m+[m
+[32m+[m[32m          // Monthly[m
+[32m+[m[32m          if (d.getMonth() === currentMonth && d.getFullYear() === currentYear) {[m
+[32m+[m[32m            currentMonthCount++;[m
+[32m+[m[32m          } else if (d.getMonth() === prevMonth && d.getFullYear() === prevMonthYear) {[m
+[32m+[m[32m            prevMonthCount++;[m
+[32m+[m[32m          }[m
+[32m+[m[32m        }[m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m      // Format Pie Data[m
+[32m+[m[32m      const pieData = [[m
+[32m+[m[32m        { name: "Done", count: statusCounts.completed, color: "#4caf50", legendFontColor: "#7F7F7F", legendFontSize: 12 },[m
+[32m+[m[32m        { name: "Pending", count: statusCounts.pending, color: "#ff9800", legendFontColor: "#7F7F7F", legendFontSize: 12 },[m
+[32m+[m[32m        { name: "Reverted", count: statusCounts.reverted, color: "#f44336", legendFontColor: "#7F7F7F", legendFontSize: 12 },[m
+[32m+[m[32m        { name: "Audit", count: statusCounts.audit, color: "#2196f3", legendFontColor: "#7F7F7F", legendFontSize: 12 }[m
+[32m+[m[32m      ];[m
+[32m+[m
+[32m+[m[32m      // Format Trend Data[m
+[32m+[m[32m      const trendLabels = Object.keys(dailyTrend);[m
+[32m+[m[32m      const trendData = Object.values(dailyTrend);[m
+[32m+[m
+[32m+[m[32m      // Format Member Data (Top 5)[m
+[32m+[m[32m      const sortedMembers = Object.entries(memberCounts)[m
+[32m+[m[32m        .sort((a, b) => b[1] - a[1])[m
+[32m+[m[32m        .slice(0, 5);[m
+[32m+[m[41m      [m
+[32m+[m[32m      const memberLabels = sortedMembers.map(([uid]) => {[m
+[32m+[m[32m          const u = allUsers.find(user => user.id === uid);[m
+[32m+[m[32m          return u ? (u.name || u.email.split('@')[0]).substring(0, 8) : "Unknown";[m
+[32m+[m[32m      });[m
+[32m+[m[32m      const memberData = sortedMembers.map(([, count]) => count);[m
+[32m+[m
+[32m+[m[32m      const growth = prevMonthCount === 0 ? 100 : Math.round(((currentMonthCount - prevMonthCount) / prevMonthCount) * 100);[m
+[32m+[m
+[32m+[m[32m      setStatsData({[m
+[32m+[m[32m        summary: statusCounts,[m
+[32m+[m[32m        currentMonthCount,[m
+[32m+[m[32m        prevMonthCount,[m
+[32m+[m[32m        growth,[m
+[32m+[m[32m        pieData,[m
+[32m+[m[32m        trendLabels,[m
+[32m+[m[32m        trendData,[m
+[32m+[m[32m        memberLabels,[m
+[32m+[m[32m        memberData[m
+[32m+[m[32m      });[m
+[32m+[m
+[32m+[m[32m    } catch (e) {[m
+[32m+[m[32m      console.error("Stats Calculation Error:", e);[m
+[32m+[m[32m      Alert.alert("Error", "Failed to load statistics.");[m
+[32m+[m[32m    } finally {[m
+[32m+[m[32m      setLoading(false);[m
+[32m+[m[32m    }[m
+[32m+[m[32m  };[m
+[32m+[m
+[32m+[m[32m  const chartConfig = {[m
+[32m+[m[32m    backgroundGradientFrom: "#ffffff",[m
+[32m+[m[32m    backgroundGradientTo: "#ffffff",[m
+[32m+[m[32m    color: (opacity = 1) => `rgba(33, 150, 243, ${opacity})`,[m
+[32m+[m[32m    strokeWidth: 2,[m
+[32m+[m[32m    barPercentage: 0.5,[m
+[32m+[m[32m    decimalPlaces: 0,[m
+[32m+[m[32m    labelColor: (opacity = 1) => `rgba(50, 50, 50, ${opacity})`,[m
+[32m+[m[32m  };[m
+[32m+[m
+[32m+[m[32m  return ([m
+[32m+[m[32m    <LinearGradient[m[41m [m
+[32m+[m[32m      colors={["#12c2e9", "#c471ed", "#f64f59"]}[m[41m [m
+[32m+[m[32m      start={{ x: 0, y: 0 }}[m
+[32m+[m[32m      end={{ x: 1, y: 1 }}[m
+[32m+[m[32m      style={styles.container}[m
+[32m+[m[32m    >[m
+[32m+[m[32m      <View style={styles.header}>[m
+[32m+[m[32m        <TouchableOpacity onPress={() => navigation

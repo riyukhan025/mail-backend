@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import { LinearGradient } from "expo-linear-gradient";
 import { useEffect, useState } from "react";
@@ -19,7 +20,9 @@ import {
   TouchableOpacity,
   View
 } from "react-native";
+import { BarChart, LineChart, PieChart } from "react-native-chart-kit";
 import firebase from "../firebase";
+import { APPWRITE_CONFIG, client } from "./appwrite";
 
 // --- CONSTANTS & CONFIGURATION ---
 const APP_VERSION = "1.0.4 (Build 203)";
@@ -37,6 +40,7 @@ const TABS = [
   { id: "logs", label: "Logs", icon: "terminal-outline" },
   { id: "network", label: "Network", icon: "wifi-outline" },
   { id: "utils", label: "Utils", icon: "construct-outline" },
+  { id: "statistics", label: "Statistics", icon: "stats-chart-outline" },
   { id: "maintenance", label: "Maintenance", icon: "trash-outline" },
 ];
 
@@ -152,17 +156,52 @@ export default function DevDashboardScreen({ navigation }) {
 
   // --- LIVE ACTIVITY TRACKING ---
   useEffect(() => {
-    const ref = firebase.database().ref("cases");
-    const onChildChanged = ref.on("child_changed", (snapshot) => {
+    const casesRef = firebase.database().ref("cases");
+    
+    // Track New Cases
+    const onCaseAdded = casesRef.on("child_added", (snapshot) => {
+       const val = snapshot.val();
+       if (val) {
+         const refNo = val.matrixRefNo || val.RefNo || snapshot.key;
+         // Only log if it looks like a recent event to avoid flooding log on load
+         // (Optional: check timestamp if available, otherwise just log)
+         // console.log(`[EVENT] Case Loaded/Created: ${refNo}`); 
+       }
+    });
+
+    // Track Updates (Completion, Assignment, Audit, Revert)
+    const onCaseChanged = casesRef.on("child_changed", (snapshot) => {
       const val = snapshot.val();
       if (val) {
         const refNo = val.matrixRefNo || val.RefNo || snapshot.key;
         const status = val.status;
-        const updatedBy = val.finalizedBy || val.assignedTo || "Unknown";
-        console.log(`[EVENT] Case ${refNo} updated: Status '${status}' (User: ${updatedBy})`);
+        const updatedBy = val.finalizedBy || val.assignedTo || "System";
+        
+        let action = "UPDATED";
+        if (status === 'completed') action = "COMPLETED";
+        if (status === 'assigned') action = "ASSIGNED";
+        if (status === 'audit') action = "SUBMITTED FOR AUDIT";
+        if (status === 'reverted') action = "REVERTED";
+
+        console.log(`[EVENT] Case ${refNo} ${action}: Status '${status}' (User: ${updatedBy})`);
       }
     });
-    return () => ref.off("child_changed", onChildChanged);
+
+    // Track DSR Submissions via Appwrite Realtime
+    let unsubscribeDSR;
+    try {
+        const channel = `databases.${APPWRITE_CONFIG.databaseId}.collections.${APPWRITE_CONFIG.dsrCollectionId}.documents`;
+        unsubscribeDSR = client.subscribe(channel, response => {
+        });
+    } catch (e) {
+        console.warn("Appwrite realtime failed", e);
+    }
+
+    return () => {
+        casesRef.off("child_added", onCaseAdded);
+        casesRef.off("child_changed", onCaseChanged);
+        if (unsubscribeDSR) unsubscribeDSR();
+    };
   }, []);
 
   // --- ACTIONS ---
@@ -366,6 +405,8 @@ export default function DevDashboardScreen({ navigation }) {
         return <NetworkTab requests={networkRequests} onClear={handleClearNetwork} />;
       case "utils":
         return <UtilsTab />;
+      case "statistics":
+        return <StatisticsTab users={users} />;
       case "maintenance":
         return <MaintenanceTab onArchive={handleArchiveOldCases} archiving={archiving} />;
       default:
@@ -664,20 +705,49 @@ function NetworkTab({ requests, onClear }) {
 }
 
 function UtilsTab() {
+  const handleViewKeys = async () => {
+    try {
+      const keys = await AsyncStorage.getAllKeys();
+      const message = `Storage Keys (${keys.length}):\n${JSON.stringify(keys, null, 2)}`;
+      if (Platform.OS === 'web') alert(message);
+      else Alert.alert("Async Storage", message);
+    } catch (e) {
+      console.error("Failed to get keys", e);
+    }
+  };
+
+  const handleClearStorage = async () => {
+    const confirmMsg = "Clear all Async Storage? This will log you out and reset app state.";
+    const executeClear = async () => {
+        await AsyncStorage.clear();
+        if (Platform.OS === 'web') alert("Storage cleared.");
+        else Alert.alert("Success", "Storage cleared.");
+    };
+
+    if (Platform.OS === 'web') {
+        if (confirm(confirmMsg)) executeClear();
+    } else {
+        Alert.alert("Confirm", confirmMsg, [
+            { text: "Cancel", style: "cancel" },
+            { text: "Clear", style: "destructive", onPress: executeClear }
+        ]);
+    }
+  };
+
   return (
     <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Async Storage</Text>
         <View style={styles.card}>
-          <TouchableOpacity style={styles.listItem} onPress={() => Alert.alert("Storage", "Keys: ['user_token', 'theme', 'onboarding_complete']")}>
+          <TouchableOpacity style={styles.listItem} onPress={handleViewKeys}>
             <Ionicons name="list" size={20} color="#ccc" />
-            <Text style={styles.listItemText}>View All Keys</Text>
+            <Text style={styles.listItemText}>View Real Storage Keys</Text>
             <Ionicons name="chevron-forward" size={20} color="#666" />
           </TouchableOpacity>
           <View style={styles.divider} />
-          <TouchableOpacity style={styles.listItem} onPress={() => Alert.alert("Cleared", "All storage cleared.")}>
+          <TouchableOpacity style={styles.listItem} onPress={handleClearStorage}>
             <Ionicons name="trash-bin" size={20} color="#ff4444" />
-            <Text style={[styles.listItemText, { color: '#ff4444' }]}>Clear All Storage</Text>
+            <Text style={[styles.listItemText, { color: '#ff4444' }]}>Nuke All Storage</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -688,6 +758,238 @@ function UtilsTab() {
           <InfoRow label="OS" value={`${Platform.OS} ${Platform.Version}`} />
           <InfoRow label="Screen" value={`${Math.round(Dimensions.get('window').width)} x ${Math.round(Dimensions.get('window').height)}`} />
           <InfoRow label="Pixel Ratio" value={Dimensions.get('window').scale.toString()} />
+        </View>
+      </View>
+    </ScrollView>
+  );
+}
+
+function StatisticsTab({ users }) {
+  const [statsData, setStatsData] = useState(null);
+  const [calculating, setCalculating] = useState(false);
+  const screenWidth = Dimensions.get("window").width;
+
+  const chartConfig = {
+    backgroundGradientFrom: "#1a1a1a",
+    backgroundGradientTo: "#1a1a1a",
+    color: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+    strokeWidth: 2,
+    barPercentage: 0.5,
+    decimalPlaces: 0,
+    labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+  };
+
+  const handleCalculateStats = async () => {
+    setCalculating(true);
+    try {
+      // 1. Fetch all cases
+      const snapshot = await firebase.database().ref("cases").once("value");
+      const data = snapshot.val() || {};
+      const allCases = Object.keys(data).map(key => ({ id: key, ...data[key] }));
+
+      // 1b. Fetch users if not available (for names)
+      let currentUsers = users;
+      if (!currentUsers || currentUsers.length === 0) {
+         const uSnap = await firebase.database().ref("users").once("value");
+         const uData = uSnap.val() || {};
+         currentUsers = Object.keys(uData).map(key => ({ id: key, ...uData[key] }));
+      }
+
+      // 2. Calculate Stats
+      const now = new Date();
+      const currentMonth = now.getMonth();
+      const currentYear = now.getFullYear();
+      const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+      const prevMonthYear = currentMonth === 0 ? currentYear - 1 : currentYear;
+
+      let currentMonthCount = 0;
+      let prevMonthCount = 0;
+      
+      // Data structures for new charts
+      const statusCounts = { completed: 0, pending: 0, reverted: 0, audit: 0 };
+      const dailyTrend = {}; // Last 30 days
+      const memberCounts = {}; // "uid": count
+
+      // Initialize last 30 days
+      for (let i = 29; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        const key = `${d.getMonth() + 1}/${d.getDate()}`;
+        dailyTrend[key] = 0;
+      }
+
+      allCases.forEach(c => {
+        // Status Counts (Pie Chart)
+        if (c.status === 'completed' || c.status === 'closed') statusCounts.completed++;
+        else if (c.status === 'reverted') statusCounts.reverted++;
+        else if (c.status === 'audit') statusCounts.audit++;
+        else statusCounts.pending++; // assigned, open, etc.
+
+        // Member Performance (All Time Completed)
+        if ((c.status === 'completed' || c.status === 'closed') && c.assignedTo) {
+             memberCounts[c.assignedTo] = (memberCounts[c.assignedTo] || 0) + 1;
+        }
+
+        if ((c.status === 'completed' || c.status === 'audit') && c.completedAt) {
+          const d = new Date(c.completedAt);
+          
+          // Daily Trend (Last 30 days)
+          const dayDiff = Math.floor((now - d) / (1000 * 60 * 60 * 24));
+          if (dayDiff < 30 && dayDiff >= 0) {
+            const key = `${d.getMonth() + 1}/${d.getDate()}`;
+            if (dailyTrend[key] !== undefined) dailyTrend[key]++;
+          }
+
+          // Monthly
+          if (d.getMonth() === currentMonth && d.getFullYear() === currentYear) {
+            currentMonthCount++;
+          } else if (d.getMonth() === prevMonth && d.getFullYear() === prevMonthYear) {
+            prevMonthCount++;
+          }
+        }
+      });
+
+      // Format Pie Data
+      const pieData = [
+        { name: "Done", count: statusCounts.completed, color: "#4caf50", legendFontColor: "#7F7F7F", legendFontSize: 12 },
+        { name: "Pending", count: statusCounts.pending, color: "#ff9800", legendFontColor: "#7F7F7F", legendFontSize: 12 },
+        { name: "Reverted", count: statusCounts.reverted, color: "#f44336", legendFontColor: "#7F7F7F", legendFontSize: 12 },
+        { name: "Audit", count: statusCounts.audit, color: "#2196f3", legendFontColor: "#7F7F7F", legendFontSize: 12 }
+      ];
+
+      // Format Trend Data
+      const trendLabels = Object.keys(dailyTrend);
+      const trendData = Object.values(dailyTrend);
+
+      // Format Member Data (Top 5)
+      const sortedMembers = Object.entries(memberCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5);
+      
+      const memberLabels = sortedMembers.map(([uid]) => {
+          const u = currentUsers.find(user => user.id === uid);
+          return u ? (u.name || u.email.split('@')[0]).substring(0, 8) : "Unknown";
+      });
+      const memberData = sortedMembers.map(([, count]) => count);
+
+      const growth = prevMonthCount === 0 ? 100 : Math.round(((currentMonthCount - prevMonthCount) / prevMonthCount) * 100);
+
+      const statsPayload = {
+        summary: statusCounts,
+        currentMonthCount,
+        prevMonthCount,
+        growth,
+        pieData,
+        trendLabels,
+        trendData,
+        memberLabels,
+        memberData
+      };
+
+      setStatsData(statsPayload);
+    } catch (e) {
+      console.error(e);
+      Alert.alert("Error", "Failed to calculate stats");
+    } finally {
+      setCalculating(false);
+    }
+  };
+
+  return (
+    <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Live Analytics</Text>
+        <View style={styles.card}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15 }}>
+             <InfoRow label="Status" value={statsData ? "Calculated" : "Idle"} />
+             <TouchableOpacity onPress={handleCalculateStats} disabled={calculating}>
+                <Ionicons name="refresh-circle" size={28} color="#4caf50" />
+             </TouchableOpacity>
+          </View>
+          
+          {!statsData && (
+            <TouchableOpacity 
+              style={[styles.actionButton, { width: '100%', backgroundColor: '#4caf50', marginTop: 15, flexDirection: 'row', justifyContent: 'center' }]} 
+              onPress={handleCalculateStats}
+              disabled={calculating}
+            >
+              {calculating ? <ActivityIndicator color="#fff" style={{marginRight: 10}} /> : <Ionicons name="analytics" size={20} color="#fff" style={{marginRight: 10}} />}
+              <Text style={styles.actionLabel}>Generate Report</Text>
+            </TouchableOpacity>
+          )}
+
+          {statsData && (
+            <View>
+                {/* Summary */}
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20, marginTop: 10 }}>
+                    <View style={{ alignItems: 'center' }}>
+                        <Text style={{ color: '#aaa', fontSize: 12 }}>COMPLETED</Text>
+                        <Text style={{ color: '#4caf50', fontSize: 20, fontWeight: 'bold' }}>{statsData.summary?.completed}</Text>
+                    </View>
+                    <View style={{ alignItems: 'center' }}>
+                        <Text style={{ color: '#aaa', fontSize: 12 }}>PENDING</Text>
+                        <Text style={{ color: '#ff9800', fontSize: 20, fontWeight: 'bold' }}>{statsData.summary?.pending}</Text>
+                    </View>
+                    <View style={{ alignItems: 'center' }}>
+                        <Text style={{ color: '#aaa', fontSize: 12 }}>GROWTH</Text>
+                        <Text style={{ color: statsData.growth >= 0 ? '#4caf50' : '#f44336', fontSize: 20, fontWeight: 'bold' }}>{statsData.growth}%</Text>
+                    </View>
+                </View>
+
+                {/* Pie Chart */}
+                <Text style={{ color: '#fff', fontSize: 14, fontWeight: 'bold', marginBottom: 10 }}>Status Distribution</Text>
+                <PieChart
+                    data={statsData.pieData}
+                    width={screenWidth - 80}
+                    height={200}
+                    chartConfig={chartConfig}
+                    accessor={"count"}
+                    backgroundColor={"transparent"}
+                    paddingLeft={"15"}
+                    absolute
+                />
+
+                {/* Line Chart */}
+                <Text style={{ color: '#fff', fontSize: 14, fontWeight: 'bold', marginTop: 20, marginBottom: 10 }}>30-Day Trend</Text>
+                <LineChart
+                    data={{
+                        labels: statsData.trendLabels.filter((_, i) => i % 5 === 0), // Show fewer labels
+                        datasets: [{ data: statsData.trendData }]
+                    }}
+                    width={screenWidth - 80}
+                    height={220}
+                    chartConfig={{
+                        ...chartConfig,
+                        decimalPlaces: 0,
+                        color: (opacity = 1) => `rgba(33, 150, 243, ${opacity})`,
+                    }}
+                    bezier
+                    style={{ borderRadius: 16 }}
+                />
+
+                {/* Bar Chart */}
+                <Text style={{ color: '#fff', fontSize: 14, fontWeight: 'bold', marginTop: 20, marginBottom: 10 }}>Top Performers</Text>
+                {statsData.memberLabels.length > 0 ? (
+                    <BarChart
+                        data={{
+                            labels: statsData.memberLabels,
+                            datasets: [{ data: statsData.memberData }]
+                        }}
+                        width={screenWidth - 80}
+                        height={220}
+                        yAxisLabel=""
+                        chartConfig={{
+                            ...chartConfig,
+                            color: (opacity = 1) => `rgba(255, 152, 0, ${opacity})`,
+                        }}
+                        verticalLabelRotation={30}
+                        style={{ borderRadius: 16 }}
+                    />
+                ) : (
+                    <Text style={{ color: '#666', fontStyle: 'italic' }}>No member data available</Text>
+                )}
+            </View>
+          )}
         </View>
       </View>
     </ScrollView>
@@ -810,6 +1112,105 @@ const styles = StyleSheet.create({
   // Content Area
   content: { flex: 1 },
   flexContainer: { flex: 1 },
+  tabScroll: { flex: 1 },
+  tabScrollContent: { padding: 20 },
+
+  // Sections & Cards
+  section: { marginBottom: 24 },
+  sectionTitle: { color: "#8e24aa", fontSize: 14, fontWeight: "bold", marginBottom: 10, textTransform: "uppercase", letterSpacing: 1 },
+  card: {
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.05)",
+  },
+  
+  // Info Rows
+  infoRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.05)" },
+  infoLabel: { color: "#aaa", fontSize: 15 },
+  infoValue: { color: "#fff", fontSize: 15, fontWeight: "500" },
+
+  // Switch Rows
+  switchRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.05)" },
+  switchLabel: { color: "#fff", fontSize: 16 },
+
+  // Grid Actions
+  grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
+  actionButton: { width: "31%", alignItems: "center", marginBottom: 15 },
+  actionIcon: { width: 50, height: 50, borderRadius: 25, justifyContent: "center", alignItems: "center", marginBottom: 8 },
+  actionLabel: { color: "#ccc", fontSize: 12, textAlign: "center" },
+
+  // User Management
+  searchContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.05)",
+    margin: 16,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    height: 44,
+  },
+  searchInput: { flex: 1, color: "#fff", marginLeft: 10, fontSize: 16 },
+  userCard: {
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+  },
+  userHeader: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
+  userAvatar: {
+    width: 40, height: 40, borderRadius: 20, backgroundColor: "#8e24aa",
+    justifyContent: "center", alignItems: "center", marginRight: 12,
+  },
+  userAvatarText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
+  userName: { color: "#fff", fontSize: 16, fontWeight: "bold" },
+  userEmail: { color: "#aaa", fontSize: 14 },
+  badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
+  badgeText: { color: "#fff", fontSize: 10, fontWeight: "bold" },
+  userDetails: { flexDirection: "row", justifyContent: "space-between", marginBottom: 12, paddingVertical: 8, borderTopWidth: 1, borderBottomWidth: 1, borderColor: "rgba(255,255,255,0.05)" },
+  detailText: { color: "#888", fontSize: 12 },
+  userActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10 },
+  actionBtnSmall: { paddingHorizontal: 12, paddingVertical: 6, backgroundColor: "#444", borderRadius: 6, marginLeft: 8 },
+  actionBtnText: { color: "#fff", fontSize: 12, fontWeight: "600" },
+
+  // Logs
+  filterBar: { flexDirection: "row", padding: 10, alignItems: "center" },
+  filterChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.1)", marginRight: 8 },
+  activeFilterChip: { backgroundColor: "#fff" },
+  filterText: { color: "#aaa", fontSize: 12, fontWeight: "bold" },
+  activeFilterText: { color: "#000" },
+  clearButton: { marginLeft: "auto", padding: 8 },
+  logItem: { backgroundColor: "rgba(0,0,0,0.2)", padding: 10, marginBottom: 8, borderRadius: 6, borderLeftWidth: 4 },
+  logHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 },
+  logType: { fontSize: 10, fontWeight: "bold" },
+  logTimestamp: { color: "#666", fontSize: 10 },
+  logContent: { color: "#ddd", fontSize: 13, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
+
+  // Network
+  networkCard: { backgroundColor: "rgba(255,255,255,0.03)", padding: 12, marginBottom: 8, borderRadius: 8 },
+  networkRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
+  method: { fontWeight: "bold", fontSize: 12, width: 50 },
+  url: { color: "#fff", fontSize: 13, flex: 1 },
+  status: { fontWeight: "bold", fontSize: 13 },
+  meta: { color: "#666", fontSize: 11 },
+
+  // Tracking
+  toolbar: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 16, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.1)" },
+  toolbarTitle: { color: "#fff", fontSize: 16, fontWeight: "bold" },
+  liveIndicator: { flexDirection: "row", alignItems: "center" },
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#ff4444", marginRight: 6 },
+  liveText: { color: "#ff4444", fontSize: 12, fontWeight: "bold" },
+  logRow: { flexDirection: "row", paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.05)" },
+  logTime: { color: "#666", fontSize: 12, width: 70 },
+  logTag: { color: "#8e24aa", fontSize: 12, width: 100, fontWeight: "600" },
+  logMessage: { color: "#ccc", fontSize: 12, flex: 1 },
+  
+  // Utils
+  listItem: { flexDirection: "row", alignItems: "center", paddingVertical: 12 },
+  listItemText: { color: "#fff", fontSize: 16, marginLeft: 12, flex: 1 },
+  divider: { height: 1, backgroundColor: "rgba(255,255,255,0.05)", marginVertical: 4 },
+  linkText: { color: "#8e24aa", fontWeight: "bold" },
   tabScroll: { flex: 1 },
   tabScrollContent: { padding: 20 },
 

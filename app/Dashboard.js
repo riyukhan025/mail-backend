@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import { useContext, useEffect, useRef, useState } from "react";
@@ -39,7 +40,7 @@ export default function Dashboard({ navigation }) {
   const [selectedCase, setSelectedCase] = useState(null);
 
   // Alert System State
-  const [newCaseAlert, setNewCaseAlert] = useState(null);
+  const [newCasesList, setNewCasesList] = useState([]);
   const knownCaseIds = useRef(new Set());
   const isFirstLoad = useRef(true);
 
@@ -78,7 +79,7 @@ export default function Dashboard({ navigation }) {
       .ref("cases")
       .orderByChild("assignedTo")
       .equalTo(uid)
-      .on("value", (snapshot) => {
+      .on("value", async (snapshot) => {
         const data = snapshot.val()
           ? Object.keys(snapshot.val()).map((key) => ({
               id: key,
@@ -88,19 +89,42 @@ export default function Dashboard({ navigation }) {
 
         // Alert System Logic
         if (isFirstLoad.current) {
-          // First load: just populate known IDs, don't alert
-          data.forEach(c => knownCaseIds.current.add(c.id));
+          // First load: Populate known IDs AND alert for currently assigned cases (missed while logged out)
+          // Only alert if NOT previously acknowledged locally
+          let ackSet = new Set();
+          try {
+            const storedAck = await AsyncStorage.getItem("acknowledged_alerts");
+            if (storedAck) ackSet = new Set(JSON.parse(storedAck));
+          } catch (e) {
+            console.log("Error reading acknowledged alerts, resetting", e);
+            AsyncStorage.removeItem("acknowledged_alerts");
+          }
+
+          const initialAlerts = [];
+          data.forEach(c => {
+            knownCaseIds.current.add(c.id);
+            if (c.status === 'assigned' && !ackSet.has(c.id)) {
+              initialAlerts.push(c);
+            }
+          });
+          if (initialAlerts.length > 0) {
+            setNewCasesList(prev => [...prev, ...initialAlerts]);
+          }
           isFirstLoad.current = false;
         } else {
           // Subsequent updates: check for new IDs
+          const newAlerts = [];
           data.forEach(c => {
             if (!knownCaseIds.current.has(c.id)) {
               if (c.status === 'assigned') {
-                setNewCaseAlert(c);
+                newAlerts.push(c);
               }
               knownCaseIds.current.add(c.id);
             }
           });
+          if (newAlerts.length > 0) {
+            setNewCasesList(prev => [...prev, ...newAlerts]);
+          }
         }
 
         setCases(data.filter((c) => c.status !== "reverted"));
@@ -138,6 +162,8 @@ export default function Dashboard({ navigation }) {
       switch (f.field) {
         case "status":
           return computeMemberStatus(c) === f.value;
+        case "client":
+          return (c.client === f.value || c.company === f.value);
         default:
           return true;
       }
@@ -184,30 +210,42 @@ export default function Dashboard({ navigation }) {
 
   if (loading) return null;
 
+  // Extract unique clients for filter
+  const uniqueClients = [...new Set(cases.map(c => c.client || c.company).filter(Boolean))];
+
   const filterOptions = [
     { label: "Recent", field: "assignedAt" },
     { label: "Priority", field: "highPriority" },
     { label: "Completed", field: "completedAt" },
     { label: "Closed/Open", field: "status" },
     { label: "Pincode", field: "pincode" },
+    // Add clients dynamically
+    ...uniqueClients.map(c => ({ label: `Client: ${c}`, field: "client", value: c }))
   ];
 
   const toggleFilter = (option) => {
-    const exists = activeFilters.find((f) => f.field === option.field);
+    const exists = activeFilters.find((f) => f.field === option.field && f.value === option.value);
     if (exists) {
-      setActiveFilters(activeFilters.filter((f) => f.field !== option.field));
+      setActiveFilters(activeFilters.filter((f) => !(f.field === option.field && f.value === option.value)));
     } else {
       if (option.field === "status") {
         const current = activeFilters.find((f) => f.field === "status");
         const nextValue = current?.value === "open" ? "closed" : "open";
-        setActiveFilters([{ ...option, value: nextValue, label: "Closed/Open" }]);
+        const others = activeFilters.filter(f => f.field !== "status");
+        setActiveFilters([...others, { ...option, value: nextValue, label: "Closed/Open" }]);
+      } else if (option.field === "client") {
+        // Remove other client filters to allow switching between clients easily
+        const others = activeFilters.filter(f => f.field !== "client");
+        setActiveFilters([...others, { ...option }]);
       } else {
         setActiveFilters([...activeFilters, { ...option }]);
       }
     }
     setFilterDropdownOpen(false);
-    setSortField(option.field);
-    setSortAsc(true);
+    if (option.field !== "client") {
+      setSortField(option.field);
+      setSortAsc(true);
+    }
   };
 
   const removeActiveFilter = (field) => {
@@ -565,33 +603,56 @@ export default function Dashboard({ navigation }) {
 
       {/* New Case Alert Modal */}
       <Modal
-        visible={!!newCaseAlert}
+        visible={newCasesList.length > 0}
         transparent={true}
         animationType="slide"
-        onRequestClose={() => setNewCaseAlert(null)}
+        onRequestClose={async () => {
+          // Save acknowledged IDs on dismiss
+          try {
+            const ids = newCasesList.map(c => c.id);
+            const storedAck = await AsyncStorage.getItem("acknowledged_alerts");
+            const currentAck = storedAck ? JSON.parse(storedAck) : [];
+            const newAck = [...new Set([...currentAck, ...ids])];
+            await AsyncStorage.setItem("acknowledged_alerts", JSON.stringify(newAck));
+          } catch(e) {}
+          setNewCasesList([]);
+        }}
       >
         <View style={styles.alertOverlay}>
           <View style={styles.alertBox}>
             <Ionicons name="notifications" size={50} color="#ffd700" style={{ marginBottom: 10 }} />
-            <Text style={styles.alertTitle}>New Case Allocated!</Text>
-            <Text style={styles.alertRef}>{newCaseAlert?.matrixRefNo || newCaseAlert?.RefNo || newCaseAlert?.id}</Text>
-            <Text style={styles.alertSub}>A new case has been assigned to you.</Text>
+            <Text style={styles.alertTitle}>New Cases Allocated!</Text>
+            <Text style={styles.alertSub}>You have {newCasesList.length} new case(s).</Text>
+            
+            <FlatList
+              data={newCasesList}
+              keyExtractor={item => item.id}
+              style={{ maxHeight: 200, width: '100%', marginBottom: 15 }}
+              renderItem={({ item }) => (
+                <View style={{ backgroundColor: '#f3e5f5', padding: 10, borderRadius: 5, marginBottom: 5 }}>
+                  <Text style={{ fontWeight: 'bold', color: '#4e0360' }}>{item.matrixRefNo || item.RefNo || item.id}</Text>
+                  <Text style={{ fontSize: 12, color: '#666' }}>{item.candidateName}</Text>
+                </View>
+              )}
+            />
             
             <TouchableOpacity 
                 style={styles.alertButton} 
-                onPress={() => {
-                    const caseId = newCaseAlert.id;
-                    setNewCaseAlert(null);
-                    navigation.navigate("CaseDetail", { caseId, user });
+                onPress={async () => {
+                    // Save acknowledged IDs on button press
+                    try {
+                      const ids = newCasesList.map(c => c.id);
+                      const storedAck = await AsyncStorage.getItem("acknowledged_alerts");
+                      const currentAck = storedAck ? JSON.parse(storedAck) : [];
+                      const newAck = [...new Set([...currentAck, ...ids])];
+                      await AsyncStorage.setItem("acknowledged_alerts", JSON.stringify(newAck));
+                    } catch(e) {}
+                    setNewCasesList([]);
                 }}
             >
                 <LinearGradient colors={["#4e0360", "#c471ed"]} style={styles.alertGradient}>
-                    <Text style={styles.alertButtonText}>View Now</Text>
+                    <Text style={styles.alertButtonText}>Acknowledge</Text>
                 </LinearGradient>
-            </TouchableOpacity>
-            
-            <TouchableOpacity style={styles.alertClose} onPress={() => setNewCaseAlert(null)}>
-                <Text style={styles.alertCloseText}>Dismiss</Text>
             </TouchableOpacity>
           </View>
         </View>

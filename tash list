@@ -1,0 +1,210 @@
+[33mcommit 615992255cd42859140f8a70ae6267c89bd785af[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Author: riyukhan025 <riyukhan025@gmail.com>
+Date:   Sat Jan 10 23:59:39 2026 +0530
+
+    dev fix form fixed yet to fix blue
+
+[1mdiff --git a/App.js b/App.js[m
+[1mindex 4c9e7b4..873d38e 100644[m
+[1m--- a/App.js[m
+[1m+++ b/App.js[m
+[36m@@ -7,10 +7,6 @@[m [mimport { NavigationContainer } from "@react-navigation/native";[m
+ import { createNativeStackNavigator } from "@react-navigation/native-stack";[m
+ import { GestureHandlerRootView } from "react-native-gesture-handler";[m
+ [m
+[31m-import * as Device from "expo-device";[m
+[31m-import * as Notifications from "expo-notifications";[m
+[31m-[m
+[31m-import { ref, set } from "firebase/database";[m
+ import { AuthContext } from "./app/AuthContext";[m
+ import firebase, { db } from "./firebase";[m
+ [m
+[36m@@ -43,7 +39,6 @@[m [mimport MemberDSRScreen from "./app/MemberDSRScreen";[m
+ import MemberViewScreen from "./app/MemberViewScreen";[m
+ import PlanYourDayScreen from "./app/PlanYourDayScreen";[m
+ import RevertedCasesScreen from "./app/RevertedCasesScreen";[m
+[31m-import SendNotificationScreen from "./app/SendNotificationScreen";[m
+ import SplashScreen from "./app/SplashScreen";[m
+ import TeamDSRScreen from "./app/TeamDSRScreen";[m
+ import Updatescreen from "./app/Updatescreen";[m
+[36m@@ -52,17 +47,6 @@[m [mimport VerifyProfileScreen from "./app/VerifyProfileScreen";[m
+ /* ---------------- Stack ---------------- */[m
+ const Stack = createNativeStackNavigator();[m
+ [m
+[31m-/* ---------------- Notifications ---------------- */[m
+[31m-if (Platform.OS !== "web") {[m
+[31m-  Notifications.setNotificationHandler({[m
+[31m-    handleNotification: async () => ({[m
+[31m-      shouldShowAlert: true,[m
+[31m-      shouldPlaySound: false,[m
+[31m-      shouldSetBadge: false,[m
+[31m-    }),[m
+[31m-  });[m
+[31m-}[m
+[31m-[m
+ /* ---------------- Auth Stack ---------------- */[m
+ function AuthStack() {[m
+   return ([m
+[36m@@ -105,10 +89,6 @@[m [mfunction AdminStack() {[m
+         component={MemberDSRDetailScreen}[m
+       />[m
+       <Stack.Screen name="MemberDSRScreen" component={MemberDSRScreen} />[m
+[31m-      <Stack.Screen[m
+[31m-        name="SendNotificationScreen"[m
+[31m-        component={SendNotificationScreen}[m
+[31m-      />[m
+       <Stack.Screen[m
+         name="AdminEmailScreen"[m
+         component={AdminEmailScreen}[m
+[36m@@ -163,78 +143,6 @@[m [mfunction MemberStack() {[m
+   );[m
+ }[m
+ [m
+[31m-/* ---------------- Push Notifications Hook ---------------- */[m
+[31m-function usePushNotifications(dbUser) {[m
+[31m-  useEffect(() => {[m
+[31m-    if (Platform.OS === "web") return;[m
+[31m-[m
+[31m-    async function register() {[m
+[31m-      if (!Device.isDevice) {[m
+[31m-        console.log("Push Notifications: Must use physical device.");[m
+[31m-        return;[m
+[31m-      }[m
+[31m-[m
+[31m-      const { status: existingStatus } = await Notifications.getPermissionsAsync();[m
+[31m-      let finalStatus = existingStatus;[m
+[31m-      if (existingStatus !== 'granted') {[m
+[31m-        const { status } = await Notifications.requestPermissionsAsync();[m
+[31m-        finalStatus = status;[m
+[31m-      }[m
+[31m-      if (finalStatus !== 'granted') {[m
+[31m-        console.log('Failed to get push token for push notification!');[m
+[31m-        return;[m
+[31m-      }[m
+[31m-[m
+[31m-      try {[m
+[31m-        const token = await Notifications.getExpoPushTokenAsync({[m
+[31m-          projectId: "86bcda2d-e6ff-42d3-9903-f0c4134779da",[m
+[31m-        });[m
+[31m-        console.log("Expo Push Token:", token.data);[m
+[31m-[m
+[31m-        if (dbUser?.uid) {[m
+[31m-          await set([m
+[31m-            ref(db, `users/${dbUser.uid}/expoPushToken`),[m
+[31m-            token.data[m
+[31m-          );[m
+[31m-        }[m
+[31m-      } catch (error) {[m
+[31m-        console.error("Error getting push token:", error);[m
+[31m-        if (Platform.OS === 'android' && error.message?.includes("Default FirebaseApp is not initialized")) {[m
+[31m-          Alert.alert([m
+[31m-            "FCM Configuration Missing",[m
+[31m-            "FCM Config Missing or Outdated Build.\n\n1. Ensure 'google-services.json' is in project root.\n2. Check 'app.json' includes 'googleServicesFile'.\n3. REBUILD APP (EAS Build) to apply changes."[m
+[31m-          );[m
+[31m-        }[m
+[31m-      }[m
+[31m-[m
+[31m-      if (Platform.OS === 'android') {[m
+[31m-        await Notifications.setNotificationChannelAsync('default', {[m
+[31m-          name: 'default',[m
+[31m-          importance: Notifications.AndroidImportance.MAX,[m
+[31m-          vibrationPattern: [0, 250, 250, 250],[m
+[31m-          lightColor: '#FF231F7C',[m
+[31m-        });[m
+[31m-      }[m
+[31m-    }[m
+[31m-[m
+[31m-    register();[m
+[31m-[m
+[31m-    // Listeners for debugging[m
+[31m-    const subscription1 = Notifications.addNotificationReceivedListener(notification => {[m
+[31m-      console.log("🔔 Notification Received:", notification);[m
+[31m-    });[m
+[31m-[m
+[31m-    const subscription2 = Notifications.addNotificationResponseReceivedListener(response => {[m
+[31m-      console.log("🔔 Notification Tapped:", response);[m
+[31m-    });[m
+[31m-[m
+[31m-    return () => {[m
+[31m-      subscription1.remove();[m
+[31m-      subscription2.remove();[m
+[31m-    };[m
+[31m-  }, [dbUser]);[m
+[31m-}[m
+[31m-[m
+ /* ---------------- App Content ---------------- */[m
+ function AppContent() {[m
+   const [dbUser, setDbUser] = useState(null);[m
+[36m@@ -255,8 +163,6 @@[m [mfunction AppContent() {[m
+     restoreUser();[m
+   }, []);[m
+ [m
+[31m-  usePushNotifications(dbUser);[m
+[31m-[m
+   const authContext = useMemo(() => ({[m
+     user: dbUser,[m
+     login: (userData) => setDbUser(userData),[m
+[1mdiff --git a/Monitoring.native.js b/Monitoring.native.js[m
+[1mnew file mode 100644[m
+[1mindex 0000000..333d0e3[m
+[1m--- /dev/null[m
+[1m+++ b/Monitoring.native.js[m
+[36m@@ -0,0 +1,6 @@[m
+[32m+[m[32mexport const initMonitoring = () => {[m
+[32m+[m[32m  console.log("Monitoring disabled (native)");[m
+[32m+[m[32m};[m
+[32m+[m
+[32m+[m[32mexport const identifyUser = (user) => {[m
+[32m+[m[32m};[m
+\ No newline at end of file[m
+[1mdiff --git a/app.json b/app.json[m
+[1mindex 006da07..ed57691 100644[m
+[1m--- a/app.json[m
+[1m+++ b/app.json[m
+[36m@@ -7,7 +7,7 @@[m
+     "icon": "./assets/logo.png",[m
+     "scheme": "finalapp",[m
+     "userInterfaceStyle": "automatic",[m
+[31m-    "newArchEnabled": true,[m
+[32m+[m[32m    "newArchEnabled": false,[m
+     "ios": {[m
+       "supportsTablet": true[m
+     },[m
+[36m@@ -19,7 +19,9 @@[m
+       "edgeToEdgeEnabled": true,[m
+       "predictiveBackGestureEnabled": false,[m
+       "package": "com.riyaz123202.Spacesolutions",[m
+[31m-      "permissions": ["READ_EXTERNAL_STORAGE"],[m
+[32m+[m[32m      "permissions": [[m
+[32m+[m[32m        "READ_EXTERNAL_STORAGE"[m
+[32m+[m[32m      ],[m
+       "googleServicesFile": "./google-services.json"[m
+     },[m
+     "web": {[m
+[36m@@ -39,11 +41,13 @@[m
+             "backgroundColor": "#000000"[m
+           }[m
+         }[m
+[31m-      ][m
+[32m+[m[32m      ],[m
+[32m+[m[32m      "@react-native-community/datetimepicker",[m
+[32m+[m[32m      "sentry-expo"[m
+     ],[m
+     "experiments": {[m
+       "typedRoutes": true,[m
+[31m-      "reactCompiler": true[m
+[32m+[m[32m      "reactCompiler": false[m
+     },[m
+     "extra": {[m
+       "router": {},[m
+[1mdiff --git a/app/AdminEmailScreen.js b/app/AdminEmailScreen.js[m
+[1mindex 57ab642..8a3903b 100644[m
+[1m--- a/app/AdminEmailScreen.js[m
+[1m+++ b/app/AdminEmailScreen.js[m
+[36m@@ -3,6 +3,7 @@[m [mimport { LinearGradient } from "expo-linear-gradient";[m
+ import { useEffect, useState } from "react";[m
+ import {[m
+     Alert,[m
+[32m+[m[32m    NativeModules,[m
+     Platform,[m
+     ScrollV

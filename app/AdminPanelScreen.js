@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Picker } from "@react-native-picker/picker";
 import { BlurView } from "expo-blur";
 import * as DocumentPicker from "expo-document-picker";
@@ -47,6 +48,11 @@ export default function AdminPanelScreen({ navigation }) {
   const [pendingUploadData, setPendingUploadData] = useState(null);
   const [isLightTheme, setIsLightTheme] = useState(false);
   const [archivedCount, setArchivedCount] = useState(0);
+
+  // Alert System State
+  const [auditAlert, setAuditAlert] = useState(null);
+  const knownCaseStatuses = useRef(new Map());
+  const isFirstLoad = useRef(true);
 
   // Animation for Menu
   const slideAnim = useRef(new Animated.Value(-MENU_WIDTH)).current;
@@ -98,11 +104,69 @@ export default function AdminPanelScreen({ navigation }) {
   // Fetch cases
   useEffect(() => {
     const casesRef = firebase.database().ref("cases");
-    casesRef.on("value", (snapshot) => {
+    const listener = casesRef.on("value", async (snapshot) => {
       const data = snapshot.val() || {};
       const list = Object.keys(data).map((key) => ({ id: key, ...data[key] }));
+      
+      // Alert Logic: Check for status changes to 'audit'
+      if (isFirstLoad.current) {
+        const unacknowledgedAudits = [];
+        
+        // Retrieve acknowledged audits from storage
+        let ackList = [];
+        try {
+          const stored = await AsyncStorage.getItem("acknowledged_audits");
+          if (stored) ackList = JSON.parse(stored);
+        } catch(e) {}
+        const ackSet = new Set(ackList);
+
+        list.forEach(c => {
+          knownCaseStatuses.current.set(c.id, c.status);
+          // Check for cases submitted while logged out
+          // Only alert if NOT previously acknowledged
+          if (c.status === 'audit' && !ackSet.has(c.id)) {
+            unacknowledgedAudits.push(c);
+          }
+        });
+        
+        if (unacknowledgedAudits.length > 0) {
+          const latest = unacknowledgedAudits[unacknowledgedAudits.length - 1];
+          setAuditAlert({
+            refNo: latest.matrixRefNo || latest.RefNo || latest.id,
+            memberName: latest.assigneeName || "Unknown Member"
+          });
+          // Mark ALL pending audits as seen immediately so they don't queue up
+          try {
+            const newIds = unacknowledgedAudits.map(c => c.id);
+            ackList.push(...newIds);
+            await AsyncStorage.setItem("acknowledged_audits", JSON.stringify(ackList));
+          } catch(e) {}
+        }
+        isFirstLoad.current = false;
+      } else {
+        list.forEach(c => {
+          const oldStatus = knownCaseStatuses.current.get(c.id);
+          if (c.status === 'audit' && oldStatus !== 'audit') {
+            setAuditAlert({
+              refNo: c.matrixRefNo || c.RefNo || c.id,
+              memberName: c.assigneeName || "Unknown Member"
+            });
+            // Persist live alerts too so they don't reappear on reload
+            AsyncStorage.getItem("acknowledged_audits").then(stored => {
+              const currentList = stored ? JSON.parse(stored) : [];
+              if (!currentList.includes(c.id)) {
+                currentList.push(c.id);
+                AsyncStorage.setItem("acknowledged_audits", JSON.stringify(currentList));
+              }
+            });
+          }
+          knownCaseStatuses.current.set(c.id, c.status);
+        });
+      }
+
       setCases(list);
     });
+    return () => casesRef.off("value", listener);
   }, []);
 
   // Fetch members
@@ -123,6 +187,16 @@ export default function AdminPanelScreen({ navigation }) {
     });
     return () => statsRef.off("value", listener);
   }, []);
+
+  // Auto-dismiss alert after 4 seconds
+  useEffect(() => {
+    if (auditAlert) {
+      const timer = setTimeout(() => {
+        setAuditAlert(null);
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [auditAlert]);
 
   // Counters
   const assignedTL = cases.length + archivedCount;
@@ -565,6 +639,9 @@ export default function AdminPanelScreen({ navigation }) {
             <TouchableOpacity style={styles.menuItem} onPress={() => { closeMenu(); navigation.navigate("MailRecordsScreen"); }}>
               <Text style={styles.menuText}>Mail Records</Text>
             </TouchableOpacity>
+            <TouchableOpacity style={styles.menuItem} onPress={() => { closeMenu(); navigation.navigate("StatisticsScreen"); }}>
+              <Text style={styles.menuText}>Statistics</Text>
+            </TouchableOpacity>
             <TouchableOpacity style={styles.menuItem} onPress={() => { 
                 closeMenu(); 
                 firebase.auth().signOut().then(() => {
@@ -817,6 +894,26 @@ export default function AdminPanelScreen({ navigation }) {
           </View>
         </ScrollView>
       </View>
+
+      {/* In-App Alert for Audit Submission */}
+      {auditAlert && (
+        <View style={styles.toastContainer}>
+          <LinearGradient
+            colors={["#00C851", "#007E33"]}
+            style={styles.toastContent}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+          >
+            <Ionicons name="notifications-circle" size={34} color="#fff" style={{ marginRight: 10 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.toastTitle}>Case Submitted for Audit!</Text>
+              <Text style={styles.toastText}>
+                {auditAlert.refNo} by {auditAlert.memberName}
+              </Text>
+            </View>
+          </LinearGradient>
+        </View>
+      )}
     </LinearGradient>
   );
 }
@@ -1049,5 +1146,31 @@ const styles = StyleSheet.create({
   webModalButtonText: {
     color: "#fff",
     fontWeight: "bold",
+  },
+  toastContainer: {
+    position: 'absolute',
+    top: 90,
+    left: 20,
+    right: 20,
+    zIndex: 2000,
+    alignItems: 'center',
+  },
+  toastContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 15,
+    borderRadius: 10,
+    elevation: 10,
+    width: '100%',
+  },
+  toastTitle: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 16,
+    marginBottom: 2,
+  },
+  toastText: {
+    color: '#fff',
+    fontSize: 14,
   },
 });

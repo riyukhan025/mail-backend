@@ -228,7 +228,10 @@ export default function CESFormScreen() {
     const img = await pdfDoc.embedPng(
       Uint8Array.from(atob(base64), c => c.charCodeAt(0))
     );
-    pdfDoc.getPages()[0].drawImage(img, coords);
+    const dims = img.scaleToFit(coords.width, coords.height);
+    const x = coords.x + (coords.width - dims.width) / 2;
+    const y = coords.y + (coords.height - dims.height) / 2;
+    pdfDoc.getPages()[0].drawImage(img, { x, y, width: dims.width, height: dims.height });
   };
 
   /* ================= PDF ================= */
@@ -486,6 +489,9 @@ export default function CESFormScreen() {
             descriptionText="Sign above"
             clearText="Clear"
             confirmText="Save"
+            trimWhitespace={true}
+            minWidth={3}
+            maxWidth={5}
             webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 0px; width: 100%; position: absolute; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
           />
           <TouchableOpacity style={styles.close} onPress={() => setSigningField(null)}>

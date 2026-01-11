@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { Picker } from "@react-native-picker/picker";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -17,7 +18,7 @@ import {
 import { decode as atob } from "base-64";
 import { Asset } from "expo-asset";
 import * as FileSystem from "expo-file-system/legacy";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, PDFName } from "pdf-lib";
 import SignatureScreen from "react-native-signature-canvas";
 
 import { useNavigation, useRoute } from "@react-navigation/native";
@@ -52,8 +53,8 @@ const CHECKBOX_FIELDS = {
 
 /* ================= SIGNATURE POSITIONS ================= */
 const SIGNATURE_COORDS = {
-  respondent: { x: 190, y: 240, width: 180, height: 45 },
-  matrixRep: { x: 190, y: 195, width: 180, height: 45 },
+  respondent: { x: 205, y: 240, width: 180, height: 45 },
+  matrixRep: { x: 205, y: 195, width: 180, height: 45 },
 };
 
 /* ================= CLOUDINARY CONFIG ================= */
@@ -62,6 +63,7 @@ const UPLOAD_PRESET = "cases_upload";
 
 async function uploadPdfToCloudinary(pdfData, identifier) {
   const formData = new FormData();
+  const timestamp = Date.now();
   
   if (Platform.OS === 'web') {
     // Convert base64 to Blob to ensure filename is preserved in Cloudinary raw upload
@@ -70,12 +72,12 @@ async function uploadPdfToCloudinary(pdfData, identifier) {
     const bytes = new Uint8Array(len);
     for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
     const blob = new Blob([bytes], { type: "application/pdf" });
-    formData.append("file", blob, `Matrix_${identifier}.pdf`);
+    formData.append("file", blob, `Matrix_${identifier}_${timestamp}.pdf`);
   } else {
     formData.append("file", {
       uri: pdfData,
       type: "application/pdf",
-      name: `Matrix_${identifier}.pdf`,
+      name: `Matrix_${identifier}_${timestamp}.pdf`,
     });
   }
 
@@ -106,6 +108,8 @@ export default function MatrixFormScreen() {
 
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [progress, setProgress] = useState(0);
+  const [progressMessage, setProgressMessage] = useState("");
   const [signingField, setSigningField] = useState(null);
 
   const [form, setForm] = useState({
@@ -194,7 +198,10 @@ export default function MatrixFormScreen() {
     const png = await pdfDoc.embedPng(
       Uint8Array.from(atob(base64), c => c.charCodeAt(0))
     );
-    pdfDoc.getPages()[0].drawImage(png, coords);
+    const dims = png.scaleToFit(coords.width, coords.height);
+    const x = coords.x + (coords.width - dims.width) / 2;
+    const y = coords.y + (coords.height - dims.height) / 2;
+    pdfDoc.getPages()[0].drawImage(png, { x, y, width: dims.width, height: dims.height });
   };
 
   /* ================= PDF GENERATION ================= */
@@ -202,6 +209,8 @@ export default function MatrixFormScreen() {
   const generatePdf = async () => {
     try {
       setSaving(true);
+      setProgress(0.1);
+      setProgressMessage("Initializing...");
       console.log("Starting PDF generation...");
 
       const asset = Asset.fromModule(
@@ -210,6 +219,8 @@ export default function MatrixFormScreen() {
       console.log("Downloading asset...");
       await asset.downloadAsync();
 
+      setProgress(0.2);
+      setProgressMessage("Reading template...");
       console.log("Reading asset...");
       let pdfDoc;
       if (Platform.OS === 'web') {
@@ -227,6 +238,15 @@ export default function MatrixFormScreen() {
 
       const pdfForm = pdfDoc.getForm();
 
+      /* FIX MATRIX BLUE BOX ISSUE - Set default appearance */
+      pdfForm.getFields().forEach(field => {
+        try {
+          field.acroField.setDefaultAppearance('/Helv 9 Tf 0 g');
+        } catch (e) {}
+      });
+
+      setProgress(0.4);
+      setProgressMessage("Filling form data...");
       console.log("Filling form fields...");
       /* TEXT FIELDS */
       Object.entries(TEXT_FIELDS).forEach(([key, acro]) => {
@@ -250,22 +270,51 @@ export default function MatrixFormScreen() {
       });
 
       /* SIGNATURES */
+      setProgress(0.6);
+      setProgressMessage("Embedding signatures...");
       console.log("Embedding signatures...");
       await embedSignature(pdfDoc, form.respondentSignature, SIGNATURE_COORDS.respondent);
       await embedSignature(pdfDoc, form.matrixRepSignature, SIGNATURE_COORDS.matrixRep);
 
-      // Flattening removes interactive fields, preventing blue highlights
+      /* FIX MATRIX BLUE BOX ISSUE - Update appearances and flatten */
+      try {
+        pdfForm.updateFieldAppearances();
+      } catch (e) {
+        console.log("Error updating field appearances:", e);
+      }
+
+      // Fix for blue boxes: make all fields read-only before flattening
+      pdfForm.getFields().forEach(field => {
+        try {
+          field.enableReadOnly();
+        } catch (e) {
+          console.log("Field read-only error (ignored):", e);
+        }
+      });
 
       console.log("Flattening PDF...");
       pdfForm.flatten();
 
+      // Nuclear option: Remove all annotations to ensure no blue boxes
+      pdfDoc.getPages().forEach(page => {
+        page.node.delete(PDFName.of('Annots'));
+      });
+
+      setProgress(0.7);
+      setProgressMessage("Saving PDF...");
       console.log("Saving PDF...");
-      const out = await pdfDoc.saveAsBase64();
+      let out;
       let uploadInput;
 
       if (Platform.OS === 'web') {
+        // FIX: Use save() instead of saveAsBase64() on WEB to ensure AcroForm removal
+        const bytes = await pdfDoc.save();
+        let binary = '';
+        for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+        out = btoa(binary);
         uploadInput = out;
       } else {
+        out = await pdfDoc.saveAsBase64();
         const path = FileSystem.documentDirectory + `MatrixPV_${form.matrixRefNo || caseId}.pdf`;
         await FileSystem.writeAsStringAsync(path, out, {
           encoding: FileSystem.EncodingType.Base64,
@@ -273,12 +322,16 @@ export default function MatrixFormScreen() {
         uploadInput = path;
       }
 
+      setProgress(0.8);
+      setProgressMessage("Uploading to Cloud...");
       console.log("Uploading PDF...");
       const uploadUrl = await uploadPdfToCloudinary(
         uploadInput,
         form.matrixRefNo || caseId
       );
 
+      setProgress(0.9);
+      setProgressMessage("Finalizing...");
       console.log("Updating Firebase...");
       await firebase.database().ref(`cases/${caseId}`).update({
         formCompleted: true,
@@ -289,6 +342,7 @@ export default function MatrixFormScreen() {
         ...form
       });
 
+      setProgress(1.0);
       Alert.alert("Success", "Matrix PV PDF Generated & Uploaded");
       navigation.goBack();
     } catch (e) {
@@ -316,6 +370,108 @@ export default function MatrixFormScreen() {
 
       {Object.keys(TEXT_FIELDS).map(k => {
         const label = k.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+
+        // 1. Verification Date Time (Clock Button)
+        if (k === "verificationDateTime") {
+          return (
+            <View key={k} style={styles.fieldContainer}>
+              <Text style={styles.label}>{label}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <TextInput
+                  style={[styles.textInput, { flex: 1 }]}
+                  value={form[k]}
+                  onChangeText={v => setForm({ ...form, [k]: v })}
+                  placeholder="DD/MM/YYYY HH:mm"
+                />
+                <TouchableOpacity onPress={() => {
+                  const now = new Date();
+                  const str = `${now.getDate().toString().padStart(2, '0')}/${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getFullYear()} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+                  setForm({ ...form, [k]: str });
+                }} style={{ padding: 10 }}>
+                  <Ionicons name="time-outline" size={24} color="#007AFF" />
+                </TouchableOpacity>
+              </View>
+            </View>
+          );
+        }
+
+        // 2. Respondent Period Stay (Number + Years)
+        if (k === "respondentPeriodStay") {
+          return (
+            <View key={k} style={styles.fieldContainer}>
+              <Text style={styles.label}>{label}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <TextInput
+                  style={[styles.textInput, { flex: 1 }]}
+                  keyboardType="numeric"
+                  value={form[k] ? form[k].replace(" Years", "") : ""}
+                  onChangeText={v => setForm({ ...form, [k]: v ? v + " Years" : "" })}
+                  placeholder="Enter number"
+                />
+                <Text style={{ marginLeft: 10, fontWeight: 'bold' }}>Years</Text>
+              </View>
+            </View>
+          );
+        }
+
+        // 3. Residence Status (Dropdown)
+        if (k === "residenceStatus") {
+          return (
+            <View key={k} style={styles.fieldContainer}>
+              <Text style={styles.label}>{label}</Text>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={form[k]}
+                  onValueChange={(v) => setForm({ ...form, [k]: v })}
+                  style={styles.picker}
+                >
+                  <Picker.Item label="Select Status..." value="" />
+                  <Picker.Item label="Owned" value="Owned" />
+                  <Picker.Item label="Rented" value="Rented" />
+                  <Picker.Item label="PG" value="PG" />
+                  <Picker.Item label="Hostel" value="Hostel" />
+                  <Picker.Item label="Relative" value="Relative" />
+                  <Picker.Item label="Other" value="Other" />
+                </Picker>
+              </View>
+            </View>
+          );
+        }
+
+        // 4. Address Proof Details (Dropdown + Other)
+        if (k === "addressProofDetails") {
+          const proofOptions = ["Ration Card", "Gas Bill", "Aadhar Card", "PAN Card", "GST", "Other"];
+          const currentVal = form[k];
+          const isCustom = currentVal && !proofOptions.includes(currentVal) && currentVal !== "Other";
+          const pickerVal = isCustom ? "Other" : currentVal;
+
+          return (
+            <View key={k} style={styles.fieldContainer}>
+              <Text style={styles.label}>{label}</Text>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={pickerVal}
+                  onValueChange={(v) => {
+                    if (v === "Other") setForm({ ...form, [k]: "Other" });
+                    else setForm({ ...form, [k]: v });
+                  }}
+                  style={styles.picker}
+                >
+                  <Picker.Item label="Select Proof..." value="" />
+                  {proofOptions.map(o => <Picker.Item key={o} label={o} value={o} />)}
+                </Picker>
+              </View>
+              {(pickerVal === "Other") && (
+                <TextInput
+                  placeholder="Enter Other Proof Details"
+                  style={[styles.textInput, { marginTop: 10 }]}
+                  value={isCustom ? currentVal : ""}
+                  onChangeText={v => setForm({ ...form, [k]: v })}
+                />
+              )}
+            </View>
+          );
+        }
 
         return (
           <View key={k} style={styles.fieldContainer}>
@@ -378,9 +534,7 @@ export default function MatrixFormScreen() {
       ))}
 
       <TouchableOpacity style={styles.submit} onPress={generatePdf}>
-        <Text style={{ color: "#fff" }}>
-          {saving ? "Generating..." : "Generate Matrix PDF"}
-        </Text>
+        <Text style={{ color: "#fff" }}>{saving ? "Saving..." : "Generate Matrix PDF"}</Text>
       </TouchableOpacity>
 
       <Modal visible={!!signingField} animationType="slide">
@@ -392,6 +546,9 @@ export default function MatrixFormScreen() {
             descriptionText="Sign above"
             clearText="Clear"
             confirmText="Save"
+            trimWhitespace={true}
+            minWidth={3}
+            maxWidth={5}
             webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 0px; width: 100%; position: absolute; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
           />
           <TouchableOpacity
@@ -400,6 +557,20 @@ export default function MatrixFormScreen() {
           >
             <Text style={{ color: "#fff" }}>Close</Text>
           </TouchableOpacity>
+        </View>
+      </Modal>
+
+      {/* PROGRESS MODAL */}
+      <Modal visible={saving} transparent animationType="fade">
+        <View style={styles.loadingOverlay}>
+          <View style={styles.loadingBox}>
+            <ActivityIndicator size="large" color="#007AFF" />
+            <Text style={styles.loadingText}>{progressMessage}</Text>
+            <View style={styles.progressBarContainer}>
+              <View style={[styles.progressBarFill, { width: `${progress * 100}%` }]} />
+            </View>
+            <Text style={styles.percentageText}>{Math.round(progress * 100)}%</Text>
+          </View>
         </View>
       </Modal>
     </ScrollView>
@@ -429,4 +600,31 @@ const styles = StyleSheet.create({
   sigImg: { width: "100%", height: "100%", resizeMode: "contain" },
   submit: { backgroundColor: "#007AFF", padding: 15, alignItems: "center", borderRadius: 5 },
   close: { backgroundColor: "#FF3B30", padding: 10, alignItems: "center", margin: 20, borderRadius: 5 },
+  pickerContainer: { borderWidth: 1, borderColor: '#ccc', borderRadius: 5, backgroundColor: '#fff', overflow: 'hidden' },
+  picker: { height: 50, width: '100%' },
+  loadingOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  loadingBox: {
+    width: "80%",
+    backgroundColor: "#fff",
+    padding: 20,
+    borderRadius: 10,
+    alignItems: "center",
+    elevation: 5,
+  },
+  loadingText: { marginTop: 10, fontSize: 16, fontWeight: "bold", color: "#333" },
+  progressBarContainer: {
+    width: "100%",
+    height: 10,
+    backgroundColor: "#e0e0e0",
+    borderRadius: 5,
+    marginTop: 15,
+    overflow: "hidden",
+  },
+  progressBarFill: { height: "100%", backgroundColor: "#007AFF" },
+  percentageText: { marginTop: 5, color: "#666", fontSize: 12 },
 });

@@ -308,23 +308,24 @@ export default function AuthScreen({ navigation }) {
   const buttonAction = otpPhase ? handleVerifyOtp : (isSignup ? handleSignup : handleLogin);
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={styles.root}>
       <AnimatedBG
         source={require("../assets/background.jpg")}
         style={[styles.background, { transform: [{ scale: bgScale }] }]}
+        resizeMode="cover"
       >
         <View style={styles.overlay} />
 
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={styles.container}
+          style={[styles.container, { width: "100%" }]}
         >
           <BlurView intensity={70} tint="dark" style={styles.card}>
             <Image
               source={require("../assets/logo.png")}
               style={styles.logo}
             />
-            <ScrollView showsVerticalScrollIndicator={false} style={{ flexShrink: 1 }}>
+            <ScrollView showsVerticalScrollIndicator={false} style={{ width: "100%" }} contentContainerStyle={{ paddingBottom: 20 }}>
 
             <Text style={styles.header}>
               {otpPhase ? "Verify OTP" : (isSignup ? "Sign Up" : "Login")}
@@ -540,7 +541,17 @@ export default function AuthScreen({ navigation }) {
 /* ---------- STYLES ---------- */
 
 const styles = StyleSheet.create({
-  background: { flex: 1 },
+  root: {
+    flex: 1,
+    width: "100%",
+    height: "100%",
+    backgroundColor: "#000",
+  },
+  background: {
+    flex: 1,
+    width: Platform.OS === "web" ? "100vw" : "100%",
+    height: Platform.OS === "web" ? "100vh" : "100%",
+  },
   overlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.6)",
