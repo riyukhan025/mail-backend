@@ -44,6 +44,37 @@ export default function Dashboard({ navigation }) {
   const knownCaseIds = useRef(new Set());
   const isFirstLoad = useRef(true);
 
+  const [bribeWarningVisible, setBribeWarningVisible] = useState(false);
+
+  useEffect(() => {
+    const checkDailyWarning = async () => {
+      const today = new Date().toDateString();
+      const lastShown = await AsyncStorage.getItem("last_bribe_warning_date");
+      if (lastShown !== today) {
+        setBribeWarningVisible(true);
+      }
+    };
+    checkDailyWarning();
+  }, []);
+
+  // Feature Flags
+  const [newUI, setNewUI] = useState(false);
+  const [betaFeatures, setBetaFeatures] = useState(false);
+  const [maintenanceMode, setMaintenanceMode] = useState(false);
+
+  useEffect(() => {
+    const devRef = firebase.database().ref("dev");
+    const listener = devRef.on("value", (snapshot) => {
+      const flags = snapshot.val() || {};
+      console.log("[Dashboard] Dev Flags Received:", flags);
+      // Handle both boolean and string "true"
+      setNewUI(flags.enableNewUI === true || flags.enableNewUI === "true");
+      setBetaFeatures(flags.enableBetaFeatures === true || flags.enableBetaFeatures === "true");
+      setMaintenanceMode(flags.maintenanceMode === true || flags.maintenanceMode === "true");
+    });
+    return () => devRef.off("value", listener);
+  }, []);
+
   useEffect(() => {
     if (user?.uid) {
       console.log("Loading cases for UID:", user.uid);
@@ -208,6 +239,18 @@ export default function Dashboard({ navigation }) {
   const completedCasesCount = cases.filter(c => c.status === 'completed' || c.status === 'closed').length;
   const pendingCasesCount = cases.filter(c => c.status === 'assigned' || c.status === 'audit' || c.status === 'open').length;
 
+  if (maintenanceMode) {
+    return (
+      <View style={styles.maintenanceScreen}>
+        <View style={styles.maintenanceAlertBox}>
+          <Ionicons name="warning" size={60} color="#fff" style={{ marginBottom: 15 }} />
+          <Text style={styles.maintenanceAlertTitle}>MAINTENANCE MODE ENABLED</Text>
+          <Text style={styles.maintenanceAlertText}>Wait for some time or contact dev.</Text>
+        </View>
+      </View>
+    );
+  }
+
   if (loading) return null;
 
   // Extract unique clients for filter
@@ -302,13 +345,20 @@ export default function Dashboard({ navigation }) {
 
   return (
     <LinearGradient
-      colors={["#12c2e9", "#c471ed", "#f64f59"]}
+      colors={newUI ? ["#141E30", "#243B55"] : ["#12c2e9", "#c471ed", "#f64f59"]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={styles.container}
     >
+      {/* Maintenance Banner */}
+      {maintenanceMode && (
+        <View style={styles.maintenanceBanner}>
+          <Text style={styles.maintenanceText}>⚠️ MAINTENANCE MODE: ACTIONS TRACKED</Text>
+        </View>
+      )}
+
       {/* Header */}
-      <View style={styles.headerRow}>
+      <View style={[styles.headerRow, maintenanceMode && { marginTop: 10 }]}>
         <TouchableOpacity onPress={() => setMenuOpen(true)}>
           <Ionicons name="menu" size={28} color="#fff" />
         </TouchableOpacity>
@@ -316,7 +366,7 @@ export default function Dashboard({ navigation }) {
           colors={["#ff9a9e", "#fad0c4"]}
           style={styles.headerBadge}
         >
-          <Text style={styles.headerText}>
+        <Text style={styles.headerText}>
             {getGreeting()}, {user?.name || user?.email?.split('@')[0] || "Member"}
           </Text>
         </LinearGradient>
@@ -410,6 +460,26 @@ export default function Dashboard({ navigation }) {
             >
               <Text style={[styles.menuText, { color: "red" }]}>Close Menu</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* Beta Heavy Feature: Performance Analytics Widget */}
+      {betaFeatures && (
+        <View style={styles.betaWidget}>
+          <View style={styles.betaWidgetHeader}>
+            <Ionicons name="speedometer" size={18} color="#fff" />
+            <Text style={styles.betaWidgetTitle}>Performance Analytics</Text>
+          </View>
+          <View style={styles.betaWidgetContent}>
+            <View style={styles.betaMetric}>
+              <Text style={styles.betaMetricValue}>98%</Text>
+              <Text style={styles.betaMetricLabel}>Accuracy</Text>
+            </View>
+            <View style={styles.betaMetric}>
+              <Text style={styles.betaMetricValue}>4.2h</Text>
+              <Text style={styles.betaMetricLabel}>Avg Time</Text>
+            </View>
           </View>
         </View>
       )}
@@ -601,9 +671,36 @@ export default function Dashboard({ navigation }) {
         </View>
       )}
 
+      {/* Bribe Warning Modal */}
+      <Modal
+        visible={bribeWarningVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setBribeWarningVisible(false)}
+      >
+        <View style={styles.alertOverlay}>
+          <View style={[styles.alertBox, { backgroundColor: "#ffebee", borderColor: "#c62828", borderWidth: 2, width: '75%', padding: 20 }]}>
+            <Ionicons name="warning" size={40} color="#c62828" style={{ marginBottom: 10 }} />
+            <Text style={{ fontSize: 16, fontWeight: "bold", color: "#c62828", textAlign: "center", marginBottom: 8 }}>STRICT WARNING</Text>
+            <Text style={{ fontSize: 13, color: "#b71c1c", textAlign: "center", marginBottom: 15, lineHeight: 18 }}>
+              Do not get or give bribe. SpaceSolutions is totally against it and will be severely punished.
+            </Text>
+            <TouchableOpacity
+              style={{ backgroundColor: "#c62828", paddingVertical: 8, paddingHorizontal: 25, borderRadius: 6 }}
+              onPress={async () => {
+                await AsyncStorage.setItem("last_bribe_warning_date", new Date().toDateString());
+                setBribeWarningVisible(false);
+              }}
+            >
+              <Text style={{ color: "#fff", fontWeight: "bold", fontSize: 14 }}>I Understand</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       {/* New Case Alert Modal */}
       <Modal
-        visible={newCasesList.length > 0}
+        visible={newCasesList.length > 0 && !bribeWarningVisible}
         transparent={true}
         animationType="slide"
         onRequestClose={async () => {
@@ -681,10 +778,12 @@ export default function Dashboard({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20 },
+  container: { flex: 1, padding: 20, paddingTop: Platform.OS === 'android' ? 40 : 20 },
   headerRow: { flexDirection: "row", alignItems: "center", marginBottom: 15, paddingHorizontal: 5 },
   headerBadge: { flex: 1, marginLeft: 10, paddingHorizontal: 15, paddingVertical: 10, borderRadius: 10, shadowColor: "#000", shadowOpacity: 0.3, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4, elevation: 5 },
   headerText: { fontSize: 18, fontWeight: "bold", color: "#fff", letterSpacing: 0.5 },
+  betaBadge: { position: 'absolute', top: -5, right: -5, backgroundColor: '#ff9800', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 },
+  betaText: { fontSize: 8, fontWeight: 'bold', color: '#000' },
   profilePhoto: { marginLeft: 10, borderRadius: 20, overflow: "hidden" },
   profileMenu: { position: "absolute", top: 60, right: 20, backgroundColor: "#fff", padding: 15, borderRadius: 8, shadowColor: "#000", shadowOpacity: 0.2, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4, elevation: 5, zIndex: 100 },
   menuOverlay: { position: "absolute", top: 0, left: 0, bottom: 0, right: 0, backgroundColor: "rgba(0,0,0,0.5)", zIndex: 90 },
@@ -772,4 +871,67 @@ const styles = StyleSheet.create({
   alertButtonText: { color: "#fff", fontWeight: "bold", fontSize: 16 },
   alertClose: { padding: 10 },
   alertCloseText: { color: "#888", fontWeight: "600" },
+  maintenanceBanner: {
+    backgroundColor: "#ffbb33",
+    marginHorizontal: -20,
+    marginTop: -40, // Pull up to cover status bar area if needed or just sit at top
+    paddingTop: Platform.OS === 'android' ? 40 : 50,
+    paddingBottom: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 10,
+    zIndex: 999,
+  },
+  maintenanceText: {
+    color: "#000",
+    fontWeight: "bold",
+    fontSize: 12,
+    textTransform: "uppercase",
+  },
+  maintenanceScreen: {
+    flex: 1,
+    backgroundColor: "#1a1a1a",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  maintenanceAlertBox: {
+    backgroundColor: "#d32f2f",
+    padding: 30,
+    borderRadius: 15,
+    alignItems: "center",
+    width: "100%",
+    maxWidth: 350,
+    elevation: 10,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+  },
+  maintenanceAlertTitle: {
+    color: "#fff",
+    fontSize: 20,
+    fontWeight: "bold",
+    textAlign: "center",
+    marginBottom: 10,
+  },
+  maintenanceAlertText: {
+    color: "#fff",
+    fontSize: 16,
+    textAlign: "center",
+  },
+  betaWidget: {
+    backgroundColor: "rgba(255,255,255,0.15)",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.2)",
+  },
+  betaWidgetHeader: { flexDirection: "row", alignItems: "center", marginBottom: 10, gap: 8 },
+  betaWidgetTitle: { color: "#fff", fontWeight: "bold", fontSize: 14, textTransform: "uppercase" },
+  betaWidgetContent: { flexDirection: "row", justifyContent: "space-around" },
+  betaMetric: { alignItems: "center" },
+  betaMetricValue: { color: "#00e676", fontSize: 20, fontWeight: "bold" },
+  betaMetricLabel: { color: "#ddd", fontSize: 10 },
 });

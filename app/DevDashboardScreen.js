@@ -124,12 +124,22 @@ export default function DevDashboardScreen({ navigation }) {
   const [users, setUsers] = useState([]);
   const [networkRequests, setNetworkRequests] = useState(NETWORK_BUFFER);
   const [featureFlags, setFeatureFlags] = useState({
-    enableNewUI: true,
+    enableNewUI: false,
     enableBetaFeatures: false,
     maintenanceMode: false,
     debugLogging: true,
   });
   const [archiving, setArchiving] = useState(false);
+
+  // Load feature flags on mount
+  useEffect(() => {
+    const devRef = firebase.database().ref("dev");
+    const listener = devRef.on("value", (snapshot) => {
+      const val = snapshot.val();
+      if (val) setFeatureFlags((prev) => ({ ...prev, ...val }));
+    });
+    return () => devRef.off("value", listener);
+  }, []);
 
   // Subscribe to real data updates
   useEffect(() => {
@@ -281,8 +291,17 @@ export default function DevDashboardScreen({ navigation }) {
     setNetworkRequests([]);
   };
 
-  const toggleFeatureFlag = (key) => {
-    setFeatureFlags((prev) => ({ ...prev, [key]: !prev[key] }));
+  const toggleFeatureFlag = async (key) => {
+    const newValue = !featureFlags[key];
+    setFeatureFlags((prev) => ({ ...prev, [key]: newValue }));
+    try {
+      await firebase.database().ref("dev").update({ [key]: newValue });
+      console.log(`[DevDashboard] Updated ${key} to ${newValue}`);
+    } catch (error) {
+      console.error("Failed to update feature flag:", error);
+      Alert.alert("Error", "Failed to update feature flag in database.");
+      setFeatureFlags((prev) => ({ ...prev, [key]: !newValue })); // Revert
+    }
   };
 
   const handleArchiveOldCases = async () => {
@@ -415,7 +434,7 @@ export default function DevDashboardScreen({ navigation }) {
   };
 
   return (
-    <LinearGradient colors={["#4e0360", "#1a1a1a"]} style={styles.container}>
+    <LinearGradient colors={["#b71c1c", "#560027", "#1a1a1a"]} style={styles.container}>
       <StatusBar barStyle="light-content" />
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
@@ -462,6 +481,29 @@ export default function DevDashboardScreen({ navigation }) {
 // --- TAB COMPONENTS ---
 
 function OverviewTab({ featureFlags, toggleFeatureFlag }) {
+  const [statsRequest, setStatsRequest] = useState(false);
+
+  useEffect(() => {
+    const checkRequest = async () => {
+      const pending = await AsyncStorage.getItem("stats_request_pending");
+      setStatsRequest(pending === "true");
+    };
+    checkRequest();
+    const interval = setInterval(checkRequest, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleApproveStats = async () => {
+    try {
+      await AsyncStorage.setItem("stats_approved", "true");
+      await AsyncStorage.setItem("stats_request_pending", "false");
+      setStatsRequest(false);
+      Alert.alert("Success", "Admin stats access granted.");
+    } catch (e) {
+      Alert.alert("Error", e.message);
+    }
+  };
+
   const handleReload = () => {
     if (Platform.OS === 'web') {
       window.location.reload();
@@ -476,6 +518,14 @@ function OverviewTab({ featureFlags, toggleFeatureFlag }) {
 
   return (
     <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+      {statsRequest && (
+        <View style={[styles.section, { marginBottom: 15 }]}>
+          <TouchableOpacity style={[styles.card, { backgroundColor: '#d32f2f', borderColor: '#ff5252' }]} onPress={handleApproveStats}>
+            <Text style={{ color: '#fff', fontWeight: 'bold', textAlign: 'center', fontSize: 16 }}>🔴 ADMIN REQUESTED STATS - APPROVE</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Environment Info</Text>
         <View style={cardStyle}>
@@ -768,6 +818,40 @@ function StatisticsTab({ users }) {
   const [statsData, setStatsData] = useState(null);
   const [calculating, setCalculating] = useState(false);
   const screenWidth = Dimensions.get("window").width;
+  const [requestStatus, setRequestStatus] = useState('none');
+
+  useEffect(() => {
+    const checkStatus = async () => {
+      try {
+        const pending = await AsyncStorage.getItem("stats_request_pending");
+        const approved = await AsyncStorage.getItem("stats_approved");
+        
+        if (approved === "true") {
+          setRequestStatus('approved');
+        } else if (pending === "true") {
+          setRequestStatus('pending');
+        } else {
+          setRequestStatus('none');
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
+    checkStatus();
+    const interval = setInterval(checkStatus, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleGrant = async () => {
+    await AsyncStorage.setItem("stats_approved", "true");
+    await AsyncStorage.setItem("stats_request_pending", "false");
+    setRequestStatus('approved');
+  };
+
+  const handleRevoke = async () => {
+    await AsyncStorage.setItem("stats_approved", "false");
+    setRequestStatus('none');
+  };
 
   const chartConfig = {
     backgroundGradientFrom: "#1a1a1a",
@@ -897,6 +981,33 @@ function StatisticsTab({ users }) {
 
   return (
     <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Access Control</Text>
+        <View style={styles.card}>
+           {requestStatus === 'pending' && (
+             <View>
+               <Text style={{color: '#ffbb33', fontWeight: 'bold', marginBottom: 10, fontSize: 16}}>⚠️ Admin Requested Report Access</Text>
+               <TouchableOpacity style={[styles.actionButton, {backgroundColor: '#4caf50', width: '100%', flexDirection: 'row', justifyContent: 'center'}]} onPress={handleGrant}>
+                 <Ionicons name="paper-plane" size={20} color="#fff" style={{marginRight: 10}} />
+                 <Text style={styles.actionLabel}>Send Report (Grant Access)</Text>
+               </TouchableOpacity>
+             </View>
+           )}
+           {requestStatus === 'approved' && (
+             <View>
+               <Text style={{color: '#4caf50', fontWeight: 'bold', marginBottom: 10, fontSize: 16}}>✅ Access Currently Granted</Text>
+               <Text style={{color: '#ccc', fontSize: 12, marginBottom: 15}}>Revoke access at start of next month or manually.</Text>
+               <TouchableOpacity style={[styles.actionButton, {backgroundColor: '#f44336', width: '100%', flexDirection: 'row', justifyContent: 'center'}]} onPress={handleRevoke}>
+                 <Ionicons name="lock-closed" size={20} color="#fff" style={{marginRight: 10}} />
+                 <Text style={styles.actionLabel}>Revoke Access</Text>
+               </TouchableOpacity>
+             </View>
+           )}
+           {requestStatus === 'none' && (
+             <Text style={{color: '#888', fontStyle: 'italic'}}>No pending requests.</Text>
+           )}
+        </View>
+      </View>
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Live Analytics</Text>
         <View style={styles.card}>

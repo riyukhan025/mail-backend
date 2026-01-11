@@ -54,6 +54,24 @@ export default function AdminPanelScreen({ navigation }) {
   const knownCaseStatuses = useRef(new Map());
   const isFirstLoad = useRef(true);
 
+  // Feature Flags
+  const [newUI, setNewUI] = useState(false);
+  const [betaFeatures, setBetaFeatures] = useState(false);
+  const [maintenanceMode, setMaintenanceMode] = useState(false);
+
+  useEffect(() => {
+    const devRef = firebase.database().ref("dev");
+    const listener = devRef.on("value", (snapshot) => {
+      const flags = snapshot.val() || {};
+      console.log("[AdminPanel] Dev Flags Received:", flags);
+      // Handle both boolean and string "true"
+      setNewUI(flags.enableNewUI === true || flags.enableNewUI === "true");
+      setBetaFeatures(flags.enableBetaFeatures === true || flags.enableBetaFeatures === "true");
+      setMaintenanceMode(flags.maintenanceMode === true || flags.maintenanceMode === "true");
+    });
+    return () => devRef.off("value", listener);
+  }, []);
+
   // Animation for Menu
   const slideAnim = useRef(new Animated.Value(-MENU_WIDTH)).current;
 
@@ -614,8 +632,20 @@ export default function AdminPanelScreen({ navigation }) {
     );
   };
 
+  if (maintenanceMode) {
+    return (
+      <View style={styles.maintenanceScreen}>
+        <View style={styles.maintenanceAlertBox}>
+          <Ionicons name="warning" size={60} color="#fff" style={{ marginBottom: 15 }} />
+          <Text style={styles.maintenanceAlertTitle}>MAINTENANCE MODE ENABLED</Text>
+          <Text style={styles.maintenanceAlertText}>Wait for some time or contact dev.</Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
-    <LinearGradient colors={isLightTheme ? ["#ffffff", "#87ceeb"] : ["#1a1a2e", "#16213e", "#0f3460"]} style={{ flex: 1 }}>{/* Hamburger Menu Overlay */}
+    <LinearGradient colors={newUI ? ["#0f0c29", "#302b63", "#24243e"] : (isLightTheme ? ["#ffffff", "#87ceeb"] : ["#1a1a2e", "#16213e", "#0f3460"])} style={{ flex: 1 }}>{/* Hamburger Menu Overlay */}
       {/* Hamburger Menu Overlay */}
       {menuOpen && (
         <View style={styles.menuOverlay}>
@@ -700,7 +730,7 @@ export default function AdminPanelScreen({ navigation }) {
       )}
 
       {/* Fixed Top Section */}
-      <View style={{ padding: 10, paddingTop: Platform.OS === 'android' ? 40 : 50 }}>
+      <View style={{ padding: 10, paddingTop: maintenanceMode ? 10 : (Platform.OS === 'android' ? 40 : 50) }}>
         <View style={styles.headerRow}>
           <TouchableOpacity onPress={openMenu} style={styles.iconButton}>
             <Ionicons name="menu" size={32} color={isLightTheme ? "#333" : "#fff"} />
@@ -708,7 +738,9 @@ export default function AdminPanelScreen({ navigation }) {
 
           <View style={styles.logoContainer}>
             <Image source={require("../assets/logo.png")} style={styles.logo} resizeMode="contain" />
-            <Text style={[styles.title, isLightTheme && { color: "#333" }]}>SpaceSolutions Admin</Text>
+            <View>
+              <Text style={[styles.title, isLightTheme && { color: "#333" }]}>SpaceSolutions Admin</Text>
+            </View>
           </View>
 
           <TouchableOpacity onPress={() => setIsLightTheme(!isLightTheme)} style={styles.iconButton}>
@@ -731,6 +763,23 @@ export default function AdminPanelScreen({ navigation }) {
             </BlurView>
           ))}
         </View>
+
+        {/* Beta Heavy Features: Smart Actions Toolbar */}
+        {betaFeatures && (
+          <View style={styles.betaToolbar}>
+            <Text style={styles.betaLabel}>ADVANCED TOOLS</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingHorizontal: 10 }}>
+              <TouchableOpacity style={styles.betaButton}>
+                <Ionicons name="analytics" size={14} color="#fff" />
+                <Text style={styles.betaButtonText}>AI Analysis</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.betaButton}>
+                <Ionicons name="download" size={14} color="#fff" />
+                <Text style={styles.betaButtonText}>Bulk Export</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        )}
 
         {/* Upload & Assign */}
         <View style={styles.uploadAssignRow}>
@@ -1172,5 +1221,66 @@ const styles = StyleSheet.create({
   toastText: {
     color: '#fff',
     fontSize: 14,
+  },
+  maintenanceScreen: {
+    flex: 1,
+    backgroundColor: "#1a1a1a",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  maintenanceAlertBox: {
+    backgroundColor: "#d32f2f",
+    padding: 30,
+    borderRadius: 15,
+    alignItems: "center",
+    width: "100%",
+    maxWidth: 350,
+    elevation: 10,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+  },
+  maintenanceAlertTitle: {
+    color: "#fff",
+    fontSize: 20,
+    fontWeight: "bold",
+    textAlign: "center",
+    marginBottom: 10,
+  },
+  maintenanceAlertText: {
+    color: "#fff",
+    fontSize: 16,
+    textAlign: "center",
+  },
+  betaToolbar: {
+    backgroundColor: "rgba(255,255,255,0.1)",
+    borderRadius: 8,
+    padding: 8,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.2)",
+  },
+  betaLabel: {
+    color: "#aaa",
+    fontSize: 10,
+    fontWeight: "bold",
+    marginBottom: 5,
+    marginLeft: 5,
+  },
+  betaButton: {
+    flexDirection: "row",
+    backgroundColor: "#4a148c",
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 15,
+    alignItems: "center",
+    gap: 5,
+  },
+  betaButtonText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "bold",
   },
 });
