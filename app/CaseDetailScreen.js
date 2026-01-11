@@ -562,24 +562,7 @@ const handleCloseCase = async () => {
         const pdfDoc = await PDFDocument.create();
         const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
-        // Page 1: Case Details
-        let page = pdfDoc.addPage();
-        let y = page.getHeight() - 50;
-        page.drawText("Case Report", { x: 50, y, font, size: 24 });
-        y -= 30;
-
-        console.log('[PDF-LOG] ✍️ Writing case details...');
-        for (const [key, value] of Object.entries(caseData)) {
-            if (typeof value !== "object" && value) {
-                page.drawText(`${key}: ${value}`, { x: 50, y, font, size: 12 });
-                y -= 20;
-                if (y < 50) {
-                    console.log('[PDF-LOG] 📄 Added new page for overflowing case details.');
-                    page = pdfDoc.addPage();
-                    y = page.getHeight() - 50;
-                }
-            }
-        }
+        let page;
 
         // Subsequent pages: Photos
         console.log('[PDF-LOG] ⚙️ Preparing to add photos...');

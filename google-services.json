@@ -1,0 +1,40 @@
+{
+  "project_info": {
+    "project_number": "579229154553",
+    "firebase_url": "https://spacesolutions2-89738-default-rtdb.firebaseio.com",
+    "project_id": "spacesolutions2-89738",
+    "storage_bucket": "spacesolutions2-89738.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:579229154553:android:5a50e6e4f8a9497357f628",
+        "android_client_info": {
+          "package_name": "com.spacesolutions2016.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "579229154553-uh6d3l6rsnjkos04i8ootr7ojva8l0ch.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAwW4O6A1ds7mA9wSEK0hmaE10JU8kaypg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "579229154553-uh6d3l6rsnjkos04i8ootr7ojva8l0ch.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
