@@ -18,7 +18,7 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.riyaz123202.Spacesolutions",
+      "package": "com.spacesolutions2016.app",
       "permissions": [
         "READ_EXTERNAL_STORAGE"
       ],

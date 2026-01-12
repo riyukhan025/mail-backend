@@ -7,8 +7,8 @@
     "dev": "expo start",
     "build": "expo export --platform web",
     "reset-project": "node ./scripts/reset-project.js",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "lint": "expo lint"
   },
   "dependencies": {
