@@ -442,6 +442,14 @@ export default function Dashboard({ navigation }) {
                 label: "All Cases",
                 action: () => navigation.navigate("AllCasesScreen"),
               },
+              {
+                label: "Raise Ticket",
+                action: () => navigation.navigate("RaiseTicketScreen"),
+              },
+              {
+                label: "My Tickets",
+                action: () => navigation.navigate("MyTicketsScreen"),
+              },
             ].map((item) => (
               <TouchableOpacity
                 key={item.label}

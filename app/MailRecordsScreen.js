@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Query } from "appwrite";
 import { LinearGradient } from "expo-linear-gradient";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { APPWRITE_CONFIG, databases } from "./appwrite";
 
 export default function MailRecordsScreen({ navigation }) {
@@ -14,6 +14,7 @@ export default function MailRecordsScreen({ navigation }) {
       try {
         if (!APPWRITE_CONFIG?.databaseId || !APPWRITE_CONFIG?.sentEmailsCollectionId) {
           console.warn("Appwrite Config Error: Missing databaseId or sentEmailsCollectionId");
+          Alert.alert("Config Error", "Missing Appwrite Database ID or Collection ID.");
           setLoading(false);
           return;
         }
@@ -26,6 +27,7 @@ export default function MailRecordsScreen({ navigation }) {
         setRecords(response.documents);
       } catch (error) {
         console.error("Error fetching mail records:", error);
+        Alert.alert("Error", "Failed to fetch records: " + error.message);
       } finally {
         setLoading(false);
       }

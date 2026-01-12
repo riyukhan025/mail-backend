@@ -7,6 +7,7 @@ export const APPWRITE_CONFIG = {
     dsrCollectionId: "dsr_reports",
     userPlansCollectionId: "user_plans", // Ensure this collection exists in your Appwrite console
     sentEmailsCollectionId: "sent_emails", // Replace with your actual Collection ID for Sent Emails
+    ticketsCollectionId: "tickets", // Add your new tickets collection ID here
 };
 
 export const client = new Client()

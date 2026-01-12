@@ -22,7 +22,7 @@ import {
 } from "react-native";
 import { BarChart, LineChart, PieChart } from "react-native-chart-kit";
 import firebase from "../firebase";
-import { APPWRITE_CONFIG, client } from "./appwrite";
+import { APPWRITE_CONFIG, client, databases, Query } from "./appwrite";
 
 // --- CONSTANTS & CONFIGURATION ---
 const APP_VERSION = "1.0.4 (Build 203)";
@@ -35,6 +35,7 @@ const SERVER_URL = `http://${localIp}:3000`;
 
 const TABS = [
   { id: "overview", label: "Overview", icon: "grid-outline" },
+  { id: "tickets", label: "Tickets", icon: "ticket-outline" },
   { id: "users", label: "Users", icon: "people-outline" },
   { id: "tracking", label: "Tracking", icon: "analytics-outline" },
   { id: "logs", label: "Logs", icon: "terminal-outline" },
@@ -413,7 +414,9 @@ export default function DevDashboardScreen({ navigation }) {
   const renderContent = () => {
     switch (activeTab) {
       case "overview":
-        return <OverviewTab featureFlags={featureFlags} toggleFeatureFlag={toggleFeatureFlag} />;
+        return <OverviewTab featureFlags={featureFlags} toggleFeatureFlag={toggleFeatureFlag} navigation={navigation} />;
+      case "tickets":
+        return <TicketsTab />;
       case "users":
         return <UsersTab users={users} onRevoke={handleRevokeAccess} onGrant={handleGrantAccess} />;
       case "tracking":
@@ -480,12 +483,12 @@ export default function DevDashboardScreen({ navigation }) {
 
 // --- TAB COMPONENTS ---
 
-function OverviewTab({ featureFlags, toggleFeatureFlag }) {
+function OverviewTab({ featureFlags, toggleFeatureFlag, navigation }) {
   const [statsRequest, setStatsRequest] = useState(false);
 
   useEffect(() => {
     const checkRequest = async () => {
-      const pending = await AsyncStorage.getItem("stats_request_pending");
+      const pending = await AsyncStorage.getItem("stats_request_pending"); // This seems to be a real feature
       setStatsRequest(pending === "true");
     };
     checkRequest();
@@ -559,9 +562,100 @@ function OverviewTab({ featureFlags, toggleFeatureFlag }) {
         <View style={styles.grid}>
           <ActionButton icon="refresh" label="Reload App" onPress={handleReload} />
           <ActionButton icon="share-social" label="Export Logs" onPress={() => Share.share({ message: JSON.stringify(LOG_BUFFER, null, 2) })} />
+          <ActionButton icon="ticket-outline" label="View Tickets" onPress={() => navigation.navigate("AllTicketsScreen")} />
         </View>
       </View>
     </ScrollView>
+  );
+}
+
+function TicketsTab() {
+  const [tickets, setTickets] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchTickets = async () => {
+    setLoading(true);
+    try {
+      const response = await databases.listDocuments(
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.ticketsCollectionId,
+        [Query.orderDesc("$createdAt")]
+      );
+      setTickets(response.documents);
+    } catch (error) {
+      console.error("Error fetching tickets:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTickets();
+  }, []);
+
+  const handleUpdateStatus = async (id, status) => {
+    try {
+      await databases.updateDocument(
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.ticketsCollectionId,
+        id,
+        { status }
+      );
+      // Optimistic update
+      setTickets(prev => prev.map(t => t.$id === id ? { ...t, status } : t));
+      if (Platform.OS === 'web') alert(`Ticket marked as ${status}`);
+      else Alert.alert("Success", `Ticket marked as ${status}`);
+    } catch (error) {
+      Alert.alert("Error", error.message);
+    }
+  };
+
+  return (
+    <View style={styles.flexContainer}>
+      <View style={styles.toolbar}>
+        <Text style={styles.toolbarTitle}>Support Tickets</Text>
+        <TouchableOpacity onPress={fetchTickets}>
+          <Ionicons name="refresh" size={20} color="#8e24aa" />
+        </TouchableOpacity>
+      </View>
+      <FlatList
+        data={tickets}
+        keyExtractor={item => item.$id}
+        contentContainerStyle={{ padding: 16 }}
+        renderItem={({ item }) => (
+          <View style={[styles.card, { marginBottom: 10, borderLeftWidth: 4, borderLeftColor: item.status === 'open' ? '#ff9800' : item.status === 'closed' ? '#4caf50' : '#2196f3' }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 }}>
+              <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>{item.subject}</Text>
+              <Text style={{ color: '#aaa', fontSize: 12 }}>{new Date(item.$createdAt).toLocaleDateString()}</Text>
+            </View>
+            <Text style={{ color: '#ccc', marginBottom: 10 }}>{item.message}</Text>
+            <Text style={{ color: '#888', fontSize: 12, marginBottom: 10 }}>From: {item.userName}</Text>
+            
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
+              {item.status !== 'closed' && (
+                <TouchableOpacity 
+                  style={[styles.actionBtnSmall, { backgroundColor: '#4caf50' }]} 
+                  onPress={() => handleUpdateStatus(item.$id, 'closed')}
+                >
+                  <Text style={styles.actionBtnText}>Close Ticket</Text>
+                </TouchableOpacity>
+              )}
+              {item.status === 'open' && (
+                <TouchableOpacity 
+                  style={[styles.actionBtnSmall, { backgroundColor: '#2196f3' }]} 
+                  onPress={() => handleUpdateStatus(item.$id, 'in-progress')}
+                >
+                  <Text style={styles.actionBtnText}>Mark In-Progress</Text>
+                </TouchableOpacity>
+              )}
+              <View style={[styles.badge, { backgroundColor: '#333', marginLeft: 'auto' }]}>
+                 <Text style={styles.badgeText}>{item.status.toUpperCase()}</Text>
+              </View>
+            </View>
+          </View>
+        )}
+      />
+    </View>
   );
 }
 

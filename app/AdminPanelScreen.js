@@ -645,7 +645,7 @@ export default function AdminPanelScreen({ navigation }) {
   }
 
   return (
-    <LinearGradient colors={newUI ? ["#0f0c29", "#302b63", "#24243e"] : (isLightTheme ? ["#ffffff", "#87ceeb"] : ["#1a1a2e", "#16213e", "#0f3460"])} style={{ flex: 1 }}>{/* Hamburger Menu Overlay */}
+    <LinearGradient colors={isLightTheme ? ["#8cacf1", "#acd1fb", "#8ee2fa"] : ["#0f0c29", "#302b63", "#24243e"]} style={{ flex: 1 }}>{/* Hamburger Menu Overlay */}
       {/* Hamburger Menu Overlay */}
       {menuOpen && (
         <View style={styles.menuOverlay}>
@@ -671,6 +671,9 @@ export default function AdminPanelScreen({ navigation }) {
             </TouchableOpacity>
             <TouchableOpacity style={styles.menuItem} onPress={() => { closeMenu(); navigation.navigate("StatisticsScreen"); }}>
               <Text style={styles.menuText}>Statistics</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuItem} onPress={() => { closeMenu(); navigation.navigate("AllTicketsScreen"); }}>
+              <Text style={styles.menuText}>Support Tickets</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.menuItem} onPress={() => { 
                 closeMenu(); 
@@ -751,15 +754,15 @@ export default function AdminPanelScreen({ navigation }) {
         {/* Counters */}
         <View style={styles.counterRow}>
           {[
-            { label: "Total", value: assignedTL, color: "#33b5e5" },
-            { label: "Reverted", value: reverted, color: "#ff4444" },
-            { label: "Assigned", value: assignedFE, color: "#0099CC" },
-            { label: "Audit", value: audited, color: "#FF8800" },
-            { label: "Done", value: completed, color: "#00C851" },
+            { label: "Total", value: assignedTL, color: isLightTheme ? "#004d40" : "#33b5e5" },
+            { label: "Reverted", value: reverted, color: isLightTheme ? "#b71c1c" : "#ff4444" },
+            { label: "Assigned", value: assignedFE, color: isLightTheme ? "#01579b" : "#0099CC" },
+            { label: "Audit", value: audited, color: isLightTheme ? "#bf360c" : "#FF8800" },
+            { label: "Done", value: completed, color: isLightTheme ? "#1b5e20" : "#00C851" },
           ].map((c, idx) => (
-            <BlurView intensity={20} tint={isLightTheme ? "light" : "dark"} key={idx} style={[styles.counterBox, { borderLeftColor: c.color }, isLightTheme && { backgroundColor: "rgba(255,255,255,0.6)" }]}>
+            <BlurView intensity={isLightTheme ? 80 : 40} tint={isLightTheme ? "light" : "dark"} key={idx} style={[styles.counterBox, { borderLeftColor: c.color }]}>
               <Text style={[styles.counterValue, { color: c.color }]}>{c.value}</Text>
-              <Text style={[styles.counterLabel, isLightTheme && { color: "#555" }]}>{c.label}</Text>
+              <Text style={[styles.counterLabel, { color: isLightTheme ? "#000" : "#ddd" }]}>{c.label}</Text>
             </BlurView>
           ))}
         </View>
@@ -824,28 +827,28 @@ export default function AdminPanelScreen({ navigation }) {
 
         {/* Search Filters */}
         <View style={styles.searchFilter}>
-          <View style={[styles.searchContainer, isLightTheme && { backgroundColor: "rgba(255,255,255,0.7)", borderColor: "#ccc", borderWidth: 1 }]}>
-             <Ionicons name="search" size={16} color={isLightTheme ? "#555" : "#aaa"} style={{ marginRight: 5 }} />
+          <View style={[styles.searchContainer, { backgroundColor: isLightTheme ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.1)" }]}>
+             <Ionicons name="search" size={16} color={isLightTheme ? "#333" : "#aaa"} style={{ marginRight: 5 }} />
              <TextInput
                 placeholder="Search Name..."
-                placeholderTextColor={isLightTheme ? "#666" : "#aaa"}
+                placeholderTextColor={isLightTheme ? "#333" : "#ccc"}
                 value={searchText}
                 onChangeText={setSearchText}
-                style={[styles.searchInput, isLightTheme && { color: "#333" }]}
+                style={[styles.searchInput, { color: isLightTheme ? "#000" : "#fff" }]}
              />
           </View>
-          <View style={[styles.searchContainer, isLightTheme && { backgroundColor: "rgba(255,255,255,0.7)", borderColor: "#ccc", borderWidth: 1 }]}>
-             <Ionicons name="qr-code-outline" size={16} color={isLightTheme ? "#555" : "#aaa"} style={{ marginRight: 5 }} />
+          <View style={[styles.searchContainer, { backgroundColor: isLightTheme ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.1)" }]}>
+             <Ionicons name="qr-code-outline" size={16} color={isLightTheme ? "#333" : "#aaa"} style={{ marginRight: 5 }} />
              <TextInput
                 placeholder="Ref No..."
-                placeholderTextColor={isLightTheme ? "#666" : "#aaa"}
+                placeholderTextColor={isLightTheme ? "#333" : "#ccc"}
                 value={refNoFilter}
                 onChangeText={setRefNoFilter}
-                style={[styles.searchInput, isLightTheme && { color: "#333" }]}
+                style={[styles.searchInput, { color: isLightTheme ? "#000" : "#fff" }]}
              />
           </View>
           
-          <View style={[styles.pickerContainer, isLightTheme && { borderColor: "#ccc", borderWidth: 1 }]}>
+          <View style={[styles.pickerContainer, { backgroundColor: isLightTheme ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.9)" }]}>
               <Picker selectedValue={statusFilter} onValueChange={setStatusFilter} style={styles.picker} dropdownIconColor="#333">
                 <Picker.Item label="Status: All" value="" style={{fontSize: 12, color: '#000'}} />
                 <Picker.Item label="Assigned" value="assigned" style={{fontSize: 12, color: '#000'}} />
@@ -882,7 +885,7 @@ export default function AdminPanelScreen({ navigation }) {
       <View style={{ flex: 1, paddingHorizontal: 8 }}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexGrow: 1 }}>
           <View style={{ width: Object.values(columnWidths).reduce((a, b) => a + b, 0), flex: 1 }}>
-            <View style={[styles.tableHeader, isLightTheme && { backgroundColor: "#e0e0e0", borderColor: "#ccc" }]}>
+            <View style={[styles.tableHeader, isLightTheme && { backgroundColor: "rgba(255,255,255,0.5)", borderColor: "rgba(255,255,255,0.2)" }]}>
               {Object.keys(columnWidths).map((key) => (
                 <Text
                   key={key}
@@ -891,7 +894,7 @@ export default function AdminPanelScreen({ navigation }) {
                     styles.headerCell,
                     { width: columnWidths[key] },
                     key === "revert" ? { textAlign: "center" } : null,
-                    isLightTheme && { color: "#333" }
+                    isLightTheme && { color: "#000", fontWeight: "800" }
                   ]}
                 >
                   {key === "number" ? "#" : key}
@@ -909,10 +912,10 @@ export default function AdminPanelScreen({ navigation }) {
                       key={key}
                       style={{
                         width: columnWidths[key],
-                        backgroundColor: isLightTheme ? "#fff" : "rgba(255,255,255,0.1)",
+                        backgroundColor: isLightTheme ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.1)",
                         color: isLightTheme ? "#333" : "#fff",
                         borderWidth: 1,
-                        borderColor: isLightTheme ? "#ccc" : "#444",
+                        borderColor: isLightTheme ? "rgba(0,0,0,0.1)" : "#444",
                         fontSize: 11,
                         paddingHorizontal: 5,
                         height: 30,

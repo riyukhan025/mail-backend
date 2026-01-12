@@ -320,7 +320,7 @@ export default function AuthScreen({ navigation }) {
           behavior={Platform.OS === "ios" ? "padding" : undefined}
           style={[styles.container, { width: "100%" }]}
         >
-          <BlurView intensity={70} tint="dark" style={styles.card}>
+          <BlurView intensity={80} tint="dark" style={styles.card}>
             <Image
               source={require("../assets/logo.png")}
               style={styles.logo}
@@ -483,9 +483,10 @@ export default function AuthScreen({ navigation }) {
             )}
 
             {!otpPhase && (
-              <TouchableOpacity onPress={() => setIsSignup(!isSignup)} style={{ marginTop: 15, marginBottom: 20 }}>
-                <Text style={{ color: "#fff", textAlign: "center", textDecorationLine: "underline" }}>
-                  {isSignup ? "Already have an account? Login" : "New User? Sign Up"}
+              <TouchableOpacity onPress={() => setIsSignup(!isSignup)} style={{ marginTop: 25, marginBottom: 10 }}>
+                <Text style={{ color: "#fff", textAlign: "center", fontWeight: "600", fontSize: 15 }}>
+                  {isSignup ? "Already have an account? " : "New User? "}
+                  <Text style={{ color: "#facc15", fontWeight: "bold" }}>{isSignup ? "Login" : "Sign Up"}</Text>
                 </Text>
               </TouchableOpacity>
             )}
@@ -563,43 +564,55 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   card: {
-    borderRadius: 20,
-    padding: 20,
+    borderRadius: 30,
+    padding: 25,
     width: "100%",
-    maxWidth: 400,
+    maxWidth: 380,
     maxHeight: "85%",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)",
+    overflow: "hidden",
   },
   logo: {
-    width: 50,
-    height: 50,
+    width: 80,
+    height: 80,
     alignSelf: "center",
-    marginBottom: 5,
+    marginBottom: 20,
   },
   header: {
-    fontSize: 22,
-    fontWeight: "700",
+    fontSize: 28,
+    fontWeight: "800",
     color: "#fff",
     textAlign: "center",
-    marginBottom: 5,
+    marginBottom: 20,
+    letterSpacing: 0.5,
   },
   message: {
     textAlign: "center",
-    color: "#fde68a",
-    marginBottom: 10,
+    color: "#ff6b6b",
+    marginBottom: 15,
+    fontWeight: "600",
+    backgroundColor: "rgba(255,0,0,0.1)",
+    padding: 8,
+    borderRadius: 8,
+    overflow: "hidden",
   },
   inputRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.15)",
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    marginBottom: 6,
+    backgroundColor: "rgba(0,0,0,0.3)",
+    borderRadius: 16,
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.05)",
   },
   input: {
     flex: 1,
     color: "#fff",
     marginLeft: 10,
+    fontSize: 16,
     backgroundColor: "transparent",
     ...Platform.select({
       web: {
@@ -615,36 +628,50 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   button: {
-    padding: 12,
-    borderRadius: 14,
-    marginTop: 10,
+    paddingVertical: 16,
+    borderRadius: 16,
+    marginTop: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    elevation: 5,
   },
   buttonText: {
     textAlign: "center",
-    fontWeight: "700",
-    fontSize: 16,
+    fontWeight: "800",
+    fontSize: 18,
     color: "#000",
+    textTransform: "uppercase",
+    letterSpacing: 1,
   },
   extraActions: {
     alignItems: "center",
-    marginTop: 15,
+    marginTop: 25,
+    gap: 15,
   },
   forgotBtn: {
-    marginTop: 10,
-    marginBottom: 5,
+    marginTop: 0,
+    marginBottom: 0,
   },
   forgotText: {
-    color: "#ccc",
-    textDecorationLine: "underline",
+    color: "#aaa",
+    fontSize: 14,
   },
   retrieveBtn: {
     flexDirection: "row",
     alignItems: "center",
+    backgroundColor: "rgba(250, 204, 21, 0.1)",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "rgba(250, 204, 21, 0.3)",
   },
   retrieveText: {
     color: "#facc15",
     marginLeft: 5,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "bold",
   },
   modalOverlay: {

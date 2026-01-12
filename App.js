@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Platform, StyleSheet } from "react-native";
+import { StyleSheet } from "react-native";
 import "react-native-gesture-handler";
 
 import { NavigationContainer } from "@react-navigation/native";
@@ -8,12 +8,13 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { AuthContext } from "./app/AuthContext";
-import firebase, { db } from "./firebase";
+import firebase from "./firebase";
 
 /* ---------------- Screens ---------------- */
 import AdminEmailScreen from "./app/AdminEmailScreen";
 import AdminPanelScreen from "./app/AdminPanelScreen";
 import AllCasesScreen from "./app/AllCasesScreen";
+import AllTicketsScreen from "./app/AllTicketsScreen";
 import AuditCaseScreen from "./app/AuditCaseScreen";
 import AuthScreen from "./app/AuthScreen";
 import CameraGPSScreen from "./app/CameraGPSScreen";
@@ -37,13 +38,15 @@ import MemberDetailScreen from "./app/MemberDetailScreen";
 import MemberDSRDetailScreen from "./app/MemberDSRDetailScreen";
 import MemberDSRScreen from "./app/MemberDSRScreen";
 import MemberViewScreen from "./app/MemberViewScreen";
+import MyTicketsScreen from "./app/MyTicketsScreen";
 import PlanYourDayScreen from "./app/PlanYourDayScreen";
+import RaiseTicketScreen from "./app/RaiseTicketScreen";
 import RevertedCasesScreen from "./app/RevertedCasesScreen";
 import SplashScreen from "./app/SplashScreen";
+import StatisticsScreen from "./app/StatisticsScreen";
 import TeamDSRScreen from "./app/TeamDSRScreen";
 import Updatescreen from "./app/Updatescreen";
 import VerifyProfileScreen from "./app/VerifyProfileScreen";
-import StatisticsScreen from "./app/StatisticsScreen";
 
 /* ---------------- Stack ---------------- */
 const Stack = createNativeStackNavigator();
@@ -97,6 +100,8 @@ function AdminStack() {
       <Stack.Screen name="MailsSentScreen" component={MailsSentScreen} />
       <Stack.Screen name="MailRecordsScreen" component={MailRecordsScreen} />
       <Stack.Screen name="StatisticsScreen" component={StatisticsScreen} />
+      <Stack.Screen name="AllTicketsScreen" component={AllTicketsScreen} />
+      <Stack.Screen name="RaiseTicketScreen" component={RaiseTicketScreen} />
     </Stack.Navigator>
   );
 }
@@ -106,6 +111,8 @@ function DevStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="DevDashboardScreen" component={DevDashboardScreen} />
+      <Stack.Screen name="AllTicketsScreen" component={AllTicketsScreen} />
+      <Stack.Screen name="AuditCaseScreen" component={AuditCaseScreen} />
     </Stack.Navigator>
   );
 }
@@ -138,6 +145,8 @@ function MemberStack() {
       <Stack.Screen name="RevertedCasesScreen" component={RevertedCasesScreen} />
       <Stack.Screen name="TeamDSRScreen" component={TeamDSRScreen} />
       <Stack.Screen
+        name="RaiseTicketScreen" component={RaiseTicketScreen} />
+      <Stack.Screen name="MyTicketsScreen" component={MyTicketsScreen} /><Stack.Screen
         name="VerifyProfileScreen"
         component={VerifyProfileScreen}
       />
