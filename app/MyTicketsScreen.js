@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Query } from "appwrite";
 import { LinearGradient } from "expo-linear-gradient";
 import { useContext, useEffect, useState } from "react";
-import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { APPWRITE_CONFIG, databases } from "./appwrite";
 import { AuthContext } from "./AuthContext";
 
@@ -34,11 +34,27 @@ export default function MyTicketsScreen({ navigation }) {
         fetchTickets();
     }, [user]);
 
+    const handleConfirmFix = async (ticketId) => {
+        try {
+            await databases.updateDocument(
+                APPWRITE_CONFIG.databaseId,
+                APPWRITE_CONFIG.ticketsCollectionId,
+                ticketId,
+                { status: 'verified' }
+            );
+            Alert.alert("Success", "Fix confirmed! Thank you.");
+            setTickets(prev => prev.map(t => t.$id === ticketId ? { ...t, status: 'verified' } : t));
+        } catch (error) {
+            Alert.alert("Error", "Failed to confirm fix: " + error.message);
+        }
+    };
+
     const getStatusStyle = (status) => {
         switch (status) {
             case 'open': return { color: '#ff9800', borderColor: '#ff9800' };
             case 'in-progress': return { color: '#2196f3', borderColor: '#2196f3' };
             case 'closed': return { color: '#4caf50', borderColor: '#4caf50' };
+            case 'verified': return { color: '#8bc34a', borderColor: '#8bc34a' };
             default: return { color: '#9e9e9e', borderColor: '#9e9e9e' };
         }
     };
@@ -54,9 +70,24 @@ export default function MyTicketsScreen({ navigation }) {
                 </View>
             </View>
             <Text style={styles.message} numberOfLines={2}>{item.message}</Text>
+            
+            {item.devComments ? (
+                <View style={styles.devResponseBox}>
+                    <Text style={styles.devResponseTitle}>Developer Response:</Text>
+                    <Text style={styles.devResponseText}>{item.devComments}</Text>
+                </View>
+            ) : null}
+
+            <View style={styles.footerRow}>
             <Text style={styles.date}>
                 Raised on: {new Date(item.$createdAt).toLocaleDateString()}
             </Text>
+            {item.status === 'closed' && (
+                <TouchableOpacity style={styles.confirmButton} onPress={() => handleConfirmFix(item.$id)}>
+                    <Text style={styles.confirmButtonText}>Mark Resolved</Text>
+                </TouchableOpacity>
+            )}
+            </View>
         </View>
     );
 
@@ -120,6 +151,24 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
     },
     message: { color: "#ccc", marginBottom: 10, lineHeight: 20 },
-    date: { color: "#888", fontSize: 12, textAlign: 'right' },
+    footerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 },
+    date: { color: "#888", fontSize: 12 },
     emptyText: { color: "#ccc", textAlign: "center", marginTop: 50, fontSize: 16 },
+    devResponseBox: {
+        backgroundColor: 'rgba(33, 150, 243, 0.1)',
+        padding: 10,
+        borderRadius: 8,
+        marginTop: 5,
+        borderLeftWidth: 3,
+        borderLeftColor: '#2196f3'
+    },
+    devResponseTitle: { color: '#2196f3', fontSize: 12, fontWeight: 'bold', marginBottom: 4 },
+    devResponseText: { color: '#ddd', fontSize: 13 },
+    confirmButton: {
+        backgroundColor: '#4caf50',
+        paddingVertical: 6,
+        paddingHorizontal: 12,
+        borderRadius: 6,
+    },
+    confirmButtonText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
 });

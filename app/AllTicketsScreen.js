@@ -4,8 +4,10 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Alert, FlatList, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { APPWRITE_CONFIG, databases } from "./appwrite";
+import { AuthContext } from "./AuthContext";
 
 export default function AllTicketsScreen({ navigation }) {
+    const { user } = useContext(AuthContext);
     const [tickets, setTickets] = useState([]);
     const [loading, setLoading] = useState(true);
     const [selectedTicket, setSelectedTicket] = useState(null);
@@ -142,6 +144,8 @@ export default function AllTicketsScreen({ navigation }) {
                                 <Text style={styles.devCommentsText}>{selectedTicket?.devComments || 'No comments yet.'}</Text>
                             </View>
 
+                            {user?.role === 'dev' && (
+                            <>
                             <Text style={styles.inputLabel}>Update / Reply</Text>
                             <TextInput
                                 style={styles.commentInput}
@@ -163,6 +167,8 @@ export default function AllTicketsScreen({ navigation }) {
                                     <Text style={styles.btnText}>Close Ticket</Text>
                                 </TouchableOpacity>
                             </View>
+                            </>
+                            )}
                         </ScrollView>
                     </View>
                 </View>

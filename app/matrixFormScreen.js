@@ -52,10 +52,10 @@ const CHECKBOX_FIELDS = {
 };
 
 /* ================= SIGNATURE POSITIONS ================= */
-const SIGNATURE_COORDS = {
-  respondent: { x: 205, y: 240, width: 180, height: 45 },
-  matrixRep: { x: 205, y: 195, width: 180, height: 45 },
-};
+  const SIGNATURE_COORDS = {
+    respondent: { x: 305, y: 240, width: 160, height: 30 },
+    matrixRep: { x: 305, y: 215, width: 160, height: 28 },
+  };
 
 /* ================= CLOUDINARY CONFIG ================= */
 const CLOUD_NAME = "dfpykheky";
@@ -358,7 +358,7 @@ export default function MatrixFormScreen() {
   if (loading) return <ActivityIndicator style={{ marginTop: 50 }} size="large" color="#007AFF" />;
 
   return (
-    <ScrollView style={{ padding: 16 }}>
+    <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#333" />
@@ -515,8 +515,8 @@ export default function MatrixFormScreen() {
 
       {/* SIGNATURES */}
       {[
-        { key: "respondentSignature", label: "Respondent Signature" },
-        { key: "matrixRepSignature", label: "Matrix Representative Signature" }
+        { key: "respondentSignature", label: "Matrix Representative Signature" },
+        { key: "matrixRepSignature", label: "Respondent Signature" }
       ].map(item => (
         <View key={item.key} style={{ marginBottom: 12 }}>
           <Text style={{ fontWeight: 'bold', marginBottom: 5 }}>{item.label}</Text>
@@ -549,7 +549,7 @@ export default function MatrixFormScreen() {
             trimWhitespace={true}
             minWidth={3}
             maxWidth={5}
-            webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 0px; width: 100%; position: absolute; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
+            webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 0px; width: 100%; position: absolute; } .m-signature-pad--body { margin-bottom: 60px; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
           />
           <TouchableOpacity
             style={styles.close}

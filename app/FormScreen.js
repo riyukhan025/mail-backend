@@ -74,13 +74,13 @@ const MARITAL_STATUS = "Dropdown-m2CY7O4n-W";
 
 /* ================= SIGNATURE COORDS ================= */
 const SIGNATURE_COORDS = {
-  respondent: { x: 150, y: 195, width: 160, height: 45 },
-  fieldExecutive: { x: 375, y: 148, width: 160, height: 45 },
+  respondent: { x: 175, y: 200, width: 90, height: 25 },
+  fieldExecutive: { x: 398, y: 158, width: 90, height: 25 },
 };
 
 /* ================= MARITAL STATUS COORDS ================= */
 // Adjust these coordinates to cover the "Divorced" text on the PDF
-const MARITAL_COORDS = { x: 180, y: 425, width: 200, height: 20 };
+const MARITAL_COORDS = { x: 192, y: 429, width: 140, height: 14 };
 
 /* ================= CLOUDINARY CONFIG ================= */
 const CLOUD_NAME = "dfpykheky";
@@ -166,9 +166,23 @@ export default function CESFormScreen() {
     siteVisit: "",
     verificationStatus: "",
 
+    remarks: "",
     respondentSignature: "",
     fieldExecutiveSignature: "",
   });
+
+  const formatDate = (text) => {
+    if (text === "Present") return text;
+    const cleaned = text.replace(/[^0-9]/g, "");
+    let formatted = cleaned;
+    if (cleaned.length > 2) {
+      formatted = cleaned.slice(0, 2) + "/" + cleaned.slice(2);
+    }
+    if (cleaned.length > 4) {
+      formatted = formatted.slice(0, 5) + "/" + cleaned.slice(4, 8);
+    }
+    return formatted;
+  };
 
   /* ================= LOAD ================= */
   useEffect(() => {
@@ -176,25 +190,26 @@ export default function CESFormScreen() {
       if (!data) return;
       setForm(prev => ({
         ...prev,
-        caseReferenceNumber: data.matrixRefNo || data.caseReferenceNumber || data.RefNo || "",
-        candidateName: data.candidateName || "",
-        fatherName: data.fatherName || "",
-        address: data.address || "",
-        contactNumber: data.contactNumber || "",
-        detailsVerified: data.detailsVerified || "",
-        respondentName: data.respondentName || "",
-        relationship: data.relationship || "",
-        fieldExecutiveName: data.fieldExecutiveName || "",
-        stayFromDate: data.stayFromDate || "",
-        stayToDate: data.stayToDate || "",
-        addressType: data.addressType || "",
-        maritalStatus: data.maritalStatus || "",
-        residenceType: data.residenceType || "",
-        locationType: data.locationType || "",
-        siteVisit: data.siteVisit || "",
-        verificationStatus: data.verificationStatus || "",
-        respondentSignature: data.respondentSignature || "",
-        fieldExecutiveSignature: data.fieldExecutiveSignature || "",
+        caseReferenceNumber: String(data.matrixRefNo || data.caseReferenceNumber || data.RefNo || ""),
+        candidateName: String(data.candidateName || ""),
+        fatherName: String(data.fatherName || ""),
+        address: String(data.address || ""),
+        contactNumber: String(data.contactNumber || ""),
+        detailsVerified: String(data.detailsVerified || ""),
+        respondentName: String(data.respondentName || ""),
+        relationship: String(data.relationship || ""),
+        fieldExecutiveName: String(data.fieldExecutiveName || ""),
+        stayFromDate: String(data.stayFromDate || ""),
+        stayToDate: String(data.stayToDate || ""),
+        addressType: String(data.addressType || ""),
+        maritalStatus: String(data.maritalStatus || ""),
+        residenceType: String(data.residenceType || ""),
+        locationType: String(data.locationType || ""),
+        siteVisit: String(data.siteVisit || ""),
+        verificationStatus: String(data.verificationStatus || ""),
+        remarks: String(data.remarks || ""),
+        respondentSignature: String(data.respondentSignature || ""),
+        fieldExecutiveSignature: String(data.fieldExecutiveSignature || ""),
       }));
     };
 
@@ -287,16 +302,27 @@ export default function CESFormScreen() {
       pdfForm.flatten();
 
       /* ================= DRAW OVERLAY AFTER FLATTEN ================= */
+      const page = pdfDoc.getPages()[0];
+      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
       if (form.maritalStatus) {
-        const page = pdfDoc.getPages()[0];
         // 1. Draw White Rectangle (Mask) over the flattened "Divorced" text
         page.drawRectangle({ x: MARITAL_COORDS.x, y: MARITAL_COORDS.y, width: MARITAL_COORDS.width, height: MARITAL_COORDS.height, color: rgb(1, 1, 1) });
 
         // 2. Draw New Text
-        const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
         page.drawText(form.maritalStatus, {
           x: MARITAL_COORDS.x + 2,
           y: MARITAL_COORDS.y + 4,
+          size: 10,
+          font,
+          color: rgb(0, 0, 0),
+        });
+      }
+
+      if (form.remarks) {
+        page.drawText(form.remarks, {
+          x: 335,
+          y: 135,
           size: 10,
           font,
           color: rgb(0, 0, 0),
@@ -351,7 +377,7 @@ export default function CESFormScreen() {
   if (loading) return <ActivityIndicator style={{ marginTop: 50 }} />;
 
   return (
-    <ScrollView style={{ padding: 16 }}>
+    <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#333" />
@@ -359,7 +385,7 @@ export default function CESFormScreen() {
         <Text style={styles.headerTitle}>CES Form</Text>
       </View>
 
-      {Object.keys(TEXT_FIELDS).map(k => (
+      {Object.keys(TEXT_FIELDS).filter(k => k !== 'detailsVerified').map(k => (
         <View key={k} style={styles.inputRow}>
           <TextInput
             placeholder={k}
@@ -370,35 +396,41 @@ export default function CESFormScreen() {
         </View>
       ))}
 
+      <RadioGroup title="Details Verified (ID Proof)" value={form.detailsVerified}
+        onChange={v => setForm({ ...form, detailsVerified: v })}
+        options={[
+          { label: "Gas Bill", value: "Gas Bill" },
+          { label: "Aadhar Card", value: "Aadhar Card" },
+          { label: "PAN Card", value: "PAN Card" },
+          { label: "Ration Card", value: "Ration Card" },
+          { label: "GST Certificate", value: "GST Certificate" },
+          { label: "Voter ID", value: "Voter ID" },
+          { label: "Driving License", value: "Driving License" },
+        ]}
+      />
+
       <View style={styles.inputRow}>
         <TextInput
-          placeholder="Stay From Date (DD-MM-YYYY)"
+          placeholder="Stay From Date (DD/MM/YYYY)"
           style={styles.input}
           value={form.stayFromDate}
-          onChangeText={v => setForm({ ...form, stayFromDate: v })}
+          onChangeText={v => setForm({ ...form, stayFromDate: formatDate(v) })}
+          keyboardType="numeric"
+          maxLength={10}
         />
-        <TouchableOpacity onPress={() => {
-          const now = new Date();
-          const dateStr = `${now.getDate().toString().padStart(2, '0')}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getFullYear()}`;
-          setForm({ ...form, stayFromDate: dateStr });
-        }}>
-          <Ionicons name="calendar-outline" size={24} color="black" style={styles.icon} />
-        </TouchableOpacity>
       </View>
 
       <View style={styles.inputRow}>
         <TextInput
-          placeholder="Stay To Date (DD-MM-YYYY)"
+          placeholder="Stay To Date (DD/MM/YYYY)"
           style={styles.input}
           value={form.stayToDate}
-          onChangeText={v => setForm({ ...form, stayToDate: v })}
+          onChangeText={v => setForm({ ...form, stayToDate: formatDate(v) })}
+          keyboardType={form.stayToDate === "Present" ? "default" : "numeric"}
+          maxLength={10}
         />
-        <TouchableOpacity onPress={() => {
-          const now = new Date();
-          const dateStr = `${now.getDate().toString().padStart(2, '0')}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getFullYear()}`;
-          setForm({ ...form, stayToDate: dateStr });
-        }}>
-          <Ionicons name="calendar-outline" size={24} color="black" style={styles.icon} />
+        <TouchableOpacity onPress={() => setForm({ ...form, stayToDate: "Present" })} style={{ paddingHorizontal: 10 }}>
+          <Text style={{ color: "#007AFF", fontWeight: "bold", fontSize: 12 }}>Present</Text>
         </TouchableOpacity>
       </View>
 
@@ -456,6 +488,15 @@ export default function CESFormScreen() {
         ]}
       />
 
+      <View style={styles.inputRow}>
+        <TextInput
+          placeholder="Remarks"
+          style={styles.input}
+          value={form.remarks}
+          onChangeText={v => setForm({ ...form, remarks: v })}
+        />
+      </View>
+
       {/* SIGNATURES */}
       {[
         { key: "respondentSignature", label: "Respondent Signature" },
@@ -492,7 +533,7 @@ export default function CESFormScreen() {
             trimWhitespace={true}
             minWidth={3}
             maxWidth={5}
-            webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 0px; width: 100%; position: absolute; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
+            webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 0px; width: 100%; position: absolute; } .m-signature-pad--body { margin-bottom: 60px; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
           />
           <TouchableOpacity style={styles.close} onPress={() => setSigningField(null)}>
             <Text style={{ color: "#fff" }}>Close</Text>
@@ -533,7 +574,7 @@ const styles = StyleSheet.create({
   radio: { flexDirection: "row", alignItems: "center", marginBottom: 6 },
   circle: { width: 18, height: 18, borderWidth: 1, marginRight: 8, borderRadius: 9 },
   checked: { backgroundColor: "black" },
-  close: { position: "absolute", top: 40, right: 20, backgroundColor: "red", padding: 10 },
+  close: { position: "absolute", top: 50, left: 20, backgroundColor: "red", padding: 10, borderRadius: 5, zIndex: 100 },
   loadingOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",

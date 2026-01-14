@@ -1,6 +1,6 @@
 {
   "cli": {
-    "version": ">= 5.0.0"
+    "version": ">= 7.0.0"
   },
   "build": {
     "development": {
@@ -14,26 +14,18 @@
       }
     },
     "production": {
-      "distribution": "store",
       "android": {
         "buildType": "app-bundle"
       }
     },
-    "production-apk": {
-      "distribution": "internal",
+    "apk": {
+      "extends": "production",
       "android": {
         "buildType": "apk"
       }
     }
   },
   "submit": {
-    "production": {
-      "ios": {
-        "ascAppId": "YOUR_APP_ID"
-      },
-      "android": {
-        "track": "production"
-      }
-    }
+    "production": {}
   }
 }

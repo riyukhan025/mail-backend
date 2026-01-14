@@ -150,14 +150,14 @@ export default function DHIFormScreen() {
       if (!data) return;
       setForm(prev => ({
         ...prev,
-        companyName: data.company || data.client || "",
-        addressLine1: data.address || "",
-        respondentDetails: data.respondentName || "",
-        phoneNumbers: data.contactNumber || "",
-        fieldAssistantName: data.assigneeName || "",
+        companyName: String(data.company || data.client || ""),
+        addressLine1: String(data.address || ""),
+        respondentDetails: String(data.respondentName || ""),
+        phoneNumbers: String(data.contactNumber || ""),
+        fieldAssistantName: String(data.assigneeName || ""),
         checkboxes: data.checkboxes || {},
-        respondentSignature: data.respondentSignature || "",
-        verifierSignature: data.verifierSignature || "",
+        respondentSignature: String(data.respondentSignature || ""),
+        verifierSignature: String(data.verifierSignature || ""),
       }));
     };
 
@@ -357,7 +357,7 @@ export default function DHIFormScreen() {
   if (loading) return <ActivityIndicator style={{ marginTop: 50 }} />;
 
   return (
-    <ScrollView style={{ padding: 16 }}>
+    <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#333" />
@@ -424,7 +424,7 @@ export default function DHIFormScreen() {
             trimWhitespace={true}
             minWidth={3}
             maxWidth={5}
-            webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 0px; width: 100%; position: absolute; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
+            webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 0px; width: 100%; position: absolute; } .m-signature-pad--body { margin-bottom: 60px; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
           />
           <TouchableOpacity style={styles.close} onPress={() => setSigningField(null)}>
             <Text style={{ color: "#fff" }}>Close</Text>
@@ -462,7 +462,7 @@ const styles = StyleSheet.create({
   checked: { backgroundColor: "#000" },
   sig: { height: 90, borderWidth: 1, marginBottom: 12, alignItems: "center", justifyContent: "center", backgroundColor: "#e0e0e0", borderRadius: 5 },
   submit: { backgroundColor: "green", padding: 16, alignItems: "center", borderRadius: 5, marginTop: 10 },
-  close: { position: "absolute", top: 40, right: 20, backgroundColor: "red", padding: 10, borderRadius: 5 },
+  close: { position: "absolute", top: 50, left: 20, backgroundColor: "red", padding: 10, borderRadius: 5, zIndex: 100 },
   loadingOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",

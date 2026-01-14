@@ -50,13 +50,14 @@
       "reactCompiler": false
     },
     "extra": {
-      "router": {},
-      "eas": {
-        "projectId": "86bcda2d-e6ff-42d3-9903-f0c4134779da"
-      },
       "betaEnabled": true,
       "newUiEnabled": true,
-      "maintenanceMode": true
-    }
+      "maintenanceMode": true,
+      "router": {},
+      "eas": {
+        "projectId": "0f766011-649c-4a9a-976d-1461e78dca61"
+      }
+    },
+    "owner": "riyu16"
   }
 }

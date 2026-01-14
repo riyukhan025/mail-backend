@@ -131,8 +131,16 @@ export default function AuthScreen({ navigation }) {
         return showMessage("Your access was revoked");
       }
 
-      if (user.password !== password)
-        return showMessage("Invalid password");
+      if (user.password !== password) {
+        // Fallback: Check Firebase Auth in case password was reset externally
+        try {
+          await firebase.auth().signInWithEmailAndPassword(user.email, password);
+          // Sync new password to Realtime Database so string comparison works next time
+          await firebase.database().ref(`users/${uid}`).update({ password });
+        } catch (err) {
+          return showMessage("Invalid password");
+        }
+      }
 
       setCurrentUid(uid);
       await generateOtp(uid);

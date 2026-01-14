@@ -572,6 +572,7 @@ function OverviewTab({ featureFlags, toggleFeatureFlag, navigation }) {
 function TicketsTab() {
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [commentMap, setCommentMap] = useState({});
 
   const fetchTickets = async () => {
     setLoading(true);
@@ -594,15 +595,17 @@ function TicketsTab() {
   }, []);
 
   const handleUpdateStatus = async (id, status) => {
+    const comment = commentMap[id] || "";
     try {
       await databases.updateDocument(
         APPWRITE_CONFIG.databaseId,
         APPWRITE_CONFIG.ticketsCollectionId,
         id,
-        { status }
+        { status, devComments: comment || undefined }
       );
       // Optimistic update
-      setTickets(prev => prev.map(t => t.$id === id ? { ...t, status } : t));
+      setTickets(prev => prev.map(t => t.$id === id ? { ...t, status, devComments: comment || t.devComments } : t));
+      setCommentMap(prev => ({ ...prev, [id]: "" }));
       if (Platform.OS === 'web') alert(`Ticket marked as ${status}`);
       else Alert.alert("Success", `Ticket marked as ${status}`);
     } catch (error) {
@@ -630,6 +633,14 @@ function TicketsTab() {
             </View>
             <Text style={{ color: '#ccc', marginBottom: 10 }}>{item.message}</Text>
             <Text style={{ color: '#888', fontSize: 12, marginBottom: 10 }}>From: {item.userName}</Text>
+            
+            <TextInput
+                style={{ backgroundColor: 'rgba(255,255,255,0.1)', color: '#fff', padding: 8, borderRadius: 6, marginBottom: 10, fontSize: 12 }}
+                placeholder="Add developer comment..."
+                placeholderTextColor="#666"
+                value={commentMap[item.$id] || ""}
+                onChangeText={text => setCommentMap(prev => ({ ...prev, [item.$id]: text }))}
+            />
             
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
               {item.status !== 'closed' && (
