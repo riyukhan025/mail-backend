@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Query } from "appwrite";
 import { LinearGradient } from "expo-linear-gradient";
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, FlatList, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { APPWRITE_CONFIG, databases } from "./appwrite";
 import { AuthContext } from "./AuthContext";

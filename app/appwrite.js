@@ -3,6 +3,7 @@ import { Client, Databases, ID, Query } from 'appwrite';
 export const APPWRITE_CONFIG = {
     endpoint: "https://tor.cloud.appwrite.io/v1",
     projectId: "6921d1250036b4841242",
+    projectName: "spacesolutions_backup",
     databaseId: "6921d17f0022f5f0cf10",
     dsrCollectionId: "dsr_reports",
     userPlansCollectionId: "user_plans", // Ensure this collection exists in your Appwrite console
