@@ -303,6 +303,10 @@ export default function MatrixFormScreen() {
       setProgress(0.7);
       setProgressMessage("Saving PDF...");
       console.log("Saving PDF...");
+      
+      const rawRefNo = form.matrixRefNo || caseId;
+      const safeRefNo = rawRefNo.replace(/[^a-zA-Z0-9-_]/g, '_');
+
       let out;
       let uploadInput;
 
@@ -315,7 +319,7 @@ export default function MatrixFormScreen() {
         uploadInput = out;
       } else {
         out = await pdfDoc.saveAsBase64();
-        const path = FileSystem.documentDirectory + `MatrixPV_${form.matrixRefNo || caseId}.pdf`;
+        const path = FileSystem.documentDirectory + `MatrixPV_${safeRefNo}.pdf`;
         await FileSystem.writeAsStringAsync(path, out, {
           encoding: FileSystem.EncodingType.Base64,
         });
@@ -327,7 +331,7 @@ export default function MatrixFormScreen() {
       console.log("Uploading PDF...");
       const uploadUrl = await uploadPdfToCloudinary(
         uploadInput,
-        form.matrixRefNo || caseId
+        safeRefNo
       );
 
       setProgress(0.9);
@@ -549,7 +553,7 @@ export default function MatrixFormScreen() {
             trimWhitespace={true}
             minWidth={3}
             maxWidth={5}
-            webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 0px; width: 100%; position: absolute; } .m-signature-pad--body { margin-bottom: 60px; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
+            webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 20px; width: 100%; position: absolute; } .m-signature-pad--body { margin-bottom: 80px; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
           />
           <TouchableOpacity
             style={styles.close}

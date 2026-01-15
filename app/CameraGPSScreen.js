@@ -124,7 +124,7 @@ export default function CameraGPSScreen({ navigation, route }) {
         <View style={styles.overlay}>
           <Text style={styles.overlayText}>{currentTime.toLocaleString()}</Text>
           <Text style={styles.overlayText}>
-            {currentLocation ? `${currentLocation.coords.latitude.toFixed(5)}, ${currentLocation.coords.longitude.toFixed(5)}` : "GPS..."}
+            {currentLocation ? `${currentLocation.coords.latitude.toFixed(6)}, ${currentLocation.coords.longitude.toFixed(6)}` : "GPS..."}
           </Text>
           <Text style={styles.overlayText}>{currentAddress}</Text>
         </View>

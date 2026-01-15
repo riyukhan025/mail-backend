@@ -77,6 +77,8 @@ const UPLOAD_PRESET = "cases_upload";
 
 async function uploadPdfToCloudinary(pdfData, caseId) {
   const formData = new FormData();
+  const publicId = `DHI_${caseId}_${Date.now()}`;
+
   if (Platform.OS === 'web') {
     // Convert base64 to Blob to ensure filename is preserved in Cloudinary raw upload
     const binaryString = atob(pdfData);
@@ -84,16 +86,17 @@ async function uploadPdfToCloudinary(pdfData, caseId) {
     const bytes = new Uint8Array(len);
     for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
     const blob = new Blob([bytes], { type: "application/pdf" });
-    formData.append("file", blob, `DHI_${caseId}.pdf`);
+    formData.append("file", blob, `${publicId}.pdf`);
   } else {
     formData.append('file', {
       uri: pdfData,
       type: 'application/pdf',
-      name: `DHI_${caseId}.pdf`,
+      name: `${publicId}.pdf`,
     });
   }
   formData.append('upload_preset', UPLOAD_PRESET);
   formData.append('folder', `cases/${caseId}`);
+  formData.append('public_id', publicId);
   formData.append('resource_type', 'raw');
 
   const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/raw/upload`, { method: 'POST', body: formData });
@@ -115,6 +118,7 @@ export default function DHIFormScreen() {
   const [signingField, setSigningField] = useState(null);
 
   const [form, setForm] = useState({
+    caseReferenceNumber: "",
     companyName: "",
     addressLine1: "",
     addressLine2: "",
@@ -150,6 +154,7 @@ export default function DHIFormScreen() {
       if (!data) return;
       setForm(prev => ({
         ...prev,
+        caseReferenceNumber: String(data.matrixRefNo || data.RefNo || ""),
         companyName: String(data.company || data.client || ""),
         addressLine1: String(data.address || ""),
         respondentDetails: String(data.respondentName || ""),
@@ -310,6 +315,9 @@ export default function DHIFormScreen() {
       setProgress(0.7);
       setProgressMessage("Saving PDF...");
       
+      const rawRefNo = form.caseReferenceNumber || caseId;
+      const safeRefNo = rawRefNo.replace(/[^a-zA-Z0-9-_]/g, '_');
+
       let out;
       let uploadInput;
 
@@ -322,7 +330,7 @@ export default function DHIFormScreen() {
         uploadInput = out;
       } else {
         out = await pdfDoc.saveAsBase64();
-        const path = FileSystem.documentDirectory + `DHI_${form.caseReferenceNumber}.pdf`;
+        const path = FileSystem.documentDirectory + `DHI_${safeRefNo}.pdf`;
         await FileSystem.writeAsStringAsync(path, out, {
           encoding: FileSystem.EncodingType.Base64,
         });
@@ -331,7 +339,7 @@ export default function DHIFormScreen() {
 
       setProgress(0.8);
       setProgressMessage("Uploading to Cloud...");
-      const uploadUrl = await uploadPdfToCloudinary(uploadInput, form.companyName || caseId);
+      const uploadUrl = await uploadPdfToCloudinary(uploadInput, safeRefNo);
 
       setProgress(0.9);
       setProgressMessage("Finalizing...");
@@ -424,7 +432,7 @@ export default function DHIFormScreen() {
             trimWhitespace={true}
             minWidth={3}
             maxWidth={5}
-            webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 0px; width: 100%; position: absolute; } .m-signature-pad--body { margin-bottom: 60px; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
+            webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 20px; width: 100%; position: absolute; } .m-signature-pad--body { margin-bottom: 80px; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
           />
           <TouchableOpacity style={styles.close} onPress={() => setSigningField(null)}>
             <Text style={{ color: "#fff" }}>Close</Text>

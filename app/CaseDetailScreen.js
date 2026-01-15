@@ -260,11 +260,24 @@ export default function CaseDetailScreen({ navigation, route }) {
     }, [caseId]);
 
     // --- NEW: Calculate total photos and if all requirements are met ---
+    const isCES = (caseData?.client || caseData?.company || "").toUpperCase().includes("CES");
+    const isCESNo = isCES && caseData?.cesType === "No";
+
+    let currentRequirements = PHOTO_REQUIREMENTS;
+    if (isCESNo) {
+        currentRequirements = [
+            { id: 'landmark', label: 'Landmark', min: 6, max: 100 }
+        ];
+    }
+
     const totalPhotosTaken = Object.values(photos).reduce((sum, arr) => sum + arr.length, 0);
-    const allRequirementsMet = PHOTO_REQUIREMENTS.every(req => photos[req.id]?.length >= req.max);
+    const allRequirementsMet = currentRequirements.every(req => {
+        const count = photos[req.id]?.length || 0;
+        return count >= (req.min || req.max);
+    });
 
     // --- NEW: Flatten photos from all categories for display or upload ---
-    const allDisplayedCategories = [...PHOTO_REQUIREMENTS, ...optionalCategories];
+    const allDisplayedCategories = [...currentRequirements, ...(isCESNo ? [] : optionalCategories)];
     const allPhotosFlat = allDisplayedCategories.map(cat => photos[cat.id] || []).flat();
 
     // --- NEW: Delete photo function ---
@@ -401,41 +414,54 @@ export default function CaseDetailScreen({ navigation, route }) {
             caseId,
             category,
             onPhotosCapture: (newPhotos) => {
-                console.log('[CaseDetailScreen] Received photos from callback:', newPhotos);
-                
-                // --- NEW: Immediate Upload for Camera Photos ---
-                (async () => {
-                    setIsUploadingPhotos(true);
-                    const photosByCat = {};
-                    
-                    // Group by category first
-                    newPhotos.forEach(p => {
-                        if (!photosByCat[p.category]) photosByCat[p.category] = [];
-                        photosByCat[p.category].push(p);
-                    });
+                console.log('[CaseDetailScreen] Received photos from callback with local URIs:', newPhotos);
 
-                    // Upload and save per category
-                    for (const cat in photosByCat) {
-                        const currentList = photos[cat] || [];
-                        // Camera photos are already uploaded to Cloudinary in CameraGPSScreen? 
-                        // Wait, CameraGPSScreen usually returns local URIs. 
-                        // Assuming they are local, we upload them here.
-                        
-                        const uploadedList = [];
-                        for (let i = 0; i < photosByCat[cat].length; i++) {
-                            const p = photosByCat[cat][i];
-                            const cloudUrl = await uploadImageToCloudinary(p.uri, cat, i);
-                            if (cloudUrl) {
-                                uploadedList.push({ ...p, uri: cloudUrl });
+                // 1. Immediately update local state to show photos with local URIs
+                setPhotos(prevPhotos => {
+                    const updated = { ...prevPhotos };
+                    for (const photo of newPhotos) {
+                        const cat = photo.category;
+                        if (!updated[cat]) updated[cat] = [];
+                        updated[cat].push({ ...photo, id: `local-${Date.now()}-${Math.random()}` });
+                    }
+                    console.log('[CaseDetailScreen] ✅ Photos state updated for immediate display.');
+                    return updated;
+                });
+
+                // 2. Start background upload and Firebase update process
+                (async () => {
+                    setIsUploadingPhotos(true); // Show a non-blocking loading indicator
+                    try {
+                        const photosByCat = {};
+                        newPhotos.forEach(p => {
+                            if (!photosByCat[p.category]) photosByCat[p.category] = [];
+                            photosByCat[p.category].push(p);
+                        });
+
+                        for (const cat in photosByCat) {
+                            const currentFirebaseList = (await firebase.database().ref(`cases/${caseId}/photosFolder/${cat}`).once('value')).val() || [];
+                            
+                            const uploadedPhotos = [];
+                            for (let i = 0; i < photosByCat[cat].length; i++) {
+                                const p = photosByCat[cat][i];
+                                const cloudUrl = await uploadImageToCloudinary(p.uri, cat, i);
+                                if (cloudUrl) {
+                                    uploadedPhotos.push({ ...p, uri: cloudUrl, id: `${Date.now()}-${Math.random()}` });
+                                }
+                            }
+
+                            if (uploadedPhotos.length > 0) {
+                                const finalList = [...currentFirebaseList, ...uploadedPhotos];
+                                await firebase.database().ref(`cases/${caseId}/photosFolder/${cat}`).set(finalList);
+                                console.log(`[UPLOAD] Synced ${uploadedPhotos.length} new photos to Firebase for category ${cat}.`);
                             }
                         }
-
-                        if (uploadedList.length > 0) {
-                            const finalList = [...currentList, ...uploadedList];
-                            await firebase.database().ref(`cases/${caseId}/photosFolder/${cat}`).set(finalList);
-                        }
+                    } catch (error) {
+                        console.error("[UPLOAD] Background upload failed:", error);
+                        Alert.alert("Upload Failed", "Some photos could not be uploaded. Please try again.");
+                    } finally {
+                        setIsUploadingPhotos(false);
                     }
-                    setIsUploadingPhotos(false);
                 })();
             }
         });
@@ -568,7 +594,7 @@ const handleCloseCase = async () => {
         console.log('[PDF-LOG] ⚙️ Preparing to add photos...');
         let totalPhotosAdded = 0;
 
-        for (const category of PHOTO_REQUIREMENTS) {
+        for (const category of currentRequirements) {
             const photosInCategory = photoUrls[category.id] || [];
             if (photosInCategory.length === 0) continue;
 
@@ -617,19 +643,19 @@ const handleCloseCase = async () => {
                     page.drawImage(image, { x: imageX, y: imageY, width: dims.width, height: dims.height });
 
                     // Draw metadata overlay at the bottom of the image
-                    const overlayHeight = 65;
+                    const overlayHeight = 75; // Increased height for more text
                     page.drawRectangle({ x: imageX, y: imageY, width: dims.width, height: overlayHeight, color: rgb(0, 0, 0), opacity: 0.7 });
                     
-                    let metadataY = imageY + 48;
+                    let metadataY = imageY + 60; // Start higher to fit more lines
                     if (photo.geotag) {
-                        page.drawText(`Loc: ${photo.geotag.latitude.toFixed(4)}, ${photo.geotag.longitude.toFixed(4)}`, { 
+                        page.drawText(`Loc: ${photo.geotag.latitude.toFixed(6)}, ${photo.geotag.longitude.toFixed(6)}`, { 
                             x: imageX + 10, 
                             y: metadataY, 
                             font, 
                             size: 9, 
                             color: rgb(1, 1, 1) 
                         });
-                        metadataY -= 15;
+                        metadataY -= 14;
                     }
                     if (photo.timestamp) {
                         page.drawText(`Time: ${photo.timestamp}`, { 
@@ -639,16 +665,36 @@ const handleCloseCase = async () => {
                             size: 9, 
                             color: rgb(1, 1, 1) 
                         });
-                        metadataY -= 15;
+                        metadataY -= 14;
                     }
                     if (photo.address) {
-                        page.drawText(`Addr: ${photo.address.substring(0, 60)}${photo.address.length > 60 ? '...' : ''}`, { 
-                            x: imageX + 10, 
-                            y: metadataY, 
-                            font, 
-                            size: 8, 
-                            color: rgb(1, 1, 1) 
-                        });
+                        // --- FIX: Wrap address text to fit within the image width ---
+                        const addressText = `Addr: ${photo.address}`;
+                        const maxTextWidth = dims.width - 20; // 10px padding on each side
+                        const words = addressText.split(' ');
+                        const lines = [];
+                        let currentLine = words[0] || '';
+
+                        for (let i = 1; i < words.length; i++) {
+                            const word = words[i];
+                            const testLine = `${currentLine} ${word}`;
+                            if (font.widthOfTextAtSize(testLine, 8) < maxTextWidth) {
+                                currentLine = testLine;
+                            } else {
+                                lines.push(currentLine);
+                                currentLine = word;
+                            }
+                        }
+                        lines.push(currentLine);
+
+                        // Draw the wrapped lines
+                        for (const line of lines) {
+                            if (metadataY < imageY + 8) break; // Stop if we run out of space in the overlay
+                            page.drawText(line, { 
+                                x: imageX + 10, y: metadataY, font, size: 8, color: rgb(1, 1, 1) 
+                            });
+                            metadataY -= 12; // Line height for address
+                        }
                     }
 
                     // Update y-position for the next element
@@ -688,7 +734,9 @@ const handleCloseCase = async () => {
         // --- Upload generated PDF to Cloudinary (with retry logic) ---
         console.log('[PDF-LOG] ☁️ Uploading PDF to Cloudinary...');
         const pdfBase64 = uint8ToBase64Safe(pdfBytes);
-        const uniquePdfPublicId = `CaseReport_${caseData.RefNo || caseId}_${Date.now()}`;
+        const rawRefNo = caseData.matrixRefNo || caseData.RefNo || caseId;
+        const safeRefNo = rawRefNo.replace(/[^a-zA-Z0-9-_]/g, '_');
+        const uniquePdfPublicId = `CaseReport_${safeRefNo}_${Date.now()}`;
         let finalPdfUrl = null;
         let uploadSuccess = false;
 
@@ -701,7 +749,7 @@ const handleCloseCase = async () => {
                         fetch(`${SERVER_URL}/cloudinary/upload-pdf`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ base64: pdfBase64, public_id: uniquePdfPublicId, folder: `cases/${caseData.RefNo || caseId}` }),
+                            body: JSON.stringify({ base64: pdfBase64, public_id: uniquePdfPublicId, folder: `cases/${safeRefNo}` }),
                         }),
                         new Promise((_, reject) => setTimeout(() => reject(new Error('Server upload timeout')), 30000))
                     ]);
@@ -745,7 +793,7 @@ const handleCloseCase = async () => {
                     name: `${uniquePdfPublicId}.pdf`
                 });
                 formData.append('upload_preset', UPLOAD_PRESET);
-                formData.append('folder', `cases/${caseData.RefNo || caseId}`);
+                formData.append('folder', `cases/${safeRefNo}`);
                 formData.append('public_id', uniquePdfPublicId);
                 formData.append('resource_type', 'raw');
 
@@ -1003,7 +1051,10 @@ const handleCloseCase = async () => {
                 
                 {allDisplayedCategories.map((req) => {
                     const taken = photos[req.id]?.length || 0;
-                    const isComplete = taken >= req.max;
+                    const target = req.min || req.max;
+                    const isComplete = taken >= target;
+                    // For CES No, we allow more than min, so we don't hide add button based on max unless it's reached
+                    const showAddButton = (displayStatus === "open" || forceEdit) && taken < req.max;
                     
                     return (
                         <View key={req.id} style={styles.checklistCard}>
@@ -1011,10 +1062,10 @@ const handleCloseCase = async () => {
                                 <View style={styles.checklistInfo}>
                                     <Text style={styles.checklistTitle}>{req.label}</Text>
                                     <Text style={[styles.checklistCount, isComplete ? styles.textSuccess : styles.textWarning]}>
-                                        {taken} / {req.max}
+                                        {taken} / {req.min ? `${req.min}+` : req.max}
                                     </Text>
                                 </View>
-                                {!isComplete && (displayStatus === "open" || forceEdit) && (
+                                {showAddButton && (
                                     <TouchableOpacity style={styles.cameraButton} onPress={() => showPhotoOptions(req.id)}>
                                         <Ionicons name="camera" size={20} color="#fff" />
                                         <Text style={styles.cameraButtonText}>Add</Text>
@@ -1052,7 +1103,7 @@ const handleCloseCase = async () => {
                 })}
 
                 {/* Add Optional Photos */}
-                {(displayStatus === 'open' || forceEdit) && (
+                {(displayStatus === 'open' || forceEdit) && !isCESNo && (
                     <TouchableOpacity style={styles.addOptionalButton} onPress={() => setAddPhotoModalVisible(true)}>
                         <LinearGradient colors={["#2193b0", "#6dd5ed"]} style={styles.gradientButton} start={{x:0, y:0}} end={{x:1, y:0}}>
                             <Ionicons name="add-circle-outline" size={24} color="#fff" />

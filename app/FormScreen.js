@@ -88,6 +88,8 @@ const UPLOAD_PRESET = "cases_upload";
 
 async function uploadPdfToCloudinary(pdfData, caseId) {
   const formData = new FormData();
+  const publicId = `CES_${caseId}_${Date.now()}`;
+
   if (Platform.OS === 'web') {
     // Convert base64 to Blob to ensure filename is preserved in Cloudinary raw upload
     const binaryString = atob(pdfData);
@@ -95,16 +97,17 @@ async function uploadPdfToCloudinary(pdfData, caseId) {
     const bytes = new Uint8Array(len);
     for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
     const blob = new Blob([bytes], { type: "application/pdf" });
-    formData.append("file", blob, `CES_${caseId}.pdf`);
+    formData.append("file", blob, `${publicId}.pdf`);
   } else {
     formData.append('file', {
       uri: pdfData,
       type: 'application/pdf',
-      name: `CES_${caseId}.pdf`,
+      name: `${publicId}.pdf`,
     });
   }
   formData.append('upload_preset', UPLOAD_PRESET);
   formData.append('folder', `cases/${caseId}`);
+  formData.append('public_id', publicId);
   formData.append('resource_type', 'raw');
 
   const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/raw/upload`, { method: 'POST', body: formData });
@@ -211,6 +214,31 @@ export default function CESFormScreen() {
         respondentSignature: String(data.respondentSignature || ""),
         fieldExecutiveSignature: String(data.fieldExecutiveSignature || ""),
       }));
+
+      // --- CES Type "No" Logic ---
+      if (data.cesType === "No" && !data.formCompleted) {
+          setForm(prev => {
+              const naTextFields = {};
+              ['fatherName', 'respondentName', 'relationship', 'fieldExecutiveName', 'detailsVerified'].forEach(k => {
+                  naTextFields[k] = "NA";
+              });
+
+              return {
+                  ...prev,
+                  ...naTextFields,
+                  stayFromDate: "NA",
+                  stayToDate: "NA",
+                  maritalStatus: "NA",
+                  addressType: "NA",
+                  residenceType: "NA",
+                  locationType: "NA",
+                  siteVisit: "NA",
+                  respondentSignature: "NA",
+                  remarks: "Applicant’s mobile unreachable/switched off and residence door number not visible, hence verification not possible",
+                  verificationStatus: "unable" // Maps to CheckBox-u__w8DBaJC
+              };
+          });
+      }
     };
 
     if (route.params?.existingData) {
@@ -288,13 +316,45 @@ export default function CESFormScreen() {
         if (form[k]) pdfForm.getTextField(v).setText(form[k]);
       });
 
+      const pageForOverlay = pdfDoc.getPages()[0];
+      const fontForOverlay = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
       Object.entries(CHECKBOX).forEach(([group, map]) => {
-        if (form[group]) pdfForm.getCheckBox(map[form[group]]).check();
+        if (form[group] === "NA") {
+            // Find the first checkbox in the group to get a position reference
+            const firstCheckboxName = Object.values(map)[0];
+            try {
+                const checkboxField = pdfForm.getCheckBox(firstCheckboxName);
+                const widgets = checkboxField.acroField.getWidgets();
+                if (widgets.length > 0) {
+                    const rect = widgets[0].getRectangle();
+                    // Draw "NA" over the first checkbox of the group.
+                    pageForOverlay.drawText("NA", { x: rect.x + 2, y: rect.y + 2, size: 8, font: fontForOverlay, color: rgb(0, 0, 0) });
+                }
+            } catch(e) {
+                console.warn(`Could not find checkbox group for ${group} to write NA`);
+            }
+        } else if (form[group] && map[form[group]]) {
+            pdfForm.getCheckBox(map[form[group]]).check();
+        }
       });
+
 
       setProgress(0.6);
       setProgressMessage("Embedding signatures...");
-      await embedSignature(pdfDoc, form.respondentSignature, SIGNATURE_COORDS.respondent);
+
+      if (form.respondentSignature === "NA") {
+        pageForOverlay.drawText("NA", {
+          x: SIGNATURE_COORDS.respondent.x + (SIGNATURE_COORDS.respondent.width / 2) - 10,
+          y: SIGNATURE_COORDS.respondent.y + (SIGNATURE_COORDS.respondent.height / 2) - 5,
+          size: 12,
+          font: fontForOverlay,
+          color: rgb(0, 0, 0),
+        });
+      } else {
+        await embedSignature(pdfDoc, form.respondentSignature, SIGNATURE_COORDS.respondent);
+      }
+
       await embedSignature(pdfDoc, form.fieldExecutiveSignature, SIGNATURE_COORDS.fieldExecutive);
 
       // Fix for blue boxes: make all fields read-only before flattening
@@ -320,24 +380,49 @@ export default function CESFormScreen() {
       }
 
       if (form.remarks) {
-        page.drawText(form.remarks, {
-          x: 335,
-          y: 135,
-          size: 10,
-          font,
-          color: rgb(0, 0, 0),
-        });
+        const remarksText = form.remarks;
+        const maxTextWidth = 270; // Approx width of the remarks box
+        const words = remarksText.split(' ');
+        const lines = [];
+        let currentLine = words[0] || '';
+        let y = 155; // Starting y (Moved up)
+
+        for (let i = 1; i < words.length; i++) {
+            const word = words[i];
+            const testLine = `${currentLine} ${word}`;
+            if (font.widthOfTextAtSize(testLine, 10) < maxTextWidth) {
+                currentLine = testLine;
+            } else {
+                lines.push(currentLine);
+                currentLine = word;
+            }
+        }
+        lines.push(currentLine);
+
+        for (const line of lines) {
+            page.drawText(line, {
+                x: 235,
+                y: y,
+                size: 10,
+                font,
+                color: rgb(0, 0, 0),
+            });
+            y -= 12; // Move to next line
+        }
       }
 
       setProgress(0.7);
       setProgressMessage("Saving PDF...");
       const out = await pdfDoc.saveAsBase64();
+
+      const rawRefNo = form.caseReferenceNumber || caseId;
+      const safeRefNo = rawRefNo.replace(/[^a-zA-Z0-9-_]/g, '_');
       
       let uploadInput;
       if (Platform.OS === 'web') {
         uploadInput = out;
       } else {
-        const path = FileSystem.documentDirectory + `CES_${form.caseReferenceNumber}.pdf`;
+        const path = FileSystem.documentDirectory + `CES_${safeRefNo}.pdf`;
         await FileSystem.writeAsStringAsync(path, out, {
           encoding: FileSystem.EncodingType.Base64,
         });
@@ -347,7 +432,7 @@ export default function CESFormScreen() {
       setProgress(0.8);
       setProgressMessage("Uploading to Cloud...");
       // UPLOAD TO CLOUDINARY
-      const uploadUrl = await uploadPdfToCloudinary(uploadInput, form.caseReferenceNumber);
+      const uploadUrl = await uploadPdfToCloudinary(uploadInput, safeRefNo);
 
       if (!uploadUrl) throw new Error("Upload failed: No URL returned");
 
@@ -406,6 +491,7 @@ export default function CESFormScreen() {
           { label: "GST Certificate", value: "GST Certificate" },
           { label: "Voter ID", value: "Voter ID" },
           { label: "Driving License", value: "Driving License" },
+          { label: "NA", value: "NA" },
         ]}
       />
 
@@ -440,6 +526,7 @@ export default function CESFormScreen() {
           { label: "Current", value: "current" },
           { label: "Permanent", value: "permanent" },
           { label: "Former", value: "former" },
+          { label: "NA", value: "NA" },
         ]}
       />
 
@@ -451,6 +538,7 @@ export default function CESFormScreen() {
           { label: "Hostel", value: "hostel" },
           { label: "Relative", value: "relative" },
           { label: "Other", value: "other" },
+          { label: "NA", value: "NA" },
         ]}
       />
 
@@ -467,6 +555,7 @@ export default function CESFormScreen() {
           { label: "Rural", value: "rural" },
           { label: "Semi Urban", value: "semiUrban" },
           { label: "Urban", value: "urban" },
+          { label: "NA", value: "NA" },
         ]}
       />
 
@@ -475,6 +564,7 @@ export default function CESFormScreen() {
         options={[
           { label: "Yes", value: "yes" },
           { label: "No", value: "no" },
+          { label: "NA", value: "NA" },
         ]}
       />
 
@@ -504,14 +594,22 @@ export default function CESFormScreen() {
       ].map(item => (
         <View key={item.key} style={{ marginBottom: 12 }}>
           <Text style={{ fontWeight: 'bold', marginBottom: 5 }}>{item.label}</Text>
-          <TouchableOpacity style={styles.sig} onPress={() => setSigningField(item.key)}>
-            {form[item.key] ? (
+          <TouchableOpacity
+            style={styles.sig}
+            onPress={() => {
+              if (form[item.key] !== "NA") {
+                setSigningField(item.key);
+              }
+            }}
+            disabled={form[item.key] === "NA"}
+          >
+            {form[item.key] && form[item.key] !== "NA" ? (
               <Image
                 source={{ uri: `data:image/png;base64,${form[item.key]}` }}
                 style={{ width: "100%", height: "100%", resizeMode: "contain" }}
               />
             ) : (
-              <Text>Tap to Sign</Text>
+              <Text>{form[item.key] === "NA" ? "NA" : "Tap to Sign"}</Text>
             )}
           </TouchableOpacity>
         </View>
@@ -533,7 +631,7 @@ export default function CESFormScreen() {
             trimWhitespace={true}
             minWidth={3}
             maxWidth={5}
-            webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 0px; width: 100%; position: absolute; } .m-signature-pad--body { margin-bottom: 60px; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
+            webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 20px; width: 100%; position: absolute; } .m-signature-pad--body { margin-bottom: 80px; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
           />
           <TouchableOpacity style={styles.close} onPress={() => setSigningField(null)}>
             <Text style={{ color: "#fff" }}>Close</Text>

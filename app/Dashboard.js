@@ -38,6 +38,8 @@ export default function Dashboard({ navigation }) {
   const [showRevertModal, setShowRevertModal] = useState(false);
   const [revertReason, setRevertReason] = useState("");
   const [selectedCase, setSelectedCase] = useState(null);
+  const [typeModalVisible, setTypeModalVisible] = useState(false);
+  const [selectedCaseForType, setSelectedCaseForType] = useState(null);
 
   // Alert System State
   const [newCasesList, setNewCasesList] = useState([]);
@@ -343,6 +345,16 @@ export default function Dashboard({ navigation }) {
     setRevertReason("");
   };
 
+  const handleSetType = (type) => {
+    if (selectedCaseForType) {
+      firebase.database().ref(`cases/${selectedCaseForType.id}`).update({
+        cesType: type
+      });
+      setTypeModalVisible(false);
+      setSelectedCaseForType(null);
+    }
+  };
+
   return (
     <LinearGradient
       colors={newUI ? ["#141E30", "#243B55"] : ["#12c2e9", "#c471ed", "#f64f59"]}
@@ -386,11 +398,18 @@ export default function Dashboard({ navigation }) {
 
       {/* Profile Menu */}
       {profileMenuOpen && (
-        <View style={styles.profileMenu}>
-          <TouchableOpacity onPress={() => navigation.navigate("Updatescreen")}>
-            <Text style={styles.menuText}>Update Profile</Text>
-          </TouchableOpacity>
-        </View>
+        <>
+          <TouchableOpacity
+            style={styles.fullScreenTouchable}
+            activeOpacity={1}
+            onPress={() => setProfileMenuOpen(false)}
+          />
+          <View style={styles.profileMenu}>
+            <TouchableOpacity onPress={() => { setProfileMenuOpen(false); navigation.navigate("Updatescreen"); }}>
+              <Text style={styles.menuText}>Update Profile</Text>
+            </TouchableOpacity>
+          </View>
+        </>
       )}
 
       {/* Hamburger Menu */}
@@ -564,6 +583,7 @@ export default function Dashboard({ navigation }) {
           const statusText = computeStatusText(item);
           const memberStatus = computeMemberStatus(item);
           const isDelayed = statusText.includes("Delay");
+          const isCES = (item.client || item.company || "").toUpperCase().includes("CES");
 
           return (
             <View style={[styles.caseCard, item.highPriority && styles.highPriorityCard]}>
@@ -636,6 +656,15 @@ export default function Dashboard({ navigation }) {
                     <Ionicons name="map" size={20} color="#fff" />
                   </TouchableOpacity>
                 )}
+
+                {isCES && (
+                  <TouchableOpacity
+                    style={styles.typeButton}
+                    onPress={() => { setSelectedCaseForType(item); setTypeModalVisible(true); }}
+                  >
+                    <Text style={styles.typeButtonText}>{item.cesType ? `Type: ${item.cesType}` : "Set Type"}</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
           );
@@ -678,6 +707,29 @@ export default function Dashboard({ navigation }) {
           </View>
         </View>
       )}
+
+      {/* Type Selection Modal for CES */}
+      <Modal
+        visible={typeModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setTypeModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 15, textAlign: 'center' }}>Select Case Type</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-around' }}>
+              <TouchableOpacity style={[styles.modalSubmit, { backgroundColor: '#28a745', flex: 1, marginRight: 5 }]} onPress={() => handleSetType("Yes")}>
+                <Text style={{ color: '#fff', fontWeight: 'bold' }}>Yes (Normal)</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.modalSubmit, { backgroundColor: '#dc3545', flex: 1, marginLeft: 5 }]} onPress={() => handleSetType("No")}>
+                <Text style={{ color: '#fff', fontWeight: 'bold' }}>No (Locked/NA)</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity style={{ marginTop: 15, alignSelf: 'center' }} onPress={() => setTypeModalVisible(false)}><Text style={{ color: '#666' }}>Cancel</Text></TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* Bribe Warning Modal */}
       <Modal
@@ -794,6 +846,14 @@ const styles = StyleSheet.create({
   betaText: { fontSize: 8, fontWeight: 'bold', color: '#000' },
   profilePhoto: { marginLeft: 10, borderRadius: 20, overflow: "hidden" },
   profileMenu: { position: "absolute", top: 60, right: 20, backgroundColor: "#fff", padding: 15, borderRadius: 8, shadowColor: "#000", shadowOpacity: 0.2, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4, elevation: 5, zIndex: 100 },
+  fullScreenTouchable: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 99,
+  },
   menuOverlay: { position: "absolute", top: 0, left: 0, bottom: 0, right: 0, backgroundColor: "rgba(0,0,0,0.5)", zIndex: 90 },
   menu: { width: "70%", backgroundColor: "#fff", paddingVertical: 50, paddingHorizontal: 20, height: Dimensions.get("window").height },
   menuItem: { paddingVertical: 15, borderBottomWidth: 1, borderColor: "#eee" },
@@ -841,6 +901,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     gap: 8,
   },
+  typeButton: { backgroundColor: "#673AB7", paddingHorizontal: 12, paddingVertical: 12, borderRadius: 12, justifyContent: 'center' },
+  typeButtonText: { color: "#fff", fontWeight: "bold", fontSize: 12 },
   openButtonText: { color: "#fff", fontWeight: "bold", fontSize: 14 },
   mapButton: {
     width: 48,

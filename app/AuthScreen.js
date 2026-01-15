@@ -178,7 +178,8 @@ export default function AuthScreen({ navigation }) {
         uniqueId,
         role: "member",
         createdAt: Date.now(),
-        photoURL: ""
+        photoURL: "",
+        isVerified: false
       };
 
       // Save to Realtime Database

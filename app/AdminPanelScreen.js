@@ -35,7 +35,7 @@ export default function AdminPanelScreen({ navigation }) {
   const [statusFilter, setStatusFilter] = useState("");
   const [refNoFilter, setRefNoFilter] = useState("");
   const [verificationFilter, setVerificationFilter] = useState("");
-  const [stateFilter, setStateFilter] = useState("");
+  const [cityFilter, setCityFilter] = useState("");
   const [fromDate, setFromDate] = useState(null);
   const [toDate, setToDate] = useState(null);
   const [selectedCases, setSelectedCases] = useState([]);
@@ -216,6 +216,9 @@ export default function AdminPanelScreen({ navigation }) {
     }
   }, [auditAlert]);
 
+  const uniqueCities = [...new Set(cases.map(c => c.city).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const sortedMembers = [...members].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
   // Counters
   const assignedTL = cases.length + archivedCount;
   const reverted = cases.filter((c) => c.status === "reverted").length;
@@ -236,21 +239,37 @@ export default function AdminPanelScreen({ navigation }) {
     const matchesVerification = verificationFilter
       ? c.checkType?.toUpperCase() === verificationFilter.toUpperCase()
       : true;
-    const matchesState = stateFilter ? c.state === stateFilter : true;
+    const matchesCity = cityFilter ? c.city === cityFilter : true;
     let matchesDate = true;
     if (fromDate) matchesDate = matchesDate && new Date(c.dateInitiated) >= fromDate;
     if (toDate) matchesDate = matchesDate && new Date(c.dateInitiated) <= toDate;
-    return matchesSearch && matchesStatus && matchesRefNo && matchesVerification && matchesState && matchesDate;
+    return matchesSearch && matchesStatus && matchesRefNo && matchesVerification && matchesCity && matchesDate;
   });
 
   const fullyFilteredCases = filteredCases.filter((c) => {
+    if (Object.keys(headerFilters).length === 0) return true;
     return Object.keys(headerFilters).every((key) => {
       if (!headerFilters[key]) return true;
-      let dataValue = c[key];
-      if (key === "ReferenceNo") dataValue = c.matrixRefNo;
-      
-      const value = (dataValue || "").toString().toLowerCase();
-      return value.includes(headerFilters[key].toLowerCase());
+      const filterVal = headerFilters[key].toLowerCase();
+      let val = "";
+      if (key === "client") val = c.client;
+      else if (key === "ReferenceNo") val = c.matrixRefNo;
+      else if (key === "candidateName") val = c.candidateName;
+      else if (key === "checkType") val = c.checkType;
+      else if (key === "chkType") val = c.chkType;
+      else if (key === "company") val = c.company;
+      else if (key === "address") val = c.address;
+      else if (key === "city") val = c.city;
+      else if (key === "state") val = c.state;
+      else if (key === "pincode") val = c.pincode;
+      else if (key === "contactNumber") val = c.contactNumber;
+      else if (key === "status") val = c.status;
+      else if (key === "assigneeName") val = c.assigneeName;
+      else if (key === "assigneeRole") val = c.assigneeRole;
+      else if (key === "comments") val = c.comments;
+      else if (key === "completedAt") val = c.completedAt ? new Date(c.completedAt).toLocaleDateString() : "";
+      else if (key === "dateInitiated") val = c.dateInitiated ? new Date(c.dateInitiated).toLocaleDateString() : "";
+      return (val || "").toString().toLowerCase().includes(filterVal);
     });
   });
 
@@ -268,7 +287,7 @@ export default function AdminPanelScreen({ navigation }) {
       return Alert.alert("Select a member to assign!");
     }
 
-    const member = members.find((m) => m.name === assignTo);
+    const member = members.find((m) => m.id === assignTo);
     if (!member) {
       if (Platform.OS === "web") return alert("Member not found!");
       return Alert.alert("Member not found!");
@@ -276,7 +295,7 @@ export default function AdminPanelScreen({ navigation }) {
 
     selectedCases.forEach((caseId) => {
       firebase.database().ref(`cases/${caseId}`).update({
-        assigneeName: assignTo,
+        assigneeName: member.name,
         assignedTo: member.id,
         assigneeRole: member.role || "FE",
         status: "assigned",
@@ -291,33 +310,32 @@ export default function AdminPanelScreen({ navigation }) {
   };
 
   const handleRevert = (caseId) => {
+    const revertAction = () => {
+      firebase.database().ref(`cases/${caseId}`).update({
+        status: "reverted",
+        completedAt: null,
+        assigneeName: null,
+        assigneeRole: null,
+        assignedTo: null,
+        photosFolder: null,
+        formCompleted: false,
+        filledForm: null,
+        auditFeedback: null,
+        photosToRedo: null,
+      });
+    };
+
+    const alertMessage = "Are you sure you want to revert this case? This will clear all associated photos and form data.";
+
     if (Platform.OS === "web") {
-      if (confirm("Are you sure you want to revert this case status?")) {
-        firebase.database().ref(`cases/${caseId}`).update({
-          status: "reverted",
-          completedAt: null,
-          assigneeName: null,
-          assigneeRole: null,
-          assignedTo: null,
-        });
+      if (confirm(alertMessage)) {
+        revertAction();
       }
     } else {
-      Alert.alert(
-        "Revert Case",
-        "Are you sure you want to revert this case status?",
-        [
-          { text: "Cancel", style: "cancel" },
-          { text: "Revert", onPress: () => {
-              firebase.database().ref(`cases/${caseId}`).update({
-                status: "reverted",
-                completedAt: null,
-                assigneeName: null,
-                assigneeRole: null,
-                assignedTo: null,
-              });
-          }}
-        ]
-      );
+      Alert.alert("Revert Case", alertMessage, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Revert", onPress: revertAction, style: "destructive" },
+      ]);
     }
   };
 
@@ -733,7 +751,7 @@ export default function AdminPanelScreen({ navigation }) {
       )}
 
       {/* Fixed Top Section */}
-      <View style={{ padding: 10, paddingTop: maintenanceMode ? 10 : (Platform.OS === 'android' ? 40 : 50) }}>
+      <View style={{ paddingHorizontal: 10, paddingTop: maintenanceMode ? 10 : (Platform.OS === 'android' ? 40 : 50), paddingBottom: 5 }}>
         <View style={styles.headerRow}>
           <TouchableOpacity onPress={openMenu} style={styles.iconButton}>
             <Ionicons name="menu" size={32} color={isLightTheme ? "#333" : "#fff"} />
@@ -813,8 +831,8 @@ export default function AdminPanelScreen({ navigation }) {
               style={[styles.assignPicker, { width: 140, marginRight: 6 }]}
             >
               <Picker.Item label="Select Member" value="" />
-              {members.map((m) => (
-                <Picker.Item key={m.id} label={m.name} value={m.name} />
+              {sortedMembers.map((m) => (
+                <Picker.Item key={m.id} label={`${m.name} (${m.uniqueId || "N/A"})`} value={m.id} />
               ))}
             </Picker>
             {assignTo !== "" && (
@@ -857,6 +875,13 @@ export default function AdminPanelScreen({ navigation }) {
               </Picker>
           </View>
 
+          <View style={[styles.pickerContainer, { backgroundColor: isLightTheme ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.9)" }]}>
+              <Picker selectedValue={cityFilter} onValueChange={setCityFilter} style={styles.picker} dropdownIconColor="#333">
+                <Picker.Item label="City: All" value="" style={{fontSize: 12, color: '#000'}} />
+                {uniqueCities.map(city => <Picker.Item key={city} label={city} value={city} style={{fontSize: 12, color: '#000'}} />)}
+              </Picker>
+          </View>
+
           <TouchableOpacity
             style={[styles.iconBtn, { backgroundColor: "#455A64" }]}
             onPress={() => setShowHeaderFilters(!showHeaderFilters)}
@@ -870,7 +895,7 @@ export default function AdminPanelScreen({ navigation }) {
               setRefNoFilter("");
               setStatusFilter("");
               setVerificationFilter("");
-              setStateFilter("");
+              setCityFilter("");
               setFromDate(null);
               setToDate(null);
               setHeaderFilters({});
@@ -883,7 +908,7 @@ export default function AdminPanelScreen({ navigation }) {
 
       {/* Table Section - Takes remaining space */}
       <View style={{ flex: 1, paddingHorizontal: 8 }}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexGrow: 1 }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={true} contentContainerStyle={{ flexGrow: 1 }}>
           <View style={{ width: Object.values(columnWidths).reduce((a, b) => a + b, 0), flex: 1 }}>
             <View style={[styles.tableHeader, isLightTheme && { backgroundColor: "rgba(255,255,255,0.5)", borderColor: "rgba(255,255,255,0.2)" }]}>
               {Object.keys(columnWidths).map((key) => (
@@ -975,7 +1000,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 15,
+    marginBottom: 10,
   },
   iconButton: {
     padding: 5,
@@ -995,7 +1020,7 @@ const styles = StyleSheet.create({
   counterRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 15,
+    marginBottom: 10,
   },
   counterBox: {
     backgroundColor: "rgba(255,255,255,0.05)",
@@ -1021,7 +1046,7 @@ const styles = StyleSheet.create({
   uploadAssignRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 15,
+    marginBottom: 10,
     gap: 10,
   },
   actionButton: {
@@ -1047,7 +1072,7 @@ const styles = StyleSheet.create({
   searchFilter: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 15,
+    marginBottom: 10,
     flexWrap: "wrap",
     gap: 8,
   },
@@ -1261,7 +1286,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.1)",
     borderRadius: 8,
     padding: 8,
-    marginBottom: 15,
+    marginBottom: 10,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.2)",
   },
