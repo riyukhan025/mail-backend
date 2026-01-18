@@ -118,7 +118,7 @@ export default function MatrixFormScreen() {
     verificationDateTime: "",
     candidateAddressPeriod: "",
     respondentPeriodStay: "",
-    modeOfConfirmation: "",
+    modeOfConfirmation: "Written",
     respondentName: "",
     respondentRelationship: "",
     residenceStatus: "",
@@ -156,7 +156,7 @@ export default function MatrixFormScreen() {
           verificationDateTime: data.verificationDateTime || "",
           candidateAddressPeriod: data.candidateAddressPeriod || data.address || "",
           respondentPeriodStay: data.respondentPeriodStay || "",
-          modeOfConfirmation: data.modeOfConfirmation || "",
+          modeOfConfirmation: data.modeOfConfirmation || "Written",
           respondentName: data.respondentName || "",
           respondentRelationship: data.respondentRelationship || "",
           residenceStatus: data.residenceStatus || "",
@@ -399,20 +399,30 @@ export default function MatrixFormScreen() {
           );
         }
 
-        // 2. Respondent Period Stay (Number + Years)
-        if (k === "respondentPeriodStay") {
+        // 2. Respondent Relationship (Dropdown)
+        if (k === "respondentRelationship") {
+          const options = ["Self", "Sister", "Uncle", "Aunty", "Mother", "Father", "Brother", "Wife", "Neighbour", "Grandmother", "Grandfather", "Others"];
           return (
             <View key={k} style={styles.fieldContainer}>
               <Text style={styles.label}>{label}</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <TextInput
-                  style={[styles.textInput, { flex: 1 }]}
-                  keyboardType="numeric"
-                  value={form[k] ? form[k].replace(" Years", "") : ""}
-                  onChangeText={v => setForm({ ...form, [k]: v ? v + " Years" : "" })}
-                  placeholder="Enter number"
-                />
-                <Text style={{ marginLeft: 10, fontWeight: 'bold' }}>Years</Text>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={form[k]}
+                  onValueChange={(v) => {
+                    const updates = { [k]: v };
+                    if (v === "Neighbour") {
+                      updates.addressProofDetails = "Not Provided";
+                      updates.neighbourConfirmation = "Yes";
+                    } else {
+                      updates.neighbourConfirmation = "No";
+                    }
+                    setForm(prev => ({ ...prev, ...updates }));
+                  }}
+                  style={styles.picker}
+                >
+                  <Picker.Item label="Select Relation..." value="" />
+                  {options.map(o => <Picker.Item key={o} label={o} value={o} />)}
+                </Picker>
               </View>
             </View>
           );

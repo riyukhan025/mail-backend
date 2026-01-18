@@ -50,26 +50,72 @@ function uint8ToBase64Safe(u8) {
 
 // --- NEW: Photo Requirements Checklist ---
 const PHOTO_REQUIREMENTS = [
-    { id: 'selfie', label: 'Selfie with House', max: 1 },
-    { id: 'proof', label: 'ID Proof', max: 1 },
-    { id: 'street', label: 'Street View', max: 2 },
     { id: 'house', label: 'House/Building View', max: 2 },
-    { id: 'landmark', label: 'Nearest Landmark', max: 2 },
+    { id: 'selfie', label: 'Selfie with House', max: 1 },
+    { id: 'proof', label: 'ID Proof', max: 2 },
+    { id: 'landmark', label: 'Nearest Landmark', max: 1 },
 ];
 
 // --- NEW: Optional Photo Categories ---
 const OPTIONAL_PHOTO_CATEGORIES = [
-    { id: 'optional_id', label: 'Optional ID Proof', max: 1 },
-    { id: 'neighbor_house', label: "Neighbor's House", max: 1 },
-    { id: 'other', label: 'Other', max: 5 },
+    { id: 'other', label: 'Other', max: 2 },
 ];
+
+const TRANSLATIONS = {
+  en: {
+    caseDetails: "Case Details",
+    actionRequired: "Action Required",
+    photoChecklist: "Photo Checklist",
+    galleryView: "Gallery View",
+    fillEditForm: "Fill/Edit Form",
+    viewForm: "View Form",
+    closeCase: "Close Case",
+    updateCase: "Update Case",
+    downloadReport: "Download Report",
+    addOptional: "Add Optional Category",
+    chooseCompany: "Choose Company",
+    cancel: "Cancel",
+    add: "Add",
+    delete: "Delete",
+    initiated: "Initiated",
+    assignedTo: "Assigned To",
+    house: "House/Building View",
+    selfie: "Selfie with House",
+    proof: "ID Proof",
+    landmark: "Nearest Landmark",
+    other: "Other"
+  },
+  ta: {
+    caseDetails: "வழக்கு விவரங்கள்",
+    actionRequired: "நடவடிக்கை தேவை",
+    photoChecklist: "புகைப்பட பட்டியல்",
+    galleryView: "கேலரி",
+    fillEditForm: "படிவம் நிரப்ப/திருத்த",
+    viewForm: "படிவம் பார்",
+    closeCase: "வழக்கை மூடு",
+    updateCase: "வழக்கை புதுப்பி",
+    downloadReport: "அறிக்கை பதிவிறக்கம்",
+    addOptional: "கூடுதல் வகை சேர்",
+    chooseCompany: "நிறுவனத்தை தேர்வு செய்",
+    cancel: "ரத்து",
+    add: "சேர்",
+    delete: "நீக்கு",
+    initiated: "தொடங்கப்பட்டது",
+    assignedTo: "ஒதுக்கப்பட்டது",
+    house: "வீடு/கட்டிடம்",
+    selfie: "வீட்டின் முன் செல்ஃபி",
+    proof: "அடையாள அட்டை",
+    landmark: "அருகில் உள்ள அடையாளம்",
+    other: "மற்றவை"
+  }
+};
 
 export default function CaseDetailScreen({ navigation, route }) {
     // Correctly destructure params, especially for the photo data that changes.
     console.log('--- [CaseDetailScreen] RENDER ---');
     console.log('[CaseDetailScreen] Current route.params:', JSON.stringify(route.params, null, 2));
 
-    const { user: contextUser } = useContext(AuthContext);
+    const { user: contextUser, language } = useContext(AuthContext);
     const { caseId, role: roleParam, forceClose = false, forceEdit = false, user: paramUser } = route.params;
     const user = paramUser || contextUser;
     const newPhoto = route.params?.newPhoto;
@@ -81,13 +127,10 @@ export default function CaseDetailScreen({ navigation, route }) {
     const [assignedEmail, setAssignedEmail] = useState("Unassigned");
     // --- MODIFIED: Photos state is now an object keyed by category ---
     const [photos, setPhotos] = useState({
+        house: [],
         selfie: [],
         proof: [],
-        street: [],
-        house: [],
         landmark: [],
-        optional_id: [],
-        neighbor_house: [],
         other: [],
     });
     const [activePhotoCategory, setActivePhotoCategory] = useState(null); // To know which category to add photo to
@@ -104,6 +147,8 @@ export default function CaseDetailScreen({ navigation, route }) {
     const [optionalCategories, setOptionalCategories] = useState([]);
     const [addPhotoModalVisible, setAddPhotoModalVisible] = useState(false);
     console.log("🚀 Component mounted, caseId:", caseId, "roleParam:", roleParam);
+
+    const t = (key) => TRANSLATIONS[language]?.[key] || TRANSLATIONS['en'][key] || key;
 
     const displayStatus = role === "member" && status === "assigned" ? "open" : status;
     console.log(`[RENDER] status=${status}, role=${role}, displayStatus=${displayStatus}`);
@@ -969,7 +1014,7 @@ const handleCloseCase = async () => {
                 >
                     <Ionicons name="arrow-back" size={24} color="#fff" />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>Case Details</Text>
+                <Text style={styles.headerTitle}>{t("caseDetails")}</Text>
                 <TouchableOpacity onPress={handleQuery} style={styles.iconButton}>
                     <Ionicons name="help-circle-outline" size={24} color="#fff" />
                 </TouchableOpacity>
@@ -1015,11 +1060,11 @@ const handleCloseCase = async () => {
 
                     <View style={styles.metaContainer}>
                         <View style={styles.metaItem}>
-                            <Text style={styles.metaLabel}>Initiated</Text>
+                            <Text style={styles.metaLabel}>{t("initiated")}</Text>
                             <Text style={styles.metaValue}>{caseData.dateInitiated ? new Date(caseData.dateInitiated).toLocaleDateString() : "-"}</Text>
                         </View>
                         <View style={styles.metaItem}>
-                            <Text style={styles.metaLabel}>Assigned To</Text>
+                            <Text style={styles.metaLabel}>{t("assignedTo")}</Text>
                             <Text style={styles.metaValue}>{assignedEmail.split('@')[0]}</Text>
                         </View>
                     </View>
@@ -1030,7 +1075,7 @@ const handleCloseCase = async () => {
                             onPress={() => Linking.openURL(caseData.photosFolderLink)}
                         >
                             <Ionicons name="cloud-download-outline" size={20} color="#fff" />
-                            <Text style={styles.downloadText}>Download Report</Text>
+                            <Text style={styles.downloadText}>{t("downloadReport")}</Text>
                         </TouchableOpacity>
                     )}
                 </View>
@@ -1040,14 +1085,14 @@ const handleCloseCase = async () => {
                   <View style={styles.feedbackCard}>
                     <View style={styles.feedbackHeader}>
                         <Ionicons name="warning" size={20} color="#ffd700" />
-                        <Text style={styles.feedbackTitle}>Action Required</Text>
+                        <Text style={styles.feedbackTitle}>{t("actionRequired")}</Text>
                     </View>
                     <Text style={styles.feedbackText}>{caseData.auditFeedback}</Text>
                   </View>
                 )}
 
                 {/* Photo Checklist */}
-                <Text style={styles.sectionHeader}>Photo Checklist</Text>
+                <Text style={styles.sectionHeader}>{t("photoChecklist")}</Text>
                 
                 {allDisplayedCategories.map((req) => {
                     const taken = photos[req.id]?.length || 0;
@@ -1060,7 +1105,7 @@ const handleCloseCase = async () => {
                         <View key={req.id} style={styles.checklistCard}>
                             <View style={styles.checklistHeader}>
                                 <View style={styles.checklistInfo}>
-                                    <Text style={styles.checklistTitle}>{req.label}</Text>
+                                    <Text style={styles.checklistTitle}>{language === 'ta' ? t(req.id) : req.label}</Text>
                                     <Text style={[styles.checklistCount, isComplete ? styles.textSuccess : styles.textWarning]}>
                                         {taken} / {req.min ? `${req.min}+` : req.max}
                                     </Text>
@@ -1068,7 +1113,7 @@ const handleCloseCase = async () => {
                                 {showAddButton && (
                                     <TouchableOpacity style={styles.cameraButton} onPress={() => showPhotoOptions(req.id)}>
                                         <Ionicons name="camera" size={20} color="#fff" />
-                                        <Text style={styles.cameraButtonText}>Add</Text>
+                                        <Text style={styles.cameraButtonText}>{t("add")}</Text>
                                     </TouchableOpacity>
                                 )}
                             </View>
@@ -1107,7 +1152,7 @@ const handleCloseCase = async () => {
                     <TouchableOpacity style={styles.addOptionalButton} onPress={() => setAddPhotoModalVisible(true)}>
                         <LinearGradient colors={["#2193b0", "#6dd5ed"]} style={styles.gradientButton} start={{x:0, y:0}} end={{x:1, y:0}}>
                             <Ionicons name="add-circle-outline" size={24} color="#fff" />
-                            <Text style={styles.gradientButtonText}>Add Optional Category</Text>
+                            <Text style={styles.gradientButtonText}>{t("addOptional")}</Text>
                         </LinearGradient>
                     </TouchableOpacity>
                 )}
@@ -1115,7 +1160,7 @@ const handleCloseCase = async () => {
                 {/* All Photos Grid */}
                 {allPhotosFlat.length > 0 && (
                     <>
-                        <Text style={styles.sectionHeader}>Gallery View</Text>
+                        <Text style={styles.sectionHeader}>{t("galleryView")}</Text>
                         <View style={styles.gridContainer}>
                             {allPhotosFlat.map((photo, index) => (
                                 <TouchableOpacity key={index} onPress={() => setSelectedPhoto(photo)} style={styles.gridItem}>
@@ -1153,7 +1198,7 @@ const handleCloseCase = async () => {
             <Modal visible={detailsModalVisible} transparent={true} animationType="slide">
                 <View style={styles.detailsModal}>
                     <Text style={{ fontSize: 18, fontWeight: "700", marginBottom: 20, color: "#fff", textAlign: "center" }}>
-                        Choose Company
+                        {t("chooseCompany")}
                     </Text>
 
                     {["CES", "Matrix", "DHI"].map((company) => (
@@ -1181,7 +1226,7 @@ const handleCloseCase = async () => {
                         style={[styles.actionButton, { marginTop: 20, backgroundColor: "#aaa" }]}
                         onPress={() => setDetailsModalVisible(false)}
                     >
-                        <Text style={styles.buttonText}>Cancel</Text>
+                        <Text style={styles.buttonText}>{t("cancel")}</Text>
                     </TouchableOpacity>
                 </View>
             </Modal>
@@ -1189,21 +1234,21 @@ const handleCloseCase = async () => {
             {/* --- NEW: Add Optional Photo Category Modal --- */}
             <Modal visible={addPhotoModalVisible} transparent={true} animationType="slide">
                 <View style={styles.detailsModal}>
-                    <Text style={styles.modalTitle}>Add Optional Photo Category</Text>
+                    <Text style={styles.modalTitle}>{t("addOptional")}</Text>
                     {OPTIONAL_PHOTO_CATEGORIES.map((cat) => (
                         <TouchableOpacity
                             key={cat.id}
                             style={[styles.actionButton, { marginVertical: 8, backgroundColor: "#6a1b9a" }]}
                             onPress={() => addOptionalCategory(cat)}
                         >
-                            <Text style={styles.buttonText}>{cat.label}</Text>
+                            <Text style={styles.buttonText}>{language === 'ta' ? t(cat.id) : cat.label}</Text>
                         </TouchableOpacity>
                     ))}
                     <TouchableOpacity
                         style={[styles.actionButton, { marginTop: 20, backgroundColor: "#aaa" }]}
                         onPress={() => setAddPhotoModalVisible(false)}
                     >
-                        <Text style={styles.buttonText}>Cancel</Text>
+                        <Text style={styles.buttonText}>{t("cancel")}</Text>
                     </TouchableOpacity>
                 </View>
             </Modal>
@@ -1247,7 +1292,7 @@ const handleCloseCase = async () => {
                         >
                             <LinearGradient colors={["#4776E6", "#8E54E9"]} style={styles.bottomBtnGradient}>
                                 <Ionicons name="document-text-outline" size={20} color="#fff" />
-                                <Text style={styles.bottomBtnText}>{formCompleted && !forceEdit ? "View Form" : "Fill/Edit Form"}</Text>
+                                <Text style={styles.bottomBtnText}>{formCompleted && !forceEdit ? t("viewForm") : t("fillEditForm")}</Text>
                             </LinearGradient>
                         </TouchableOpacity>
 
@@ -1255,7 +1300,7 @@ const handleCloseCase = async () => {
                              <TouchableOpacity style={styles.bottomBtn} onPress={handleCloseCase} disabled={isClosing}>
                                 <LinearGradient colors={["#11998e", "#38ef7d"]} style={styles.bottomBtnGradient}>
                                     {isClosing ? <ActivityIndicator color="#fff" /> : <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />}
-                                    <Text style={styles.bottomBtnText}>{isClosing ? "Updating..." : (forceEdit ? "Update Case" : "Close Case")}</Text>
+                                    <Text style={styles.bottomBtnText}>{isClosing ? "Updating..." : (forceEdit ? t("updateCase") : t("closeCase"))}</Text>
                                 </LinearGradient>
                             </TouchableOpacity>
                         )}

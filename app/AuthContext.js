@@ -4,6 +4,8 @@ export const AuthContext = createContext({
   user: null,
   login: () => {},
   logout: () => {},
+  language: 'en',
+  setLanguage: () => {},
 });
 
 // This file is not a route, but lives in the app directory.

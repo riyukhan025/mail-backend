@@ -1,9 +1,14 @@
 import { Ionicons } from "@expo/vector-icons";
+import { encode as btoa } from "base-64";
+import Constants from "expo-constants";
+import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { LinearGradient } from "expo-linear-gradient";
 import * as MailComposer from "expo-mail-composer";
+import { PDFDocument } from "pdf-lib";
 import { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Linking,
   Modal,
@@ -18,18 +23,41 @@ import {
 import firebase from "../firebase";
 import { APPWRITE_CONFIG, databases, ID } from "./appwrite";
 
+const manifest = Constants.manifest;
+const localIp = manifest?.debuggerHost?.split(':').shift() || "localhost";
+const SERVER_URL = `http://${localIp}:3000`;
+
+const CLOUD_NAME = "dfpykheky";
+const UPLOAD_PRESET = "cases_upload";
+
+// Safe Uint8Array -> base64 converter (chunked to avoid call-stack issues)
+function uint8ToBase64Safe(u8) {
+    const uint8 = u8 instanceof Uint8Array ? u8 : new Uint8Array(u8);
+    const CHUNK_SIZE = 0x8000; // 32KB
+    let binary = "";
+    for (let i = 0; i < uint8.length; i += CHUNK_SIZE) {
+        const sub = uint8.subarray(i, i + CHUNK_SIZE);
+        for (let j = 0; j < sub.length; j++) {
+            binary += String.fromCharCode(sub[j]);
+        }
+    }
+    return btoa(binary);
+}
+
+
 const PHOTO_CATEGORIES = ['selfie', 'proof', 'street', 'house', 'landmark'];
 
 export default function AuditCaseScreen({ navigation, route }) {
-  const { caseId, caseData: initialCaseData, user } = route.params || {};
+  const { caseId, caseData: initialCaseData, user, manualMode } = route.params || {};
   const [caseData, setCaseData] = useState(initialCaseData || {});
+  const [isUploadingManual, setIsUploadingManual] = useState(false);
   
   useEffect(() => {
     const caseRef = firebase.database().ref(`cases/${caseId}`);
     const listener = caseRef.on("value", (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        setCaseData((prev) => ({ ...prev, ...data }));
+        setCaseData({ id: caseId, ...data });
       }
     });
     return () => caseRef.off("value", listener);
@@ -39,6 +67,7 @@ export default function AuditCaseScreen({ navigation, route }) {
   const [revertModalVisible, setRevertModalVisible] = useState(false);
   const [emailModalVisible, setEmailModalVisible] = useState(false);
   
+  const [isFinalizing, setIsFinalizing] = useState(false);
   const [selectedRedoItems, setSelectedRedoItems] = useState([]);
   const [revertReason, setRevertReason] = useState("");
   const [isReverting, setIsReverting] = useState(false);
@@ -106,6 +135,121 @@ export default function AuditCaseScreen({ navigation, route }) {
     setEmailModalVisible(true);
   };
 
+  const handleFinalizeReport = async () => {
+    setIsFinalizing(true);
+    const originalFormUrl = caseData.filledForm?.url;
+    const originalPhotosUrl = caseData.photosFolderLink;
+
+    try {
+        if (!originalFormUrl && !originalPhotosUrl) {
+            Alert.alert("Error", "No documents available to merge.");
+            setIsFinalizing(false);
+            return;
+        }
+
+        const mergedPdf = await PDFDocument.create();
+        
+        if (originalFormUrl) {
+            const formBytes = await fetch(originalFormUrl).then(r => r.arrayBuffer());
+            const formPdf = await PDFDocument.load(formBytes);
+            const pages = await mergedPdf.copyPages(formPdf, formPdf.getPageIndices());
+            pages.forEach(p => mergedPdf.addPage(p));
+        }
+
+        if (originalPhotosUrl) {
+            const photoBytes = await fetch(originalPhotosUrl).then(r => r.arrayBuffer());
+            const photoPdf = await PDFDocument.load(photoBytes);
+            const pages = await mergedPdf.copyPages(photoPdf, photoPdf.getPageIndices());
+            pages.forEach(p => mergedPdf.addPage(p));
+        }
+
+        const pdfBytes = await mergedPdf.save();
+        const safeRef = (caseData.matrixRefNo || caseData.RefNo || caseId).replace(/[^a-zA-Z0-9-_]/g, '_');
+        const publicId = `FinalReport_${safeRef}_${Date.now()}`;
+
+        // Direct Cloudinary Upload
+        const formData = new FormData();
+        formData.append("upload_preset", UPLOAD_PRESET);
+        formData.append("public_id", publicId);
+        formData.append("folder", `cases/${safeRef}`);
+
+        if (Platform.OS === 'web') {
+            const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+            formData.append("file", blob, `${publicId}.pdf`);
+        } else {
+            const pdfBase64 = uint8ToBase64Safe(pdfBytes);
+            const fileUri = FileSystem.cacheDirectory + `${publicId}.pdf`;
+            await FileSystem.writeAsStringAsync(fileUri, pdfBase64, { encoding: FileSystem.EncodingType.Base64 });
+            formData.append("file", {
+                uri: fileUri,
+                type: 'application/pdf',
+                name: `${publicId}.pdf`,
+            });
+        }
+
+        console.log(`[FINALIZE] Uploading merged PDF to Cloudinary...`);
+        const uploadResponse = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/upload`, {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!uploadResponse.ok) {
+            const errText = await uploadResponse.text();
+            throw new Error(`Upload failed: ${uploadResponse.status} ${errText}`);
+        }
+        
+        const uploadJson = await uploadResponse.json();
+        const newPdfUrl = uploadJson?.secure_url;
+
+        if (!newPdfUrl) throw new Error('Upload failed: No URL returned from Cloudinary.');
+
+        console.log(`[FINALIZE] Upload successful: ${newPdfUrl}`);
+
+        // --- NEW: Asynchronously delete original files from Cloudinary (fire and forget) ---
+        const deleteResource = (url, resource_type) => {
+            if (!url || url === newPdfUrl) return;
+            fetch(`${SERVER_URL}/cloudinary/destroy-from-url`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url, resource_type }),
+            })
+            .then(res => res.json())
+            .then(data => console.log(`[DELETE] Cleanup for ${url}:`, data.result))
+            .catch(e => console.warn(`[DELETE] Failed to cleanup ${url}:`, e));
+        };
+
+        // Delete original photo PDF and form PDF
+        deleteResource(originalPhotosUrl, 'raw');
+        deleteResource(originalFormUrl, 'raw');
+
+        // Delete individual photos
+        if (caseData.photosFolder) {
+            console.log('[FINALIZE] Deleting original photos from Cloudinary...');
+            const allPhotos = Object.values(caseData.photosFolder).flat();
+            for (const photo of allPhotos) {
+                if (photo.uri && photo.uri.includes('cloudinary')) {
+                    deleteResource(photo.uri, 'image');
+                }
+            }
+        }
+
+        // Update Firebase
+        await firebase.database().ref(`cases/${caseId}`).update({
+            photosFolderLink: newPdfUrl, // This now holds the merged report
+            photosFolder: null, // Clear individual photo links
+            filledForm: null, // Clear the old form link
+            mergedAt: Date.now(),
+        });
+
+        Linking.openURL(newPdfUrl);
+    } catch (e) {
+        console.error("Finalize Report failed:", e);
+        Alert.alert("Error", "Failed to finalize report: " + e.message);
+    } finally {
+        setIsFinalizing(false);
+    }
+  };
+
   const completeCase = async () => {
     try {
         await firebase.database().ref(`cases/${caseId}`).update({
@@ -125,7 +269,7 @@ export default function AuditCaseScreen({ navigation, route }) {
                     collectionId,
                     ID.unique(),
                     {
-                        subject: `Case Approved: ${caseData.matrixRefNo || caseData.RefNo || caseId}`,
+                        subject: `Case Completed: ${caseData.matrixRefNo || caseData.RefNo || caseId}`,
                         recipient: selectedTo.join(", "),
                         RefNo: caseData.matrixRefNo || caseData.RefNo || caseId,
                         caseId: caseId,
@@ -153,7 +297,7 @@ export default function AuditCaseScreen({ navigation, route }) {
     setIsSending(true);
     setEmailModalVisible(false);
 
-    const subject = `Case Approved: ${caseData.matrixRefNo || caseData.RefNo || caseId}`;
+    const subject = `Case Approved: ${caseData.matrixRefNo || caseData.RefNo || caseId || caseData.chekType}}`;
     const safeRef = (caseData.matrixRefNo || caseData.RefNo || caseId).replace(/[^a-zA-Z0-9-_]/g, '_');
 
     if (selectedTo.length === 0) {
@@ -172,7 +316,7 @@ Case Details:
 --------------------
 Reference No: ${caseData.matrixRefNo || caseData.RefNo || caseId}
 Candidate Name: ${caseData.candidateName || 'N/A'}
-Check Type: ${caseData.chkType || 'N/A'}
+Check Type: ${caseData.chekType || 'N/A'}
 City: ${caseData.city || 'N/A'} 
 
 Thank you,
@@ -181,7 +325,7 @@ Spacesolutions Team
 
       // --- WEB HANDLING ---
       if (Platform.OS === 'web') {
-        const hasDownloaded = window.confirm("Did you download both the Report and Form PDFs?");
+        const hasDownloaded = window.confirm("Did you download the Report PDF?");
 
         if (hasDownloaded) {
              // Append links to body for web
@@ -224,6 +368,12 @@ Spacesolutions Team
         return;
       }
 
+      // If form is null, it means the report has been merged.
+      if (!caseData.filledForm?.url && caseData.photosFolderLink) {
+          emailBody = emailBody.replace("find the final report and the submitted verification form attached", "find the complete verification report attached");
+          console.log("📧 Detected merged PDF, updating email body.");
+      }
+
       const attachments = [];
       const downloadToCache = async (url, fileName) => {
         if (!url) return null;
@@ -258,9 +408,12 @@ Spacesolutions Team
 
       console.log("📥 Downloading PDFs for attachment...");
       if (caseData.photosFolderLink) {
-        const uri = await downloadToCache(caseData.photosFolderLink, `CaseReport_${safeRef}.pdf`);
+        // If form is gone, this is the merged report.
+        const filename = !caseData.filledForm?.url ? `FinalReport_${safeRef}.pdf` : `CaseReport_${safeRef}.pdf`;
+        const uri = await downloadToCache(caseData.photosFolderLink, filename);
         if (uri) attachments.push(uri);
       }
+      // This will only run if the report has not been finalized yet.
       if (caseData.filledForm?.url) {
         const uri = await downloadToCache(caseData.filledForm.url, `FilledForm_${safeRef}.pdf`);
         if (uri) attachments.push(uri);
@@ -363,6 +516,58 @@ Spacesolutions Team
     }
   };
 
+  const handleManualUpload = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ["image/*", "application/pdf"],
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled) return;
+
+      const file = result.assets ? result.assets[0] : result;
+      setIsUploadingManual(true);
+
+      const formData = new FormData();
+      formData.append("file", {
+        uri: file.uri,
+        type: file.mimeType || "application/pdf",
+        name: file.name || "manual_upload.pdf",
+      });
+      formData.append("upload_preset", UPLOAD_PRESET);
+      formData.append("folder", `cases/${caseData.matrixRefNo || caseData.RefNo || caseId}`);
+      
+      const isPdf = file.mimeType === "application/pdf" || (file.name && file.name.endsWith(".pdf"));
+      const resourceType = isPdf ? "raw" : "image";
+      formData.append("resource_type", resourceType);
+
+      const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/${resourceType}/upload`;
+
+      const response = await fetch(uploadUrl, {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await response.json();
+      if (data.secure_url) {
+        await firebase.database().ref(`cases/${caseId}`).update({
+          photosFolderLink: data.secure_url,
+          status: "audit",
+          manualUpload: true,
+          completedAt: Date.now()
+        });
+        Alert.alert("Success", "File uploaded. You can now approve and send.");
+      } else {
+        throw new Error(data.error?.message || "Upload failed");
+      }
+    } catch (error) {
+      console.error("Manual Upload Error:", error);
+      Alert.alert("Error", "Failed to upload: " + error.message);
+    } finally {
+      setIsUploadingManual(false);
+    }
+  };
+
   return (
     <LinearGradient
       colors={["#FF0099", "#493240", "#00DBDE"]}
@@ -409,7 +614,7 @@ Spacesolutions Team
                 onPress={() => Linking.openURL(caseData.photosFolderLink)}
               >
                 <Ionicons name="cloud-download-outline" size={20} color="#fff" />
-                <Text style={styles.downloadButtonText}>PDF Report</Text>
+                <Text style={styles.downloadButtonText}>{!caseData.filledForm?.url ? "Combined PDF" : "PDF Report"}</Text>
               </TouchableOpacity>
             )}
 
@@ -425,11 +630,12 @@ Spacesolutions Team
 
             {(caseData.photosFolderLink && caseData.filledForm?.url) && (
               <TouchableOpacity 
-                style={[styles.downloadButton, { backgroundColor: "#00897b", flex: 1 }]}
-                onPress={handleDownloadAll}
+                style={[styles.downloadButton, { backgroundColor: "#6200ea", flex: 1 }]}
+                onPress={handleFinalizeReport}
+                disabled={isFinalizing}
               >
-                <Ionicons name="layers-outline" size={20} color="#fff" />
-                <Text style={styles.downloadButtonText}>Both</Text>
+                {isFinalizing ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="git-merge-outline" size={20} color="#fff" />}
+                <Text style={styles.downloadButtonText}>{isFinalizing ? "Merging..." : "Combined PDF"}</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -443,6 +649,17 @@ Spacesolutions Team
               <Text style={styles.actionText}>Fail Audit</Text>
             </TouchableOpacity>
           </View>
+
+          {(manualMode || !caseData.photosFolderLink) && (
+            <TouchableOpacity 
+              style={[styles.downloadButton, { backgroundColor: "#ff9800", marginTop: 15 }]}
+              onPress={handleManualUpload}
+              disabled={isUploadingManual}
+            >
+              {isUploadingManual ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="add-circle-outline" size={24} color="#fff" />}
+              <Text style={styles.downloadButtonText}>{isUploadingManual ? "Uploading..." : "Manual Upload (Offline Case)"}</Text>
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity 
             style={[styles.downloadButton, { backgroundColor: "#FF9800", marginTop: 15 }]}

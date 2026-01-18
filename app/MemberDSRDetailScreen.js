@@ -3,6 +3,7 @@ import { Client, Databases, Query } from "appwrite";
 import { LinearGradient } from "expo-linear-gradient"; // Import LinearGradient
 import { useEffect, useState } from "react"; // Import useEffect and useState
 import { ActivityIndicator, Alert, FlatList, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native"; // Import missing components
+import firebase from "../firebase";
 // Appwrite Configuration
 const APPWRITE_ENDPOINT = "https://tor.cloud.appwrite.io/v1";
 const APPWRITE_PROJECT_ID = "6921d1250036b4841242";
@@ -18,6 +19,7 @@ export default function MemberDSRDetailScreen({ navigation, route }) {
   const [selectedReport, setSelectedReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [modalVisible, setModalVisible] = useState(false);
+  const [liveStats, setLiveStats] = useState(null);
 
   useEffect(() => {
     if (!memberId) return;
@@ -46,6 +48,41 @@ export default function MemberDSRDetailScreen({ navigation, route }) {
     fetchDSRs();
   }, [memberId]);
 
+  // Fetch Live Automatic DSR from Firebase
+  useEffect(() => {
+    if (!memberId) return;
+    const casesRef = firebase.database().ref("cases");
+    const query = casesRef.orderByChild("assignedTo").equalTo(memberId);
+
+    const listener = query.on("value", (snapshot) => {
+        const data = snapshot.val() || {};
+        const allCases = Object.keys(data).map(key => ({ id: key, ...data[key] }));
+        
+        const today = new Date();
+        today.setHours(0,0,0,0);
+
+        const assignedToday = allCases.filter(c => c.assignedAt && new Date(c.assignedAt) >= today).length;
+        
+        const completedTodayCases = allCases.filter(c => {
+             const isCompleted = c.status === 'audit' || c.status === 'completed';
+             return isCompleted && c.completedAt && new Date(c.completedAt) >= today;
+        });
+
+        const completedTotal = allCases.filter(c => c.status === 'audit' || c.status === 'completed').length;
+        const remaining = allCases.filter(c => ['assigned', 'open', 'reverted'].includes(c.status)).length;
+
+        setLiveStats({
+            assignedToday,
+            completedToday: completedTodayCases.length,
+            completedTotal,
+            remaining,
+            totalCases: allCases.length,
+            completedCasesList: completedTodayCases.map(c => c.matrixRefNo || c.RefNo || c.id)
+        });
+    });
+    return () => query.off("value", listener);
+  }, [memberId]);
+
   const handleTally = () => {
     const total = reports.reduce((sum, report) => sum + (report.completedCount || 0), 0);
     Alert.alert("Member Tally", `Total cases completed till now: ${total}`);
@@ -67,8 +104,39 @@ export default function MemberDSRDetailScreen({ navigation, route }) {
         <View style={styles.center}>
           <ActivityIndicator size="large" color="#fff" />
         </View>
-      ) : selectedReport ? (
+      ) : (
         <ScrollView contentContainerStyle={styles.content}>
+          {/* Live Automatic DSR Card */}
+          {liveStats && (
+            <View style={[styles.card, { borderColor: '#00e676', borderWidth: 1, marginBottom: 20 }]}>
+                <Text style={[styles.date, { color: '#00e676', borderBottomColor: '#00e676' }]}>Live Automatic DSR (Today)</Text>
+                <View style={styles.row}>
+                    <Text style={styles.label}>Assigned Today:</Text>
+                    <Text style={styles.value}>{liveStats.assignedToday}</Text>
+                </View>
+                <View style={styles.row}>
+                    <Text style={styles.label}>Completed Today:</Text>
+                    <Text style={styles.value}>{liveStats.completedToday}</Text>
+                </View>
+                <View style={styles.row}>
+                    <Text style={styles.label}>Pending:</Text>
+                    <Text style={styles.value}>{liveStats.remaining}</Text>
+                </View>
+                 <View style={styles.row}>
+                    <Text style={styles.label}>Total Completed:</Text>
+                    <Text style={styles.value}>{liveStats.completedTotal}</Text>
+                </View>
+                {liveStats.completedCasesList && liveStats.completedCasesList.length > 0 && (
+                    <View style={{ marginTop: 10 }}>
+                        <Text style={[styles.casesLabel, {color: '#00e676', fontSize: 14}]}>Live Completed Cases:</Text>
+                        <Text style={styles.casesText}>{liveStats.completedCasesList.join(", ")}</Text>
+                    </View>
+                )}
+            </View>
+          )}
+
+          {reports.length > 0 ? (
+          <>
           <TouchableOpacity style={styles.dateButton} onPress={() => setModalVisible(true)}>
             <Ionicons name="calendar-outline" size={24} color="#fff" />
             <Text style={styles.dateButtonText}>
@@ -77,6 +145,7 @@ export default function MemberDSRDetailScreen({ navigation, route }) {
           </TouchableOpacity>
 
           {/* DSR Card */}
+          {selectedReport && (
           <View style={styles.card}>
             <Text style={styles.date}>{new Date(selectedReport.date).toDateString()}</Text>
             
@@ -125,11 +194,12 @@ export default function MemberDSRDetailScreen({ navigation, route }) {
             
             <Text style={styles.timestamp}>Submitted: {new Date(selectedReport.submittedAt).toLocaleTimeString()}</Text>
           </View>
+          )}
+          </>
+          ) : (
+            <Text style={styles.emptyText}>No manual DSR reports submitted.</Text>
+          )}
         </ScrollView>
-      ) : (
-        <View style={styles.center}>
-          <Text style={styles.emptyText}>No DSR reports found for this member.</Text>
-        </View>
       )}
 
       {/* Date Selection Modal */}

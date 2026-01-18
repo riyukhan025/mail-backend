@@ -8,7 +8,6 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { AuthContext } from "./app/AuthContext";
-import firebase from "./firebase";
 
 /* ---------------- Screens ---------------- */
 import AdminEmailScreen from "./app/AdminEmailScreen";
@@ -158,15 +157,21 @@ function MemberStack() {
 function AppContent() {
   const [dbUser, setDbUser] = useState(null);
   const [ready, setReady] = useState(false);
+  const [language, setLanguage] = useState("en");
 
   useEffect(() => {
     const restoreUser = async () => {
       try {
-        // Force logout on app start: clear cache and sign out
-        await AsyncStorage.removeItem("dbUser");
-        await firebase.auth().signOut();
+        const savedUser = await AsyncStorage.getItem("dbUser");
+        if (savedUser) {
+          setDbUser(JSON.parse(savedUser));
+        }
+        const savedLang = await AsyncStorage.getItem("appLanguage");
+        if (savedLang) {
+          setLanguage(savedLang);
+        }
       } catch (e) {
-        console.error("Failed to clear user session", e);
+        console.error("Failed to restore user session", e);
       } finally {
         setReady(true);
       }
@@ -178,7 +183,12 @@ function AppContent() {
     user: dbUser,
     login: (userData) => setDbUser(userData),
     logout: () => setDbUser(null),
-  }), [dbUser]);
+    language,
+    setLanguage: async (lang) => {
+      setLanguage(lang);
+      await AsyncStorage.setItem("appLanguage", lang);
+    },
+  }), [dbUser, language]);
 
   if (!ready) return <SplashScreen />;
 

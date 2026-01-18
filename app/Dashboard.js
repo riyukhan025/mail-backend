@@ -5,32 +5,67 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useContext, useEffect, useRef, useState } from "react";
 import {
   Alert,
-  Dimensions,
   FlatList,
   Image,
   Linking,
   Modal,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  View,
+  View
 } from "react-native";
 import firebase from "../firebase";
 import { AuthContext } from "./AuthContext";
 
+const TRANSLATIONS = {
+  en: {
+    goodMorning: "Good Morning",
+    goodAfternoon: "Good Afternoon",
+    goodEvening: "Good Evening",
+    total: "Total",
+    completed: "Completed",
+    pending: "Pending",
+    filter: "Filter",
+    viewDetails: "View Details",
+    highPriority: "HIGH PRIORITY",
+    auditFail: "AUDIT FAIL",
+    changeLanguage: "Change Language (தமிழ்)",
+    signOut: "Sign Out",
+    chatAdmin: "Chat with Admin",
+  },
+  ta: {
+    goodMorning: "காலை வணக்கம்",
+    goodAfternoon: "மதிய வணக்கம்",
+    goodEvening: "மாலை வணக்கம்",
+    total: "மொத்தம்",
+    completed: "முடிந்தது",
+    pending: "நிலுவையில்",
+    filter: "வடிகட்டி",
+    viewDetails: "விவரங்கள்",
+    highPriority: "அவசரம்",
+    auditFail: "தணிக்கை தோல்வி",
+    changeLanguage: "Change Language (English)",
+    signOut: "வெளியேறு",
+    chatAdmin: "நிர்வாகியுடன் பேச",
+  }
+};
+
 export default function Dashboard({ navigation }) {
-  const { user, logout } = useContext(AuthContext);
+  const { user, logout, language, setLanguage } = useContext(AuthContext);
   const [cases, setCases] = useState([]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   // Filter states
   const [filterDropdownOpen, setFilterDropdownOpen] = useState(false);
   const [activeFilters, setActiveFilters] = useState([]);
   const [sortField, setSortField] = useState("assignedAt");
   const [sortAsc, setSortAsc] = useState(false);
+  const [expandedFilter, setExpandedFilter] = useState(null);
 
   const [loading, setLoading] = useState(true);
 
@@ -47,6 +82,8 @@ export default function Dashboard({ navigation }) {
   const isFirstLoad = useRef(true);
 
   const [bribeWarningVisible, setBribeWarningVisible] = useState(false);
+
+  const t = (key) => TRANSLATIONS[language]?.[key] || TRANSLATIONS['en'][key] || key;
 
   useEffect(() => {
     const checkDailyWarning = async () => {
@@ -187,8 +224,18 @@ export default function Dashboard({ navigation }) {
 
   const filteredCases = cases.filter((c) => {
     const isClosed = c.status === 'completed' || c.status === 'closed';
-    const explicitShowClosed = activeFilters.some(f => f.field === 'status' && f.value === 'closed');
-    if (isClosed && !explicitShowClosed) return false;
+    
+    const showClosed = activeFilters.some(f => f.field === 'status' && f.value === 'closed');
+    const showCompleted = activeFilters.some(f => f.field === 'completedAt');
+    
+    // Visibility Logic:
+    // If case is closed, hide it UNLESS 'Closed Cases' OR 'Completed' filter is active.
+    if (isClosed) {
+        if (!showClosed && !showCompleted) return false;
+    } else {
+        // If case is open, hide it IF 'Closed Cases' filter is active (exclusive view).
+        if (showClosed) return false;
+    }
 
     if (activeFilters.length === 0) return true;
     return activeFilters.every((f) => {
@@ -196,7 +243,13 @@ export default function Dashboard({ navigation }) {
         case "status":
           return computeMemberStatus(c) === f.value;
         case "client":
-          return (c.client === f.value || c.company === f.value);
+          const cVal = (c.client || c.company || "").toLowerCase();
+          const fVal = f.value.toLowerCase();
+          return cVal.includes(fVal);
+        case "highPriority":
+          return !!c.highPriority;
+        case "completedAt":
+          return !!c.completedAt;
         default:
           return true;
       }
@@ -256,38 +309,45 @@ export default function Dashboard({ navigation }) {
   if (loading) return null;
 
   // Extract unique clients for filter
-  const uniqueClients = [...new Set(cases.map(c => c.client || c.company).filter(Boolean))];
+  const uniqueClients = [...new Set([
+    ...cases.map(c => (c.client || c.company || "").toString().trim()).filter(Boolean),
+    "Matrix", "DHI", "CES"
+  ])].sort();
 
   const filterOptions = [
     { label: "Recent", field: "assignedAt" },
-    { label: "Priority", field: "highPriority" },
+    { label: "High Priority", field: "highPriority" },
     { label: "Completed", field: "completedAt" },
-    { label: "Closed/Open", field: "status" },
+    { label: "Open Cases", field: "status", value: "open" },
+    { label: "Closed Cases", field: "status", value: "closed" },
     { label: "Pincode", field: "pincode" },
-    // Add clients dynamically
-    ...uniqueClients.map(c => ({ label: `Client: ${c}`, field: "client", value: c }))
+    { label: "Client", field: "client_group" }
   ];
 
   const toggleFilter = (option) => {
+    if (option.field === 'client_group') {
+      setExpandedFilter(prev => prev === 'client_group' ? null : 'client_group');
+      return;
+    }
+
     const exists = activeFilters.find((f) => f.field === option.field && f.value === option.value);
     if (exists) {
-      setActiveFilters(activeFilters.filter((f) => !(f.field === option.field && f.value === option.value)));
+      setActiveFilters(activeFilters.filter((f) => f !== exists));
     } else {
-      if (option.field === "status") {
-        const current = activeFilters.find((f) => f.field === "status");
-        const nextValue = current?.value === "open" ? "closed" : "open";
-        const others = activeFilters.filter(f => f.field !== "status");
-        setActiveFilters([...others, { ...option, value: nextValue, label: "Closed/Open" }]);
-      } else if (option.field === "client") {
-        // Remove other client filters to allow switching between clients easily
-        const others = activeFilters.filter(f => f.field !== "client");
-        setActiveFilters([...others, { ...option }]);
-      } else {
-        setActiveFilters([...activeFilters, { ...option }]);
+      // Remove conflicting filters
+      let newFilters = [...activeFilters];
+      
+      if (option.field === 'status') {
+         newFilters = newFilters.filter(f => f.field !== 'status');
       }
+      if (option.field === 'client') {
+         newFilters = newFilters.filter(f => f.field !== 'client');
+      }
+
+      setActiveFilters([...newFilters, option]);
     }
     setFilterDropdownOpen(false);
-    if (option.field !== "client") {
+    if (['assignedAt', 'pincode'].includes(option.field)) {
       setSortField(option.field);
       setSortAsc(true);
     }
@@ -303,9 +363,9 @@ export default function Dashboard({ navigation }) {
 
   const getGreeting = () => {
     const hours = new Date().getHours();
-    if (hours < 12) return "Good Morning";
-    if (hours < 16) return "Good Afternoon";
-    return "Good Evening";
+    if (hours < 12) return t("goodMorning");
+    if (hours < 16) return t("goodAfternoon");
+    return t("goodEvening");
   };
 
   const computeStatusText = (caseItem) => {
@@ -365,7 +425,7 @@ export default function Dashboard({ navigation }) {
       {/* Maintenance Banner */}
       {maintenanceMode && (
         <View style={styles.maintenanceBanner}>
-          <Text style={styles.maintenanceText}>⚠️ MAINTENANCE MODE: ACTIONS TRACKED</Text>
+          <Text style={styles.maintenanceText}>⚠️ MAINTENANCE MODE: ACTIONS ALL ARE TRACKED</Text>
         </View>
       )}
 
@@ -415,7 +475,25 @@ export default function Dashboard({ navigation }) {
       {/* Hamburger Menu */}
       {menuOpen && (
         <View style={styles.menuOverlay}>
-          <View style={styles.menu}>
+          <TouchableOpacity 
+            style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 }} 
+            onPress={() => setMenuOpen(false)} 
+            activeOpacity={1}
+          />
+          <View style={styles.menuContainer}>
+            {/* Modern Header */}
+            <LinearGradient colors={["#4e0360", "#c471ed"]} style={styles.menuHeader}>
+                <View style={styles.menuUserAvatar}>
+                    <Text style={styles.menuUserInitials}>{(user?.name || user?.email || "U").charAt(0).toUpperCase()}</Text>
+                </View>
+                <View style={{flex: 1}}>
+                    <Text style={styles.menuUserName} numberOfLines={1}>{user?.name || "User"}</Text>
+                    <Text style={styles.menuUserEmail} numberOfLines={1}>{user?.email}</Text>
+                </View>
+            </LinearGradient>
+
+            {/* Scrollable Menu Items */}
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingVertical: 10 }}>
             {[
               {
                 label: "Open Cases",
@@ -426,6 +504,7 @@ export default function Dashboard({ navigation }) {
                   setSortField("assignedAt");
                   setSortAsc(false);
                 },
+                icon: "briefcase-outline"
               },
               {
                 label: "Closed Cases",
@@ -436,6 +515,7 @@ export default function Dashboard({ navigation }) {
                   setSortField("assignedAt");
                   setSortAsc(false);
                 },
+                icon: "checkmark-done-circle-outline"
               },
               {
                 label: "Dashboard",
@@ -444,49 +524,78 @@ export default function Dashboard({ navigation }) {
                   setSortField("assignedAt");
                   setSortAsc(false);
                 },
+                icon: "grid-outline"
               },
               {
                 label: "Plan Your Day",
                 action: () => navigation.navigate("PlanYourDayScreen"),
+                icon: "calendar-outline"
               },
               {
                 label: "Day-wise Tracker",
                 action: () => navigation.navigate("DaywiseTrackerScreen"),
+                icon: "stats-chart-outline"
               },
               {
                 label: "DSR",
                 action: () => navigation.navigate("DSRScreen"),
+                icon: "document-text-outline"
               },
               {
                 label: "All Cases",
                 action: () => navigation.navigate("AllCasesScreen"),
+                icon: "list-outline"
               },
               {
                 label: "Raise Ticket",
                 action: () => navigation.navigate("RaiseTicketScreen"),
+                icon: "alert-circle-outline"
               },
               {
                 label: "My Tickets",
                 action: () => navigation.navigate("MyTicketsScreen"),
+                icon: "ticket-outline"
               },
-            ].map((item) => (
+            ].map((item, index) => (
               <TouchableOpacity
-                key={item.label}
+                key={index}
                 style={styles.menuItem}
                 onPress={() => {
                   item.action();
                   setMenuOpen(false);
                 }}
               >
+                <Ionicons name={item.icon} size={22} color="#555" style={{ marginRight: 15 }} />
                 <Text style={styles.menuText}>{item.label}</Text>
               </TouchableOpacity>
             ))}
-            <TouchableOpacity
-              style={styles.menuItem}
-              onPress={() => setMenuOpen(false)}
-            >
-              <Text style={[styles.menuText, { color: "red" }]}>Close Menu</Text>
-            </TouchableOpacity>
+            </ScrollView>
+
+            {/* Settings Footer */}
+            <View style={styles.settingsContainer}>
+              <TouchableOpacity 
+                style={styles.settingsButton} 
+                onPress={() => setShowSettings(!showSettings)}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Ionicons name="settings-outline" size={22} color="#333" />
+                    <Text style={styles.settingsLabel}>Settings</Text>
+                </View>
+                <Ionicons name={showSettings ? "chevron-down" : "chevron-up"} size={20} color="#666" />
+              </TouchableOpacity>
+              {showSettings && (
+                <View style={styles.settingsOptions}>
+                  <TouchableOpacity style={styles.settingItem} onPress={() => setLanguage(language === 'en' ? 'ta' : 'en')}>
+                    <Ionicons name="language-outline" size={20} color="#4e0360" />
+                    <Text style={styles.settingText}>{language === 'en' ? 'Tamil' : 'English'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.settingItem} onPress={() => { setMenuOpen(false); navigation.navigate("Updatescreen"); }}>
+                    <Ionicons name="person-outline" size={20} color="#4e0360" />
+                    <Text style={styles.settingText}>Account</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
           </View>
         </View>
       )}
@@ -516,49 +625,109 @@ export default function Dashboard({ navigation }) {
         <BlurView intensity={50} tint="light" style={styles.statsBlur}>
           <View style={styles.statItem}>
             <Text style={styles.statValue}>{totalCasesCount}</Text>
-            <Text style={styles.statLabel}>Total</Text>
+            <Text style={styles.statLabel}>{t("total")}</Text>
           </View>
           <View style={styles.statItem}>
             <Text style={[styles.statValue, { color: 'green' }]}>{completedCasesCount}</Text>
-            <Text style={styles.statLabel}>Completed</Text>
+            <Text style={styles.statLabel}>{t("completed")}</Text>
           </View>
           <View style={styles.statItem}>
             <Text style={[styles.statValue, { color: '#d35400' }]}>{pendingCasesCount}</Text>
-            <Text style={styles.statLabel}>Pending</Text>
+            <Text style={styles.statLabel}>{t("pending")}</Text>
           </View>
         </BlurView>
       </View>
 
       {/* Filter Bar */}
-      <View style={styles.filterBar}>
+      <View style={[styles.filterBar, { zIndex: 100 }]}>
         <TouchableOpacity
           style={styles.filterButton}
           onPress={() => setFilterDropdownOpen((prev) => !prev)}
         >
-          <Ionicons name="funnel" size={20} color="#fff" />
-          <Text style={{ color: "#fff", marginLeft: 5 }}>Filter</Text>
+          <LinearGradient
+            colors={["#6a11cb", "#2575fc"]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.filterGradient}
+          >
+            <Ionicons name="filter" size={16} color="#fff" />
+            <Text style={styles.filterButtonText}>{t("filter")}</Text>
+            <Ionicons name={filterDropdownOpen ? "chevron-up" : "chevron-down"} size={16} color="#fff" style={{ marginLeft: 4 }} />
+          </LinearGradient>
         </TouchableOpacity>
 
         {filterDropdownOpen && (
-          <View style={styles.filterDropdown}>
-            {filterOptions.map((f) => (
-              <TouchableOpacity
-                key={f.label}
-                style={styles.filterOption}
-                onPress={() => toggleFilter(f)}
-              >
-                <Text style={{ color: "#333" }}>{f.label}</Text>
-              </TouchableOpacity>
-            ))}
+          <View style={{ position: 'absolute', top: 45, left: 0, flexDirection: 'row', zIndex: 200 }}>
+            {/* Main Dropdown */}
+            <View style={[styles.filterDropdown, { position: 'relative', top: 0, left: 0 }]}>
+              <Text style={styles.filterTitle}>Sort & Filter</Text>
+              <ScrollView style={{ maxHeight: 250 }} nestedScrollEnabled={true}>
+                {filterOptions.map((f) => (
+                  <TouchableOpacity
+                    key={f.label}
+                    style={[
+                        styles.filterOption, 
+                        activeFilters.some(af => af.field === f.field && af.value === f.value) && styles.filterOptionActive,
+                        f.field === 'client_group' && expandedFilter === 'client_group' && { backgroundColor: '#f0f0f0' }
+                    ]}
+                    onPress={() => toggleFilter(f)}
+                  >
+                    <Text style={[
+                        styles.filterOptionText,
+                        activeFilters.some(af => af.field === f.field && af.value === f.value) && styles.filterOptionTextActive
+                    ]}>{f.label}</Text>
+                    
+                    {f.field === 'client_group' ? (
+                       <Ionicons name="chevron-forward" size={16} color="#555" />
+                    ) : (
+                       activeFilters.some(af => af.field === f.field && af.value === f.value) && (
+                          <Ionicons name="checkmark" size={16} color="#fff" />
+                       )
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+
+            {/* Client Sub-menu (Opens to the Right) */}
+            {expandedFilter === 'client_group' && (
+              <View style={[styles.filterDropdown, { position: 'relative', top: 0, left: 10, minWidth: 200 }]}>
+                <Text style={styles.filterTitle}>Select Client</Text>
+                <ScrollView style={{ maxHeight: 250 }} nestedScrollEnabled={true}>
+                  {uniqueClients.length > 0 ? (
+                    uniqueClients.map(c => (
+                      <TouchableOpacity
+                        key={c}
+                        style={[
+                            styles.filterOption,
+                            activeFilters.some(af => af.field === 'client' && af.value === c) && styles.filterOptionActive
+                        ]}
+                        onPress={() => toggleFilter({ label: `Client: ${c}`, field: "client", value: c })}
+                      >
+                        <Text style={[
+                            styles.filterOptionText,
+                            activeFilters.some(af => af.field === 'client' && af.value === c) && styles.filterOptionTextActive
+                        ]}>{c}</Text>
+                        {activeFilters.some(af => af.field === 'client' && af.value === c) && (
+                            <Ionicons name="checkmark" size={16} color="#fff" />
+                        )}
+                      </TouchableOpacity>
+                    ))
+                  ) : (
+                    <Text style={{ padding: 15, color: '#888', fontStyle: 'italic' }}>No clients found</Text>
+                  )}
+                </ScrollView>
+              </View>
+            )}
           </View>
         )}
 
-        <View style={styles.activeFilters}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }} contentContainerStyle={styles.activeFilters}>
           {activeFilters.map((f) => (
-            <View key={f.field} style={styles.filterTag}>
-              <Text style={{ color: "#fff", fontSize: 12 }}>{f.label}</Text>
+            <View key={f.field + f.value} style={styles.filterTag}>
+              <Text style={{ color: "#fff", fontSize: 12, marginRight: 5 }}>{f.label}</Text>
               <TouchableOpacity onPress={() => removeActiveFilter(f.field)}>
-                <Ionicons name="close-circle" size={14} color="#fff" />
+                <Ionicons name="close-circle" size={16} color="#fff" />
               </TouchableOpacity>
             </View>
           ))}
@@ -566,12 +735,12 @@ export default function Dashboard({ navigation }) {
             <TouchableOpacity onPress={toggleSortOrder} style={styles.sortArrow}>
               <Ionicons
                 name={sortAsc ? "arrow-up" : "arrow-down"}
-                size={16}
+                size={18}
                 color="#fff"
               />
             </TouchableOpacity>
           )}
-        </View>
+        </ScrollView>
       </View>
 
       {/* Cases List */}
@@ -599,12 +768,12 @@ export default function Dashboard({ navigation }) {
                 <View style={{ position: 'absolute', top: 0, right: 0, alignItems: 'flex-end' }}>
                     {item.highPriority && (
                       <View style={[styles.priorityBadge, { marginBottom: 4 }]}>
-                        <Text style={styles.priorityText}>HIGH PRIORITY</Text>
+                        <Text style={styles.priorityText}>{t("highPriority")}</Text>
                       </View>
                     )}
                     {(item.auditFeedback || (item.photosToRedo && item.photosToRedo.length > 0)) && item.status === 'assigned' && (
                         <View style={[styles.auditFailBadge, { marginLeft: 0 }]}>
-                          <Text style={styles.auditFailText}>AUDIT FAIL</Text>
+                          <Text style={styles.auditFailText}>{t("auditFail")}</Text>
                         </View>
                     )}
                 </View>
@@ -644,7 +813,7 @@ export default function Dashboard({ navigation }) {
                     navigation.navigate("CaseDetail", { caseId: item.id, user })
                   }
                 >
-                  <Text style={styles.openButtonText}>View Details</Text>
+                  <Text style={styles.openButtonText}>{t("viewDetails")}</Text>
                   <Ionicons name="arrow-forward" size={16} color="#fff" />
                 </TouchableOpacity>
 
@@ -824,13 +993,13 @@ export default function Dashboard({ navigation }) {
             logout();
           }}
         >
-          <Text style={{ color: "white" }}>Sign Out</Text>
+          <Text style={{ color: "white" }}>{t("signOut")}</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={{ marginTop: 10 }}
           onPress={() => navigation.navigate("MemberChats")}
         >
-          <Text style={{ color: "#fff" }}>Chat with Admin</Text>
+          <Text style={{ color: "#fff" }}>{t("chatAdmin")}</Text>
         </TouchableOpacity>
       </View>
     </LinearGradient>
@@ -845,19 +1014,24 @@ const styles = StyleSheet.create({
   betaBadge: { position: 'absolute', top: -5, right: -5, backgroundColor: '#ff9800', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 },
   betaText: { fontSize: 8, fontWeight: 'bold', color: '#000' },
   profilePhoto: { marginLeft: 10, borderRadius: 20, overflow: "hidden" },
-  profileMenu: { position: "absolute", top: 60, right: 20, backgroundColor: "#fff", padding: 15, borderRadius: 8, shadowColor: "#000", shadowOpacity: 0.2, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4, elevation: 5, zIndex: 100 },
+  profileMenu: { position: "absolute", top: 60, right: 20, backgroundColor: "#fff", padding: 15, borderRadius: 8, shadowColor: "#000", shadowOpacity: 0.2, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4, elevation: 5, zIndex: 1100 },
   fullScreenTouchable: {
     position: "absolute",
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    zIndex: 99,
+    zIndex: 1099,
   },
-  menuOverlay: { position: "absolute", top: 0, left: 0, bottom: 0, right: 0, backgroundColor: "rgba(0,0,0,0.5)", zIndex: 90 },
-  menu: { width: "70%", backgroundColor: "#fff", paddingVertical: 50, paddingHorizontal: 20, height: Dimensions.get("window").height },
-  menuItem: { paddingVertical: 15, borderBottomWidth: 1, borderColor: "#eee" },
-  menuText: { fontSize: 18, fontWeight: "bold" },
+  menuOverlay: { position: "absolute", top: 0, left: 0, bottom: 0, right: 0, backgroundColor: "rgba(0,0,0,0.5)", zIndex: 1200 },
+  menuContainer: { width: "75%", backgroundColor: "#fff", height: "100%", elevation: 10, shadowColor: "#000", shadowOffset: { width: 2, height: 0 }, shadowOpacity: 0.5, shadowRadius: 5 },
+  menuHeader: { padding: 20, paddingTop: 50, flexDirection: "row", alignItems: "center" },
+  menuUserAvatar: { width: 50, height: 50, borderRadius: 25, backgroundColor: "#fff", justifyContent: "center", alignItems: "center", marginRight: 15 },
+  menuUserInitials: { fontSize: 20, fontWeight: "bold", color: "#4e0360" },
+  menuUserName: { color: "#fff", fontSize: 18, fontWeight: "bold" },
+  menuUserEmail: { color: "rgba(255,255,255,0.8)", fontSize: 12 },
+  menuItem: { flexDirection: "row", alignItems: "center", paddingVertical: 15, paddingHorizontal: 20 },
+  menuText: { fontSize: 16, color: "#333", fontWeight: "500" },
   caseCard: {
     backgroundColor: "#fff",
     borderRadius: 16,
@@ -912,13 +1086,19 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   revertButton: { backgroundColor: "#FF3B30", padding: 10, borderRadius: 6, alignItems: "center", flex: 1 },
-  filterBar: { flexDirection: "row", alignItems: "center", marginBottom: 10, flexWrap: "wrap" },
-  filterButton: { flexDirection: "row", alignItems: "center", backgroundColor: "rgba(0,0,0,0.3)", padding: 6, borderRadius: 6 },
-  filterDropdown: { position: "absolute", top: 40, backgroundColor: "#fff", borderRadius: 8, padding: 10, zIndex: 50, shadowColor: "#000", shadowOpacity: 0.2, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4, elevation: 5 },
-  filterOption: { paddingVertical: 8, paddingHorizontal: 10 },
-  activeFilters: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", marginLeft: 10 },
-  filterTag: { flexDirection: "row", alignItems: "center", backgroundColor: "#6a11cb", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, marginRight: 5, marginBottom: 5 },
-  sortArrow: { marginLeft: 5 },
+  filterBar: { flexDirection: "row", alignItems: "center", marginBottom: 15, zIndex: 100 },
+  filterButton: { borderRadius: 20, overflow: 'hidden', marginRight: 10, elevation: 5, shadowColor: '#000', shadowOffset: {width:0, height:2}, shadowOpacity:0.2, shadowRadius:3 },
+  filterGradient: { flexDirection: "row", alignItems: "center", paddingVertical: 8, paddingHorizontal: 15 },
+  filterButtonText: { color: "#fff", marginLeft: 6, fontWeight: "600", fontSize: 14 },
+  filterDropdown: { position: "absolute", top: 45, left: 0, backgroundColor: "#fff", borderRadius: 12, padding: 5, zIndex: 200, elevation: 10, shadowColor: "#000", shadowOpacity: 0.3, shadowOffset: { width: 0, height: 4 }, shadowRadius: 8, minWidth: 180 },
+  filterTitle: { fontSize: 12, fontWeight: 'bold', color: '#888', margin: 10, textTransform: 'uppercase' },
+  filterOption: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, paddingHorizontal: 15, borderRadius: 8 },
+  filterOptionActive: { backgroundColor: '#6a11cb' },
+  filterOptionText: { color: "#333", fontSize: 14, fontWeight: '500' },
+  filterOptionTextActive: { color: "#fff" },
+  activeFilters: { flexDirection: "row", alignItems: "center", paddingRight: 20 },
+  filterTag: { flexDirection: "row", alignItems: "center", backgroundColor: "rgba(255,255,255,0.2)", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 15, marginRight: 8, borderWidth: 1, borderColor: "rgba(255,255,255,0.3)" },
+  sortArrow: { marginLeft: 5, padding: 5 },
   modalOverlay: { position: "absolute", top: 0, left: 0, bottom: 0, right: 0, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center", zIndex: 200 },
   modalBox: { width: "80%", backgroundColor: "#fff", padding: 20, borderRadius: 10 },
   reasonInput: { height: 80, borderColor: "#ccc", borderWidth: 1, borderRadius: 6, padding: 10, textAlignVertical: "top" },
@@ -1004,4 +1184,10 @@ const styles = StyleSheet.create({
   betaMetric: { alignItems: "center" },
   betaMetricValue: { color: "#00e676", fontSize: 20, fontWeight: "bold" },
   betaMetricLabel: { color: "#ddd", fontSize: 10 },
+  settingsContainer: { borderTopWidth: 1, borderTopColor: "#eee", padding: 15, backgroundColor: "#f9f9f9" },
+  settingsButton: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 5 },
+  settingsLabel: { fontSize: 16, fontWeight: "bold", marginLeft: 10, color: "#333" },
+  settingsOptions: { marginTop: 10, paddingLeft: 10 },
+  settingItem: { flexDirection: "row", alignItems: "center", paddingVertical: 10 },
+  settingText: { fontSize: 14, marginLeft: 10, color: "#4e0360" },
 });

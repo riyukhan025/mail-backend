@@ -57,13 +57,18 @@ if (!global.isConsolePatched) {
   const originalConsole = { log: console.log, info: console.info, warn: console.warn, error: console.error, debug: console.debug };
   ["log", "info", "warn", "error", "debug"].forEach((level) => {
     console[level] = (...args) => {
-      if (originalConsole[level]) originalConsole[level](...args);
       const message = args
         .map((a) => {
           try { return typeof a === "object" ? JSON.stringify(a) : String(a); } 
           catch (e) { return "[Circular]"; }
         })
         .join(" ");
+
+      // Filter out noisy Appwrite Realtime logs
+      if (message.includes("Realtime got disconnected") || message.includes("Reconnect will be attempted")) return;
+
+      if (originalConsole[level]) originalConsole[level](...args);
+
       LOG_BUFFER.unshift({
         id: Date.now().toString() + Math.random(),
         timestamp: new Date().toISOString(),

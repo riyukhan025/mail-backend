@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Picker } from "@react-native-picker/picker";
+import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import { useEffect, useState } from "react";
 import { Alert, FlatList, Modal, StyleSheet, Text, TouchableOpacity, View } from "react-native";
@@ -25,6 +26,10 @@ export default function RevertedCasesScreen({ navigation }) {
     const membersRef = firebase.database().ref("users");
     const membersListener = membersRef.on("value", (snapshot) => {
         const data = snapshot.val() || {};
+        const list = Object.keys(data)
+          .map((key) => ({ id: key, ...data[key] }))
+          .filter(m => m.role !== 'admin' && m.role !== 'dev');
+        setMembers(list);
     });
 
     return () => {
@@ -62,7 +67,7 @@ export default function RevertedCasesScreen({ navigation }) {
   };
 
   const renderItem = ({ item }) => (
-    <View style={styles.card}>
+    <BlurView intensity={40} tint="dark" style={styles.card}>
       <Text style={styles.title}>{item.matrixRefNo || item.id}</Text>
       <Text style={styles.text}>Candidate: {item.candidateName || "N/A"}</Text>
       <TouchableOpacity
@@ -74,11 +79,11 @@ export default function RevertedCasesScreen({ navigation }) {
       >
         <Text style={styles.buttonText}>Assign</Text>
       </TouchableOpacity>
-    </View>
+    </BlurView>
   );
 
   return (
-    <LinearGradient colors={["#4e0360", "#1a1a1a"]} style={styles.container}>
+    <LinearGradient colors={["#0f2027", "#203a43", "#2c5364"]} style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
@@ -140,7 +145,15 @@ const styles = StyleSheet.create({
   backButton: { marginRight: 15 },
   headerTitle: { fontSize: 20, fontWeight: "bold", color: "#fff" },
   list: { padding: 20 },
-  card: { backgroundColor: "rgba(255,255,255,0.1)", padding: 15, borderRadius: 10, marginBottom: 15 },
+  card: { 
+    backgroundColor: "rgba(0,0,0,0.3)", 
+    padding: 15, 
+    borderRadius: 15, 
+    marginBottom: 15,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)"
+  },
   title: { fontSize: 18, fontWeight: "bold", color: "#fff", marginBottom: 5 },
   text: { color: "#ccc", marginBottom: 5 },
   button: { marginTop: 10, backgroundColor: "#ff9800", padding: 10, borderRadius: 5, alignItems: "center" },

@@ -25,7 +25,7 @@ import { AuthContext } from "./AuthContext";
 
 const SCREEN_HEIGHT = Dimensions.get("window").height;
 const SCREEN_WIDTH = Dimensions.get("window").width;
-const MENU_WIDTH = SCREEN_WIDTH * 0.5;
+const MENU_WIDTH = SCREEN_WIDTH * 0.75;
 
 export default function AdminPanelScreen({ navigation }) {
   const { user, logout } = useContext(AuthContext);
@@ -192,7 +192,9 @@ export default function AdminPanelScreen({ navigation }) {
     const membersRef = firebase.database().ref("users");
     membersRef.on("value", (snapshot) => {
       const data = snapshot.val() || {};
-      const list = Object.keys(data).map((key) => ({ id: key, ...data[key] }));
+      const list = Object.keys(data)
+        .map((key) => ({ id: key, ...data[key] }))
+        .filter(m => m.role !== 'admin' && m.role !== 'dev');
       setMembers(list);
     });
   }, []);
@@ -322,6 +324,30 @@ export default function AdminPanelScreen({ navigation }) {
         filledForm: null,
         auditFeedback: null,
         photosToRedo: null,
+        assignedAt: null,
+        // Clear Matrix Fields
+        verificationDateTime: null, candidateAddressPeriod: null, respondentPeriodStay: null, modeOfConfirmation: null, 
+        respondentName: null, respondentRelationship: null, residenceStatus: null, addressProofDetails: null, 
+        neighbourConfirmation: null, landmark: null, policeStation: null, verificationComments: null, 
+        matrixRepNameDate: null, natureLocation: null, addressProof: null, respondentSignature: null, matrixRepSignature: null,
+        // Clear CES Fields
+        fatherName: null, detailsVerified: null, relationship: null, fieldExecutiveName: null, 
+        stayFromDate: null, stayToDate: null, addressType: null, maritalStatus: null, residenceType: null, 
+        locationType: null, siteVisit: null, verificationStatus: null, remarks: null, fieldExecutiveSignature: null,
+        // Clear DHI Fields
+        locationDetailsIfNoCompany: null, officeSpace: null, employeeCount: null, businessNature: null, 
+        respondentDetails: null, verifierDetails: null, emailIds: null, phoneNumbers: null, additionalContacts: null, 
+        neighbor1: null, neighbor2: null, postalCheck: null, courierCheck: null, fieldAssistantSignatureText: null, 
+        checkboxes: null, verifierSignature: null,
+        // Clear Common/Other
+        comments: null,
+        // Ensure critical fields remain (commented out to show what is KEPT)
+        // matrixRefNo: KEEP
+        // candidateName: KEEP
+        // address: KEEP
+        // client: KEEP
+        // company: KEEP
+        // contactNumber: KEEP
       });
     };
 
@@ -506,6 +532,7 @@ export default function AdminPanelScreen({ navigation }) {
     comments: 150,
     dateInitiated: 100,
     revert: 60,
+    manualAudit: 60,
   };
 
   const renderCase = ({ item, index }) => {
@@ -592,6 +619,16 @@ export default function AdminPanelScreen({ navigation }) {
                 <Ionicons name="refresh-circle" size={24} color="#ffbb33" />
               </TouchableOpacity>
             );
+          } else if (key === "manualAudit") {
+            component = (
+              <TouchableOpacity
+                key={key}
+                style={{ width: columnWidths[key], justifyContent: "center", alignItems: "center" }}
+                onPress={() => navigation.navigate("AuditCaseScreen", { caseId: item.id, caseData: item, manualMode: true })}
+              >
+                <Ionicons name="cloud-upload" size={24} color="#2196f3" />
+              </TouchableOpacity>
+            );
           } else if (key === "status") {
              const statusColor = 
                 (item.status === "completed" || item.status === "audit") ? "#00C851" : 
@@ -669,44 +706,47 @@ export default function AdminPanelScreen({ navigation }) {
         <View style={styles.menuOverlay}>
           <TouchableOpacity style={{ flex: 1 }} onPress={closeMenu} activeOpacity={1} />
           <Animated.View style={[styles.menu, { transform: [{ translateX: slideAnim }] }]}>
-            <TouchableOpacity style={styles.menuItem} onPress={() => { closeMenu(); navigation.navigate("MemberViewScreen"); }}>
-              <Text style={styles.menuText}>Member View</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItem} onPress={() => { closeMenu(); navigation.navigate("CompletedCases"); }}>
-              <Text style={styles.menuText}>Completed Cases</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItem} onPress={() => { closeMenu(); navigation.navigate("RevertedCasesScreen"); }}>
-              <Text style={styles.menuText}>Reverted Cases</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItem} onPress={() => { closeMenu(); navigation.navigate("VerifyProfileScreen"); }}>
-              <Text style={styles.menuText}>Verify Profile</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItem} onPress={() => { closeMenu(); navigation.navigate("MemberDSRScreen"); }}>
-              <Text style={styles.menuText}>Member DSR</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItem} onPress={() => { closeMenu(); navigation.navigate("MailRecordsScreen"); }}>
-              <Text style={styles.menuText}>Mail Records</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItem} onPress={() => { closeMenu(); navigation.navigate("StatisticsScreen"); }}>
-              <Text style={styles.menuText}>Statistics</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItem} onPress={() => { closeMenu(); navigation.navigate("AllTicketsScreen"); }}>
-              <Text style={styles.menuText}>Support Tickets</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItem} onPress={() => { 
-                closeMenu(); 
-                firebase.auth().signOut().then(() => {
-                  logout(); // This updates App.js state and switches to AuthStack
-                }).catch((error) => {
-                  if (Platform.OS === 'web') alert("Error: Failed to log off: " + error.message);
-                  else Alert.alert("Error", "Failed to log off: " + error.message);
-                });
-            }}>
-              <Text style={[styles.menuText, { color: "#ff4444" }]}>Log Off</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItem} onPress={closeMenu}>
-              <Text style={[styles.menuText, { color: "red" }]}>Close Menu</Text>
-            </TouchableOpacity>
+            {/* Modern Header */}
+            <LinearGradient colors={["#4e0360", "#c471ed"]} style={styles.menuHeader}>
+                <View style={styles.menuUserAvatar}>
+                    <Text style={styles.menuUserInitials}>{(user?.name || user?.email || "A").charAt(0).toUpperCase()}</Text>
+                </View>
+                <View style={{flex: 1}}>
+                    <Text style={styles.menuUserName} numberOfLines={1}>{user?.name || "Admin"}</Text>
+                    <Text style={styles.menuUserEmail} numberOfLines={1}>{user?.email}</Text>
+                </View>
+            </LinearGradient>
+
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingVertical: 10 }}>
+                {[
+                    { label: "Member View", icon: "people-outline", screen: "MemberViewScreen" },
+                    { label: "Completed Cases", icon: "checkmark-done-circle-outline", screen: "CompletedCases" },
+                    { label: "Reverted Cases", icon: "refresh-circle-outline", screen: "RevertedCasesScreen" },
+                    { label: "Verify Profile", icon: "shield-checkmark-outline", screen: "VerifyProfileScreen" },
+                    { label: "Member DSR", icon: "document-text-outline", screen: "MemberDSRScreen" },
+                    { label: "Mail Records", icon: "mail-outline", screen: "MailRecordsScreen" },
+                    { label: "Statistics", icon: "stats-chart-outline", screen: "StatisticsScreen" },
+                    { label: "Support Tickets", icon: "ticket-outline", screen: "AllTicketsScreen" },
+                ].map((item, index) => (
+                    <TouchableOpacity key={index} style={styles.menuItem} onPress={() => { closeMenu(); navigation.navigate(item.screen); }}>
+                        <Ionicons name={item.icon} size={22} color="#555" style={{ marginRight: 15 }} />
+                        <Text style={styles.menuText}>{item.label}</Text>
+                    </TouchableOpacity>
+                ))}
+
+                <TouchableOpacity style={styles.menuItem} onPress={() => { 
+                    closeMenu(); 
+                    firebase.auth().signOut().then(() => {
+                      logout(); // This updates App.js state and switches to AuthStack
+                    }).catch((error) => {
+                      if (Platform.OS === 'web') alert("Error: Failed to log off: " + error.message);
+                      else Alert.alert("Error", "Failed to log off: " + error.message);
+                    });
+                }}>
+                    <Ionicons name="log-out-outline" size={22} color="#ff4444" style={{ marginRight: 15 }} />
+                    <Text style={[styles.menuText, { color: "#ff4444" }]}>Log Off</Text>
+                </TouchableOpacity>
+            </ScrollView>
           </Animated.View>
         </View>
       )}
@@ -961,12 +1001,12 @@ export default function AdminPanelScreen({ navigation }) {
               data={fullyFilteredCases}
               renderItem={renderCase}
               initialNumToRender={1000}
-              maxToRenderPerBatch={200}
-              windowSize={60}
+              maxToRenderPerBatch={400}
+              windowSize={70}
               keyExtractor={(item) => item.id}
               removeClippedSubviews={false}
               showsVerticalScrollIndicator={true}
-              contentContainerStyle={{ paddingBottom: 20 }}
+              contentContainerStyle={{ paddingBottom: 10 }}
             />
           </View>
         </ScrollView>
@@ -1162,22 +1202,23 @@ const styles = StyleSheet.create({
     bottom: 0,
     width: MENU_WIDTH,
     backgroundColor: "#fff",
-    paddingTop: 50,
-    paddingHorizontal: 20,
     elevation: 10,
     shadowColor: "#000",
     shadowOffset: { width: 2, height: 0 },
     shadowOpacity: 0.5,
     shadowRadius: 5,
   },
+  menuHeader: { padding: 20, paddingTop: 50, flexDirection: "row", alignItems: "center" },
+  menuUserAvatar: { width: 50, height: 50, borderRadius: 25, backgroundColor: "#fff", justifyContent: "center", alignItems: "center", marginRight: 15 },
+  menuUserInitials: { fontSize: 20, fontWeight: "bold", color: "#4e0360" },
+  menuUserName: { color: "#fff", fontSize: 18, fontWeight: "bold" },
+  menuUserEmail: { color: "rgba(255,255,255,0.8)", fontSize: 12 },
   menuItem: {
-    paddingVertical: 15,
-    borderBottomWidth: 1,
-    borderColor: "#eee",
+    flexDirection: "row", alignItems: "center", paddingVertical: 15, paddingHorizontal: 20
   },
   menuText: {
-    fontSize: 18,
-    fontWeight: "bold",
+    fontSize: 16,
+    fontWeight: "500",
     color: "#333",
   },
   webModalOverlay: {

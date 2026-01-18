@@ -112,6 +112,7 @@ Spacesolutions Team
                 status: "completed",
                 finalizedAt: Date.now(),
                 finalizedBy: user.uid,
+                filledForm: null, // Clean up the separate form file now that email is sent
             });
 
             console.log("[EMAIL_FLOW] 5. Firebase update successful.");
