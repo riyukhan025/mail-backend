@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
-import { encode as btoa } from "base-64";
+import { decode as atob, encode as btoa } from "base-64";
 import Constants from "expo-constants";
+import * as FileSystem from "expo-file-system/legacy";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
@@ -144,9 +145,15 @@ export default function CaseDetailScreen({ navigation, route }) {
     const [isClosing, setIsClosing] = useState(false);
     const [isUploadingPhotos, setIsUploadingPhotos] = useState(false);
 
+    const [maintenanceModeMember, setMaintenanceModeMember] = useState(false);
+
     const [optionalCategories, setOptionalCategories] = useState([]);
     const [addPhotoModalVisible, setAddPhotoModalVisible] = useState(false);
     console.log("🚀 Component mounted, caseId:", caseId, "roleParam:", roleParam);
+    
+    const [uploadProgress, setUploadProgress] = useState(0);
+    const [progressMessage, setProgressMessage] = useState("");
+    const [showProgressModal, setShowProgressModal] = useState(false);
 
     const t = (key) => TRANSLATIONS[language]?.[key] || TRANSLATIONS['en'][key] || key;
 
@@ -172,6 +179,22 @@ export default function CaseDetailScreen({ navigation, route }) {
         return allRequirementsMet && formCompleted;
     };
 
+    // Listen for Maintenance Mode
+    useEffect(() => {
+        const devRef = firebase.database().ref("dev/maintenanceModeMember");
+        const listener = devRef.on("value", (snapshot) => {
+            setMaintenanceModeMember(snapshot.val() === true || snapshot.val() === "true");
+        });
+        return () => devRef.off("value", listener);
+    }, []);
+
+    const checkMaintenance = () => {
+        if (maintenanceModeMember) {
+            Alert.alert("Maintenance Mode", "This action is currently disabled due to system maintenance.Do this case and submit in Manual");
+            return true;
+        }
+        return false;
+    };
 
     // If user object is passed, we are authenticated.
     useEffect(() => {
@@ -335,25 +358,80 @@ export default function CaseDetailScreen({ navigation, route }) {
                 {
                     text: "Delete",
                     style: "destructive",
-                    onPress: () => {
-                        setPhotos(prev => {
-                            const updatedCategory = [...(prev[category] || [])];
-                            updatedCategory.splice(index, 1);
-                            return { ...prev, [category]: updatedCategory };
-                        });
+                    onPress: async () => {
+                        const currentList = photos[category] || [];
+                        const updatedList = [...currentList];
+                        const removed = updatedList.splice(index, 1)[0];
+
+                        // Optimistic update (Update UI immediately)
+                        setPhotos(prev => ({ ...prev, [category]: updatedList }));
+
+                        // Update Firebase (Persist deletion)
+                        try {
+                            await firebase.database().ref(`cases/${caseId}/photosFolder/${category}`).set(updatedList);
+                            
+                            // Optional: Cleanup Cloudinary file to save space
+                            if (removed?.uri?.includes("cloudinary")) {
+                                fetch(`${SERVER_URL}/cloudinary/destroy-from-url`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ url: removed.uri, resource_type: 'image' }),
+                                }).catch(e => console.warn("Cloudinary delete failed", e));
+                            }
+                        } catch (e) {
+                            console.error("Delete sync failed:", e);
+                            Alert.alert("Error", "Failed to sync deletion with server.");
+                        }
                     }
                 }
             ]
         );
     };
 
-    // --- NEW: Helper to upload single image to Cloudinary ---
-    const uploadImageToCloudinary = async (uri, category, index) => {
+    // --- NEW: Helper to download remote image to temp file for migration ---
+    const downloadToTemp = async (uri) => {
         try {
+            const filename = `migrated_${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`;
+            const fileUri = FileSystem.cacheDirectory + filename;
+            const { uri: localUri } = await FileSystem.downloadAsync(uri, fileUri);
+            return localUri;
+        } catch (e) {
+            console.warn("Download temp failed", e);
+            return null;
+        }
+    };
+
+    // --- NEW: Helper to upload single image to Cloudinary ---
+    const uploadImageToCloudinary = async (photoObj, category, index) => {
+        try {
+            const uri = photoObj.uri || photoObj; // Handle object or string
             const formData = new FormData();
-            formData.append("file", { uri: uri, type: "image/jpeg", name: `${category}_${Date.now()}_${index}.jpg` });
+            // Add random component to filename to prevent overwriting on retries
+            formData.append("file", { uri: uri, type: "image/jpeg", name: `${category}_${Date.now()}_${Math.floor(Math.random() * 10000)}_${index}.jpg` });
             formData.append("upload_preset", UPLOAD_PRESET);
-            formData.append("folder", `cases/${caseData.RefNo || caseId}`);
+            const rawRefNo = caseData.matrixRefNo || caseData.RefNo || caseId;
+            const safeRefNo = rawRefNo.replace(/[^a-zA-Z0-9-_]/g, '_');
+            formData.append("folder", `cases/${safeRefNo}`);
+            console.log(`[UPLOAD-SINGLE] Target Folder: cases/${safeRefNo} (Ref: ${rawRefNo})`);
+
+            // --- NEW: Attach Metadata (Context) to Cloudinary ---
+            if (typeof photoObj === 'object') {
+                const contextParts = [];
+                if (photoObj.geotag) {
+                    contextParts.push(`lat=${photoObj.geotag.latitude}`);
+                    contextParts.push(`lng=${photoObj.geotag.longitude}`);
+                }
+                if (photoObj.address) {
+                    // Replace pipes with commas to avoid breaking context format
+                    contextParts.push(`address=${photoObj.address.replace(/\|/g, ',')}`);
+                }
+                if (photoObj.timestamp) {
+                    contextParts.push(`timestamp=${photoObj.timestamp}`);
+                }
+                if (contextParts.length > 0) {
+                    formData.append("context", contextParts.join("|"));
+                }
+            }
 
             const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
                 method: "POST",
@@ -411,7 +489,13 @@ export default function CaseDetailScreen({ navigation, route }) {
 
                 for (let i = 0; i < compressedPhotos.length; i++) {
                     const localUri = compressedPhotos[i].uri;
-                    const cloudUrl = await uploadImageToCloudinary(localUri, category, i);
+                    // Create temp object to pass to upload function
+                    const tempPhoto = {
+                        uri: localUri,
+                        address: "Gallery Upload",
+                        timestamp: new Date().toLocaleString()
+                    };
+                    const cloudUrl = await uploadImageToCloudinary(tempPhoto, category, i);
                     
                     if (cloudUrl) {
                         newUploadedPhotos.push({
@@ -441,6 +525,7 @@ export default function CaseDetailScreen({ navigation, route }) {
     };
 
     const showPhotoOptions = (category) => {
+        if (checkMaintenance()) return;
         Alert.alert(
             "Add Photo",
             "How would you like to add a photo?",
@@ -489,7 +574,7 @@ export default function CaseDetailScreen({ navigation, route }) {
                             const uploadedPhotos = [];
                             for (let i = 0; i < photosByCat[cat].length; i++) {
                                 const p = photosByCat[cat][i];
-                                const cloudUrl = await uploadImageToCloudinary(p.uri, cat, i);
+                                const cloudUrl = await uploadImageToCloudinary(p, cat, i);
                                 if (cloudUrl) {
                                     uploadedPhotos.push({ ...p, uri: cloudUrl, id: `${Date.now()}-${Math.random()}` });
                                 }
@@ -548,9 +633,33 @@ const handleCloseCase = async () => {
 // ✅ Helper function to handle upload + database update
     const uploadAndCloseCase = async (user) => {
     try {
+        setShowProgressModal(true);
+        setUploadProgress(0);
+        setProgressMessage("Preparing submission...");
+
+        // Calculate total operations for progress bar
+        let totalOps = 2; // 1 for PDF Upload + 1 for Firebase Update
+        for (const cat in photos) {
+            totalOps += photos[cat].filter(p => !p.uri.startsWith("http")).length;
+        }
+        for (const category of currentRequirements) {
+            totalOps += (photos[category.id] || []).length;
+        }
+        let currentOp = 0;
+        const tick = (msg) => {
+            currentOp++;
+            setUploadProgress(currentOp / totalOps);
+            if (msg) setProgressMessage(msg);
+        };
+
         console.log("📤 Uploading photos to Cloudinary...");
         console.log("📋 Current photos in state:", photos);
         const uploadedPhotos = [];
+
+        // --- NEW: Unified Folder Name based on Matrix Ref No ---
+        const rawRefNo = caseData.matrixRefNo || caseData.RefNo || caseId;
+        const safeRefNo = rawRefNo.replace(/[^a-zA-Z0-9-_]/g, '_');
+        const targetFolder = `cases/${safeRefNo}`;
 
         // --- MODIFIED: Upload photos category by category ---
         const uploadedPhotosByCategory = { ...photos };
@@ -604,12 +713,49 @@ const handleCloseCase = async () => {
         for (const category of Object.keys(photos)) {
             for (let i = 0; i < photos[category].length; i++) {
                 const photo = photos[category][i];
-                if (photo.uri.startsWith("http")) continue; // Already uploaded
+                
+                const isRemote = photo.uri.startsWith("http");
+                // Check if already in correct folder to avoid re-uploading
+                // We check if the URL contains the target folder path
+                const isInCorrectFolder = isRemote && photo.uri.includes(targetFolder);
+
+                if (isRemote && isInCorrectFolder) continue; // Already uploaded and in correct folder
+
+                console.log(`[UPLOAD] Processing photo ${i} in ${category}. Remote: ${isRemote}, CorrectFolder: ${isInCorrectFolder}`);
 
                 const formData = new FormData();
-                formData.append("file", { uri: photo.uri, type: "image/jpeg", name: `${category}_${i}.jpg` });
+                if (isRemote) {
+                    // Migration: Download -> Upload (Reliable for private images)
+                    console.log(`[MIGRATION] Moving photo ${i} from ${photo.uri} to ${targetFolder}`);
+                    const localTemp = await downloadToTemp(photo.uri);
+                    if (localTemp) {
+                         formData.append("file", { uri: localTemp, type: "image/jpeg", name: `migrated_${Date.now()}_${Math.floor(Math.random() * 1000)}.jpg` });
+                    } else {
+                         // Fallback to URL copy (might fail if private)
+                         formData.append("file", photo.uri);
+                    }
+                } else {
+                    // Upload local file
+                    formData.append("file", { uri: photo.uri, type: "image/jpeg", name: `${category}_${Date.now()}_${i}.jpg` });
+                }
                 formData.append("upload_preset", UPLOAD_PRESET);
-                formData.append("folder", `cases/${caseData.RefNo || caseId}`); // Use RefNo for folder name
+                formData.append("folder", targetFolder); // Unified folder
+
+                // --- NEW: Attach Metadata (Context) during bulk upload ---
+                const contextParts = [];
+                if (photo.geotag) {
+                    contextParts.push(`lat=${photo.geotag.latitude}`);
+                    contextParts.push(`lng=${photo.geotag.longitude}`);
+                }
+                if (photo.address) {
+                    contextParts.push(`address=${photo.address.replace(/\|/g, ',')}`);
+                }
+                if (photo.timestamp) {
+                    contextParts.push(`timestamp=${photo.timestamp}`);
+                }
+                if (contextParts.length > 0) {
+                    formData.append("context", contextParts.join("|"));
+                }
 
                 const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
                     method: "POST",
@@ -619,12 +765,26 @@ const handleCloseCase = async () => {
                 const data = await response.json();
                 uploadedPhotosByCategory[category][i] = { ...photo, uri: data.secure_url };
                 console.log(`[UPLOAD] Category: ${category}, Index: ${i}, New URL: ${data.secure_url}`);
+                tick(`Uploading photos (${Math.round((currentOp/totalOps)*100)}%)...`);
             }
         }
 
         // --- MODIFIED: Save the structured photo object to Firebase ---
-        const photoUrls = uploadedPhotosByCategory;
-        console.log("💾 Saving uploaded photos to Firebase:", photoUrls);
+        // Sanitize photos BEFORE PDF generation to ensure timestamps/addresses are present
+        const photoUrls = {};
+        for (const category in uploadedPhotosByCategory) {
+            photoUrls[category] = uploadedPhotosByCategory[category]
+                .filter(photo => photo && photo.uri) // Filter out invalid photos
+                .map(photo => ({
+                    uri: photo.uri || '',
+                    timestamp: photo.timestamp || new Date().toLocaleString(),
+                    geotag: photo.geotag || null,
+                    address: photo.address || 'Location unavailable',
+                    category: photo.category || category,
+                    id: photo.id || `${Date.now()}-${Math.random()}`,
+                }));
+        }
+        console.log("💾 Prepared sanitized photos for PDF & Firebase:", photoUrls);
 
         // --- NEW: Generate PDF on the client ---
         console.log('[PDF-LOG] 🚀 Starting PDF generation...');
@@ -632,6 +792,18 @@ const handleCloseCase = async () => {
 
         const pdfDoc = await PDFDocument.create();
         const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
+        // --- NEW: Title Page (Page 1) ---
+        const titlePage = pdfDoc.addPage();
+        const { width: tWidth, height: tHeight } = titlePage.getSize();
+        
+        titlePage.drawText("SPACE SOLUTIONS", {
+            x: 50, y: tHeight - 150, size: 30, font, color: rgb(0, 0, 0)
+        });
+        titlePage.drawText(`Case Ref: ${rawRefNo}`, {
+            x: 50, y: tHeight - 200, size: 20, font, color: rgb(0, 0, 0)
+        });
+        // --------------------------------
 
         let page;
 
@@ -657,28 +829,92 @@ const handleCloseCase = async () => {
                 const photo = photosInCategory[i];
                 totalPhotosAdded++;
                 console.log(`[PDF-LOG]   - Adding photo ${i + 1}/${photosInCategory.length} (Total: ${totalPhotosAdded}). URI: ${photo.uri}`);
+                tick(`Generating Report (${Math.round((currentOp/totalOps)*100)}%)...`);
 
                 try {
-                    // Optimize Cloudinary images to reduce PDF size
-                    let imageUri = photo.uri;
-                    let isPng = imageUri.toLowerCase().endsWith('.png');
+                    let imgBytes;
+                    let isPng = false;
 
-                    if (imageUri.includes("cloudinary.com") && imageUri.includes("/upload/")) {
-                        imageUri = imageUri.replace("/upload/", "/upload/w_800,q_60,f_jpg/");
-                        isPng = false;
+                    // Helper to fetch buffer with retry logic for network resilience
+                    const fetchBuffer = async (u, retries = 3) => {
+                        // Force HTTPS
+                        let url = u;
+                        if (url && url.startsWith("http://")) url = url.replace("http://", "https://");
+
+                        for (let i = 0; i < retries; i++) {
+                            try {
+                                const r = await fetch(url);
+                                if (!r.ok) throw new Error(`Status ${r.status}`);
+                                return await r.arrayBuffer();
+                            } catch (e) {
+                                console.warn(`[PDF-FETCH] Attempt ${i + 1} failed for ${url}: ${e.message}`);
+                                if (i === retries - 1) {
+                                    // Fallback: Try FileSystem download (better for large files/Android)
+                                    try {
+                                        const fileUri = FileSystem.cacheDirectory + `temp_pdf_${Date.now()}.jpg`;
+                                        const dl = await FileSystem.downloadAsync(url, fileUri);
+                                        if (dl.status !== 200) throw new Error(`FS Status ${dl.status}`);
+                                        const b64 = await FileSystem.readAsStringAsync(dl.uri, { encoding: FileSystem.EncodingType.Base64 });
+                                        const binaryString = atob(b64);
+                                        const bytes = new Uint8Array(binaryString.length);
+                                        for (let k = 0; k < binaryString.length; k++) bytes[k] = binaryString.charCodeAt(k);
+                                        return bytes;
+                                    } catch (fsErr) { throw e; }
+                                }
+                                await new Promise(res => setTimeout(res, 1000 * (i + 1))); // Exponential backoff
+                            }
+                        }
+                    };
+
+                    // 1. Try Optimized (Fastest & Best for PDF)
+                    let optimizedUrl = photo.uri;
+                    // Check if URL is signed (contains /s--) to avoid breaking signature with transformations
+                    const isSigned = photo.uri.includes("/s--");
+                    if (!isSigned && photo.uri.includes("cloudinary.com") && photo.uri.includes("/upload/") && !photo.uri.includes("f_jpg")) {
+                        optimizedUrl = photo.uri.replace("/upload/", "/upload/w_600,q_50,f_jpg/");
                     }
 
-                    const imgResponse = await fetch(imageUri);
-                    const imgBytes = await imgResponse.arrayBuffer();
+                    try {
+                        imgBytes = await fetchBuffer(optimizedUrl);
+                        isPng = false; 
+                    } catch (e1) {
+                        // 2. Try Original
+                        try {
+                            imgBytes = await fetchBuffer(photo.uri);
+                            isPng = photo.uri.toLowerCase().endsWith('.png');
+                        } catch (e2) {
+                            // 3. Try appending .jpg (Fix for missing extension)
+                            if (!isSigned) {
+                                imgBytes = await fetchBuffer(photo.uri + ".jpg");
+                                isPng = false;
+                            } else {
+                                throw e2;
+                            }
+                        }
+                    }
 
-                    const image = isPng ? await pdfDoc.embedPng(imgBytes) : await pdfDoc.embedJpg(imgBytes);
+                    let image;
+                    try {
+                        if (imgBytes) {
+                            image = isPng ? await pdfDoc.embedPng(imgBytes) : await pdfDoc.embedJpg(imgBytes);
+                        } else {
+                            throw new Error("No image data fetched");
+                        }
+                    } catch (embedErr) {
+                        // If embedding failed, try the other format just in case extension was wrong
+                        try {
+                            image = isPng ? await pdfDoc.embedJpg(imgBytes) : await pdfDoc.embedPng(imgBytes);
+                        } catch (finalErr) {
+                            console.error(`[PDF-LOG] Final embed failed for ${photo.uri}`);
+                            throw finalErr;
+                        }
+                    }
+
                     // Reduce max height to leave space for heading and metadata
-                    const dims = image.scaleToFit(page.getWidth() - 100, 300); // Reduced from 350
+                    const dims = image.scaleToFit(page.getWidth() - 100, 300);
 
-                    // Check if there's enough space for this image. If not, create a new page.
-                    const spaceNeeded = dims.height + 60; // Image height + metadata overlay + padding
-                    if (y - spaceNeeded < 50) {
-                        console.log(`[PDF-LOG]     ⚠️ Not enough space on page (need ${spaceNeeded}, have ${y - 50}). Adding new page.`);
+                    // --- PAGE BREAK CHECK: Prevent Overlap ---
+                    if (y - dims.height < 150) { // Increased margin to prevent overlap
                         page = pdfDoc.addPage();
                         y = page.getHeight() - 50;
                     }
@@ -743,16 +979,24 @@ const handleCloseCase = async () => {
                     }
 
                     // Update y-position for the next element
-                    y = imageY - 20; // Image Y position - padding
+                    y = imageY - 40; // Increased padding
 
                 } catch (imgErr) {
                     console.error(`[PDF-LOG] ❌ FAILED to embed image ${photo.uri}:`, imgErr);
-                    if (y < 100) { // Ensure error text doesn't go off-page
-                        page = pdfDoc.addPage();
-                        y = page.getHeight() - 50;
+                    // Draw error placeholder to indicate failure in PDF
+                    try {
+                        const errorHeight = 100;
+                        if (y - errorHeight < 50) {
+                            page = pdfDoc.addPage();
+                            y = page.getHeight() - 50;
+                        }
+                        const errY = y - errorHeight;
+                        page.drawRectangle({ x: 50, y: errY, width: 400, height: errorHeight, color: rgb(0.95, 0.95, 0.95), borderColor: rgb(1, 0, 0), borderWidth: 1 });
+                        page.drawText(`Error loading image: ${photo.uri}`, { x: 60, y: errY + 50, size: 10, font, color: rgb(1, 0, 0) });
+                        y = errY - 20;
+                    } catch (drawErr) {
+                        console.error("Failed to draw error placeholder", drawErr);
                     }
-                    page.drawText(`Error loading image: ${photo.uri}`, { x: 50, y, font, size: 10, color: rgb(1, 0, 0) });
-                    y -= 30;
                 }
             }
         }
@@ -778,9 +1022,8 @@ const handleCloseCase = async () => {
 
         // --- Upload generated PDF to Cloudinary (with retry logic) ---
         console.log('[PDF-LOG] ☁️ Uploading PDF to Cloudinary...');
+        tick("Uploading PDF Report...");
         const pdfBase64 = uint8ToBase64Safe(pdfBytes);
-        const rawRefNo = caseData.matrixRefNo || caseData.RefNo || caseId;
-        const safeRefNo = rawRefNo.replace(/[^a-zA-Z0-9-_]/g, '_');
         const uniquePdfPublicId = `CaseReport_${safeRefNo}_${Date.now()}`;
         let finalPdfUrl = null;
         let uploadSuccess = false;
@@ -891,37 +1134,23 @@ const handleCloseCase = async () => {
             uploadSuccess = true;
             console.log('[PDF-LOG] 🎉 PDF generation and upload complete. URL:', finalPdfUrl);
         } catch (err) {
-            console.error('[PDF-LOG] 💥 PDF upload failed:', err);
-            throw err;
+            console.error('[PDF-LOG] 💥 PDF upload failed, proceeding with partial submission:', err);
+            Alert.alert("PDF Warning", "The PDF report could not be generated due to network issues. The case will be submitted with photos only.");
         }
 
         // --- FINAL: Update Firebase with the correct PDF link ---
         console.log('[DB-UPDATE] Saving final data to Firebase...');
+        tick("Finalizing Case...");
         console.log('[DB-UPDATE] Photo URLs object:', photoUrls);
         
-        // Save photos organized by category, ensuring all properties are defined
-        const photosToSave = {};
-        for (const category in photoUrls) {
-            photosToSave[category] = photoUrls[category]
-                .filter(photo => photo && photo.uri) // Filter out invalid photos
-                .map(photo => ({
-                    uri: photo.uri || '',
-                    timestamp: photo.timestamp || new Date().toLocaleString(),
-                    geotag: photo.geotag || null,
-                    address: photo.address || 'Location unavailable',
-                    category: photo.category || category,
-                    id: photo.id || `${Date.now()}-${Math.random()}`,
-                }));
-        }
-        
-        console.log('[DB-UPDATE] Structured photos to save:', photosToSave);
-        
-        await firebase.database().ref(`cases/${caseId}/photosFolder`).set(photosToSave);
+        // Save sanitized photos to Firebase
+        await firebase.database().ref(`cases/${caseId}/photosFolder`).set(photoUrls);
         await firebase.database().ref(`cases/${caseId}`).update({
-            photosFolderLink: finalPdfUrl, // <-- This is the correct, final URL
+            photosFolderLink: finalPdfUrl || null, // Handle null if PDF failed
             status: "audit", // Always go to audit for submission
             completedAt: Date.now(),
             closedBy: user.uid,
+            pdfGenerationFailed: !finalPdfUrl // Flag for admin
         });
         // Remove any photosToRedo marker now that we've regenerated files
         try {
@@ -936,6 +1165,7 @@ const handleCloseCase = async () => {
         setStatus("audit");
 
         console.log("🔒 Case successfully submitted to audit!");
+        setShowProgressModal(false);
         
         Alert.alert("Success", "Case marked as submitted for audit!", [
             {
@@ -956,13 +1186,17 @@ const handleCloseCase = async () => {
         console.log("❌ Error stack:", error.stack);
         console.log("❌ Error message:", error.message);
         Alert.alert("Error", "Failed to submit: " + (error.message || JSON.stringify(error)));
+        setShowProgressModal(false);
     } finally {
         setIsClosing(false);
+        // Modal is closed in success/catch blocks
     }
 };
 
     // --- NEW: Add an optional category to the view ---
     const addOptionalCategory = (category) => {
+        if (checkMaintenance()) return;
+
         if (!optionalCategories.some(c => c.id === category.id)) {
             setOptionalCategories(prev => [...prev, category]);
         }
@@ -1149,7 +1383,10 @@ const handleCloseCase = async () => {
 
                 {/* Add Optional Photos */}
                 {(displayStatus === 'open' || forceEdit) && !isCESNo && (
-                    <TouchableOpacity style={styles.addOptionalButton} onPress={() => setAddPhotoModalVisible(true)}>
+                    <TouchableOpacity style={styles.addOptionalButton} onPress={() => {
+                        if (checkMaintenance()) return;
+                        setAddPhotoModalVisible(true);
+                    }}>
                         <LinearGradient colors={["#2193b0", "#6dd5ed"]} style={styles.gradientButton} start={{x:0, y:0}} end={{x:1, y:0}}>
                             <Ionicons name="add-circle-outline" size={24} color="#fff" />
                             <Text style={styles.gradientButtonText}>{t("addOptional")}</Text>
@@ -1261,6 +1498,7 @@ const handleCloseCase = async () => {
                         <TouchableOpacity
                             style={styles.bottomBtn}
                             onPress={() => {
+                                if (checkMaintenance()) return;
                                 if (!forceEdit && formCompleted && caseData?.filledForm?.url) {
                                     Linking.openURL(caseData.filledForm.url);
                                 } else {
@@ -1308,6 +1546,19 @@ const handleCloseCase = async () => {
                     )}
                 </View>
             )}
+
+            {/* Progress Modal */}
+            <Modal visible={showProgressModal} transparent={true} animationType="fade">
+                <View style={styles.loadingOverlay}>
+                    <View style={styles.loadingBox}>
+                        <Text style={styles.loadingText}>{progressMessage}</Text>
+                        <View style={styles.progressBarContainer}>
+                            <View style={[styles.progressBarFill, { width: `${Math.min(uploadProgress * 100, 100)}%` }]} />
+                        </View>
+                        <Text style={styles.percentageText}>{Math.round(Math.min(uploadProgress * 100, 100))}%</Text>
+                    </View>
+                </View>
+            </Modal>
         </LinearGradient>
     );
 }
@@ -1402,4 +1653,30 @@ const styles = StyleSheet.create({
     infoText: { flex: 1, textAlign: "center", textAlignVertical: "center", fontSize: 16, color: "#fff" },
     detailsModal: { flex: 1, justifyContent: "center", margin: 20, backgroundColor: "#222", borderRadius: 12, padding: 20 },
     modalTitle: { fontSize: 18, fontWeight: "700", marginBottom: 20, color: "#fff", textAlign: "center" },
+    
+    // Progress Modal Styles
+    loadingOverlay: {
+        flex: 1,
+        backgroundColor: "rgba(0,0,0,0.7)",
+        justifyContent: "center",
+        alignItems: "center",
+    },
+    loadingBox: {
+        width: "80%",
+        backgroundColor: "#fff",
+        padding: 25,
+        borderRadius: 15,
+        alignItems: "center",
+        elevation: 10,
+    },
+    loadingText: { marginBottom: 15, fontSize: 16, fontWeight: "bold", color: "#333", textAlign: 'center' },
+    progressBarContainer: {
+        width: "100%",
+        height: 12,
+        backgroundColor: "#e0e0e0",
+        borderRadius: 6,
+        overflow: "hidden",
+    },
+    progressBarFill: { height: "100%", backgroundColor: "#4caf50" },
+    percentageText: { marginTop: 10, color: "#666", fontSize: 14, fontWeight: 'bold' },
 });

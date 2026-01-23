@@ -2,19 +2,16 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import { LinearGradient } from "expo-linear-gradient";
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Dimensions,
   FlatList,
-  NativeModules,
   Platform,
   ScrollView,
-  Share,
   StatusBar,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -23,6 +20,7 @@ import {
 import { BarChart, LineChart, PieChart } from "react-native-chart-kit";
 import firebase from "../firebase";
 import { APPWRITE_CONFIG, client, databases, Query } from "./appwrite";
+import { AuthContext } from "./AuthContext";
 
 // --- CONSTANTS & CONFIGURATION ---
 const APP_VERSION = "1.0.4 (Build 203)";
@@ -35,6 +33,9 @@ const SERVER_URL = `http://${localIp}:3000`;
 
 const TABS = [
   { id: "overview", label: "Overview", icon: "grid-outline" },
+  { id: "manual_audit", label: "Manual Audit", icon: "create-outline" },
+  { id: "firebase", label: "Firebase DB", icon: "server-outline" },
+  { id: "cloudinary", label: "Cloudinary", icon: "cloud-circle-outline" },
   { id: "tickets", label: "Tickets", icon: "ticket-outline" },
   { id: "users", label: "Users", icon: "people-outline" },
   { id: "tracking", label: "Tracking", icon: "analytics-outline" },
@@ -125,6 +126,7 @@ if (!global.isFetchPatched) {
 
 // --- MAIN SCREEN COMPONENT ---
 export default function DevDashboardScreen({ navigation }) {
+  const { user } = useContext(AuthContext);
   const [activeTab, setActiveTab] = useState("overview");
   const [logs, setLogs] = useState(LOG_BUFFER);
   const [users, setUsers] = useState([]);
@@ -132,8 +134,10 @@ export default function DevDashboardScreen({ navigation }) {
   const [featureFlags, setFeatureFlags] = useState({
     enableNewUI: false,
     enableBetaFeatures: false,
-    maintenanceMode: false,
+    maintenanceModeAdmin: false,
+    maintenanceModeMember: false,
     debugLogging: true,
+    enableManualAudit: false,
   });
   const [archiving, setArchiving] = useState(false);
 
@@ -142,7 +146,12 @@ export default function DevDashboardScreen({ navigation }) {
     const devRef = firebase.database().ref("dev");
     const listener = devRef.on("value", (snapshot) => {
       const val = snapshot.val();
-      if (val) setFeatureFlags((prev) => ({ ...prev, ...val }));
+      if (val) setFeatureFlags((prev) => ({ 
+          ...prev, 
+          ...val,
+          maintenanceModeAdmin: val.maintenanceModeAdmin === true || val.maintenanceModeAdmin === "true",
+          maintenanceModeMember: val.maintenanceModeMember === true || val.maintenanceModeMember === "true"
+      }));
     });
     return () => devRef.off("value", listener);
   }, []);
@@ -420,6 +429,12 @@ export default function DevDashboardScreen({ navigation }) {
     switch (activeTab) {
       case "overview":
         return <OverviewTab featureFlags={featureFlags} toggleFeatureFlag={toggleFeatureFlag} navigation={navigation} />;
+      case "manual_audit":
+        return <ManualAuditTab />;
+      case "firebase":
+        return <FirebaseTab />;
+      case "cloudinary":
+        return <CloudinaryTab />;
       case "tickets":
         return <TicketsTab />;
       case "users":
@@ -442,10 +457,14 @@ export default function DevDashboardScreen({ navigation }) {
   };
 
   return (
-    <LinearGradient colors={["#b71c1c", "#560027", "#1a1a1a"]} style={styles.container}>
+    <LinearGradient colors={["#0f0c29", "#302b63", "#24243e"]} style={styles.container}>
       <StatusBar barStyle="light-content" />
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+        <TouchableOpacity onPress={() => {
+            if (navigation.canGoBack()) navigation.goBack();
+            else if (user?.role === 'admin') navigation.navigate("AdminPanel");
+            else navigation.navigate("Dashboard");
+        }} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
         <View>
@@ -488,75 +507,23 @@ export default function DevDashboardScreen({ navigation }) {
 
 // --- TAB COMPONENTS ---
 
-function OverviewTab({ featureFlags, toggleFeatureFlag, navigation }) {
-  const [statsRequest, setStatsRequest] = useState(false);
 
-  useEffect(() => {
-    const checkRequest = async () => {
-      const pending = await AsyncStorage.getItem("stats_request_pending"); // This seems to be a real feature
-      setStatsRequest(pending === "true");
-    };
-    checkRequest();
-    const interval = setInterval(checkRequest, 2000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const handleApproveStats = async () => {
-    try {
-      await AsyncStorage.setItem("stats_approved", "true");
-      await AsyncStorage.setItem("stats_request_pending", "false");
-      setStatsRequest(false);
-      Alert.alert("Success", "Admin stats access granted.");
-    } catch (e) {
-      Alert.alert("Error", e.message);
-    }
-  };
-
-  const handleReload = () => {
-    if (Platform.OS === 'web') {
-      window.location.reload();
-    } else if (NativeModules.DevSettings) {
-      NativeModules.DevSettings.reload();
-    } else {
-      Alert.alert("Reload", "Not supported in this environment.");
-    }
-  };
-
-  const cardStyle = featureFlags.enableNewUI ? [styles.card, { backgroundColor: 'rgba(255,255,255,0.1)', borderColor: '#8e24aa' }] : styles.card;
-
+function OverviewTab({ featureFlags = {}, toggleFeatureFlag = () => {}, navigation }) {
   return (
     <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
-      {statsRequest && (
-        <View style={[styles.section, { marginBottom: 15 }]}>
-          <TouchableOpacity style={[styles.card, { backgroundColor: '#d32f2f', borderColor: '#ff5252' }]} onPress={handleApproveStats}>
-            <Text style={{ color: '#fff', fontWeight: 'bold', textAlign: 'center', fontSize: 16 }}>🔴 ADMIN REQUESTED STATS - APPROVE</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Environment Info</Text>
-        <View style={cardStyle}>
-          <InfoRow label="Environment" value={ENV_NAME} />
-          <InfoRow label="Backend" value="Firebase Realtime DB" />
-          <InfoRow label="Build Version" value={APP_VERSION} />
-          <InfoRow label="React Native" value="0.72.6" />
-          <InfoRow label="Expo SDK" value="49.0.0" />
-        </View>
-      </View>
-
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Feature Flags</Text>
-        <View style={cardStyle}>
-          {Object.entries(featureFlags).map(([key, value]) => (
+        <View style={styles.card}>
+          {Object.keys(featureFlags).map((key) => (
             <View key={key} style={styles.switchRow}>
               <Text style={styles.switchLabel}>{key.replace(/([A-Z])/g, ' $1').trim()}</Text>
-              <Switch
-                value={value}
-                onValueChange={() => toggleFeatureFlag(key)}
-                trackColor={{ false: "#767577", true: "#81b0ff" }}
-                thumbColor={value ? "#f5dd4b" : "#f4f3f4"}
-              />
+              <TouchableOpacity onPress={() => toggleFeatureFlag(key)}>
+                <Ionicons
+                  name={featureFlags[key] ? "toggle" : "toggle-outline"}
+                  size={32}
+                  color={featureFlags[key] ? "#4caf50" : "#666"}
+                />
+              </TouchableOpacity>
             </View>
           ))}
         </View>
@@ -565,12 +532,367 @@ function OverviewTab({ featureFlags, toggleFeatureFlag, navigation }) {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Quick Actions</Text>
         <View style={styles.grid}>
-          <ActionButton icon="refresh" label="Reload App" onPress={handleReload} />
-          <ActionButton icon="share-social" label="Export Logs" onPress={() => Share.share({ message: JSON.stringify(LOG_BUFFER, null, 2) })} />
-          <ActionButton icon="ticket-outline" label="View Tickets" onPress={() => navigation.navigate("AllTicketsScreen")} />
+          <ActionButton icon="refresh" label="Reload App" onPress={() => { if (Platform.OS === 'web') window.location.reload(); else Alert.alert("Info", "Use Expo reload"); }} />
+          <ActionButton icon="log-out" label="Force Logout" onPress={() => firebase.auth().signOut()} color="#ff4444" />
+          <ActionButton icon="bug" label="Crash Test" onPress={() => { throw new Error("Manual Crash Test"); }} color="#ffbb33" />
+        </View>
+      </View>
+      
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Environment</Text>
+        <View style={styles.card}>
+          <InfoRow label="API URL" value={API_URL} />
+          <InfoRow label="Server" value={SERVER_URL} />
+          <InfoRow label="App Version" value={APP_VERSION} />
         </View>
       </View>
     </ScrollView>
+  );
+}
+
+function ManualAuditTab() {
+  const [cases, setCases] = useState([]);
+  const [search, setSearch] = useState("");
+  const [loadingMap, setLoadingMap] = useState({});
+
+  useEffect(() => {
+    const ref = firebase.database().ref("cases");
+    const onValue = ref.on("value", snapshot => {
+      const data = snapshot.val() || {};
+      setCases(Object.keys(data).map(k => ({ id: k, ...data[k] })));
+    });
+    return () => ref.off("value", onValue);
+  }, []);
+
+  const handleForceComplete = async (item) => {
+      const confirmMsg = `Mark case ${item.matrixRefNo || item.id} as COMPLETED? This bypasses normal audit flow.`;
+      
+      const execute = async () => {
+          setLoadingMap(prev => ({...prev, [item.id]: true}));
+          try {
+              await firebase.database().ref(`cases/${item.id}`).update({
+                  status: 'completed',
+                  completedAt: item.completedAt || new Date().toISOString(),
+                  finalizedAt: Date.now(),
+                  finalizedBy: 'dev_manual_override'
+              });
+              if (Platform.OS !== 'web') Alert.alert("Success", "Case marked as completed.");
+          } catch (e) {
+              Alert.alert("Error", e.message);
+          } finally {
+              setLoadingMap(prev => ({...prev, [item.id]: false}));
+          }
+      };
+
+      if (Platform.OS === 'web') {
+          if (confirm(confirmMsg)) execute();
+      } else {
+          Alert.alert("Confirm Force Complete", confirmMsg, [
+              { text: "Cancel", style: "cancel" },
+              { text: "Complete", style: "destructive", onPress: execute }
+          ]);
+      }
+  };
+
+  const handleForceRevert = async (item) => {
+      const confirmMsg = `Mark case ${item.matrixRefNo || item.id} as REVERTED?`;
+      
+      const execute = async () => {
+          setLoadingMap(prev => ({...prev, [item.id]: true}));
+          try {
+              await firebase.database().ref(`cases/${item.id}`).update({
+                  status: 'reverted',
+                  revertedAt: Date.now(),
+                  revertedBy: 'dev_manual_override'
+              });
+              if (Platform.OS !== 'web') Alert.alert("Success", "Case marked as reverted.");
+          } catch (e) {
+              Alert.alert("Error", e.message);
+          } finally {
+              setLoadingMap(prev => ({...prev, [item.id]: false}));
+          }
+      };
+
+      if (Platform.OS === 'web') {
+          if (confirm(confirmMsg)) execute();
+      } else {
+          Alert.alert("Confirm Force Revert", confirmMsg, [
+              { text: "Cancel", style: "cancel" },
+              { text: "Revert", style: "destructive", onPress: execute }
+          ]);
+      }
+  };
+
+  const filtered = cases.filter(c => {
+      const s = search.toLowerCase();
+      return (c.matrixRefNo || c.id).toLowerCase().includes(s) || (c.assigneeName || "").toLowerCase().includes(s);
+  });
+
+  return (
+      <View style={styles.flexContainer}>
+          <View style={styles.searchContainer}>
+              <Ionicons name="search" size={20} color="#888" />
+              <TextInput 
+                  style={styles.searchInput} 
+                  placeholder="Search Ref No or Assignee..." 
+                  placeholderTextColor="#888"
+                  value={search}
+                  onChangeText={setSearch}
+              />
+          </View>
+          <View style={styles.tableHeader}>
+              <Text style={[styles.tableHeaderText, { flex: 1.5 }]}>Ref No</Text>
+              <Text style={[styles.tableHeaderText, { flex: 1 }]}>Status</Text>
+              <Text style={[styles.tableHeaderText, { flex: 1, textAlign: 'right' }]}>Action</Text>
+          </View>
+          <FlatList 
+              data={filtered}
+              keyExtractor={i => i.id}
+              contentContainerStyle={{paddingBottom: 20}}
+              renderItem={({item}) => (
+                  <View style={styles.tableRow}>
+                      <Text style={[styles.tableCell, { flex: 1.5, fontWeight: 'bold' }]} numberOfLines={1}>{item.matrixRefNo || item.id}</Text>
+                      <Text style={[styles.tableCell, { flex: 1, color: getStatusColor(item.status) }]}>{item.status?.toUpperCase()}</Text>
+                      <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'flex-end', gap: 5 }}>
+                          <TouchableOpacity 
+                            style={[styles.actionBtnSmall, {backgroundColor: '#4caf50', paddingHorizontal: 8, paddingVertical: 4, marginLeft: 0}]} 
+                            onPress={() => handleForceComplete(item)}
+                            disabled={loadingMap[item.id]}
+                          >
+                              {loadingMap[item.id] ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{color: '#fff', fontSize: 10, fontWeight: 'bold'}}>Complete</Text>}
+                          </TouchableOpacity>
+                          <TouchableOpacity 
+                            style={[styles.actionBtnSmall, {backgroundColor: '#f44336', paddingHorizontal: 8, paddingVertical: 4, marginLeft: 0}]} 
+                            onPress={() => handleForceRevert(item)}
+                            disabled={loadingMap[item.id]}
+                          >
+                              <Text style={{color: '#fff', fontSize: 10, fontWeight: 'bold'}}>Revert</Text>
+                          </TouchableOpacity>
+                      </View>
+                  </View>
+              )}
+          />
+      </View>
+  );
+}
+
+function FirebaseTab() {
+  const [cases, setCases] = useState([]);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [dateFilter, setDateFilter] = useState("all");
+
+  useEffect(() => {
+    const ref = firebase.database().ref("cases");
+    const onValue = ref.on("value", snapshot => {
+      const data = snapshot.val() || {};
+      setCases(Object.keys(data).map(k => ({ id: k, ...data[k] })));
+    });
+    return () => ref.off("value", onValue);
+  }, []);
+
+  const handleDelete = (id) => {
+    if (Platform.OS === 'web') {
+        if (confirm("Delete this case from Firebase permanently?")) {
+             firebase.database().ref(`cases/${id}`).remove();
+        }
+    } else {
+        Alert.alert("Delete Case", "Are you sure? This cannot be undone.", [
+            { text: "Cancel", style: "cancel" },
+            { text: "Delete", style: "destructive", onPress: () => firebase.database().ref(`cases/${id}`).remove() }
+        ]);
+    }
+  };
+
+  const filtered = cases.filter(c => {
+      const s = search.toLowerCase();
+      const matchesSearch = (c.matrixRefNo || c.id).toLowerCase().includes(s) || (c.assigneeName || "").toLowerCase().includes(s);
+      const matchesStatus = statusFilter ? c.status === statusFilter : true;
+      
+      let matchesDate = true;
+      if (dateFilter === '>3m') {
+          const dateToCheck = c.completedAt || c.assignedAt;
+          if (dateToCheck) {
+              const d = new Date(dateToCheck);
+              const threeMonthsAgo = new Date();
+              threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+              matchesDate = d < threeMonthsAgo;
+          } else matchesDate = false;
+      }
+      return matchesSearch && matchesStatus && matchesDate;
+  });
+
+  return (
+      <View style={styles.flexContainer}>
+          <View style={styles.searchContainer}>
+              <Ionicons name="search" size={20} color="#888" />
+              <TextInput 
+                  style={styles.searchInput} 
+                  placeholder="Search ID or Assignee..." 
+                  placeholderTextColor="#888"
+                  value={search}
+                  onChangeText={setSearch}
+              />
+          </View>
+          <View style={{flexDirection: 'row', paddingHorizontal: 16, paddingBottom: 10, flexWrap: 'wrap', gap: 8}}>
+              {['', 'assigned', 'completed', 'audit', 'reverted'].map(st => (
+                  <TouchableOpacity key={st} onPress={() => setStatusFilter(st)} style={[styles.filterChip, statusFilter === st && styles.activeFilterChip]}>
+                      <Text style={[styles.filterText, statusFilter === st && styles.activeFilterText]}>{st ? st.toUpperCase() : 'ALL'}</Text>
+                  </TouchableOpacity>
+              ))}
+              <TouchableOpacity onPress={() => setDateFilter(dateFilter === 'all' ? '>3m' : 'all')} style={[styles.filterChip, dateFilter === '>3m' && {backgroundColor: '#ff9800'}]}>
+                  <Text style={[styles.filterText, dateFilter === '>3m' && {color: '#fff'}]}>{dateFilter === '>3m' ? '> 3 Months' : 'Date Filter'}</Text>
+              </TouchableOpacity>
+          </View>
+          <View style={styles.tableHeader}>
+              <Text style={[styles.tableHeaderText, { flex: 1.5 }]}>Ref No</Text>
+              <Text style={[styles.tableHeaderText, { flex: 1 }]}>Assigned To</Text>
+              <Text style={[styles.tableHeaderText, { flex: 0.8 }]}>Status</Text>
+              <Text style={[styles.tableHeaderText, { flex: 1 }]}>Completed At</Text>
+              <Text style={[styles.tableHeaderText, { flex: 0.5, textAlign: 'center' }]}>Del</Text>
+          </View>
+          <FlatList 
+              data={filtered}
+              keyExtractor={i => i.id}
+              contentContainerStyle={{paddingBottom: 20}}
+              renderItem={({item}) => (
+                  <View style={styles.tableRow}>
+                      <Text style={[styles.tableCell, { flex: 1.5, fontWeight: 'bold' }]} numberOfLines={1}>{item.matrixRefNo || item.id}</Text>
+                      <Text style={[styles.tableCell, { flex: 1 }]} numberOfLines={1}>{item.assigneeName || item.assignedTo || '-'}</Text>
+                      <Text style={[styles.tableCell, { flex: 0.8, color: getStatusColor(item.status) }]}>{item.status?.toUpperCase()}</Text>
+                      <Text style={[styles.tableCell, { flex: 1 }]} numberOfLines={1}>{item.completedAt ? new Date(item.completedAt).toLocaleDateString() : '-'}</Text>
+                      <TouchableOpacity style={[styles.iconBtn, { flex: 0.5, alignItems: 'center' }]} onPress={() => handleDelete(item.id)}>
+                          <Ionicons name="trash-outline" size={18} color="#ff4444" />
+                      </TouchableOpacity>
+                  </View>
+              )}
+          />
+      </View>
+  );
+}
+
+function CloudinaryTab() {
+  const [cases, setCases] = useState([]);
+  const [search, setSearch] = useState("");
+  const [loadingMap, setLoadingMap] = useState({});
+  const [dateFilter, setDateFilter] = useState("all");
+
+  useEffect(() => {
+    const ref = firebase.database().ref("cases");
+    const onValue = ref.on("value", snapshot => {
+      const data = snapshot.val() || {};
+      setCases(Object.keys(data).map(k => ({ id: k, ...data[k] })));
+    });
+    return () => ref.off("value", onValue);
+  }, []);
+
+  const handleCleanup = async (item) => {
+      setLoadingMap(prev => ({...prev, [item.id]: true}));
+      try {
+          const urls = [];
+          if (item.photosFolderLink) urls.push(item.photosFolderLink);
+          if (item.filledForm?.url) urls.push(item.filledForm.url);
+          if (item.photosFolder) {
+              Object.values(item.photosFolder).forEach(arr => {
+                  if (Array.isArray(arr)) arr.forEach(p => { if(p.uri && p.uri.includes('cloudinary')) urls.push(p.uri); });
+              });
+          }
+
+          if (urls.length === 0) {
+              Alert.alert("Info", "No Cloudinary URLs found in this case.");
+              setLoadingMap(prev => ({...prev, [item.id]: false}));
+              return;
+          }
+
+          let deletedCount = 0;
+          for (const url of urls) {
+              try {
+                  await fetch(`${SERVER_URL}/cloudinary/destroy-from-url`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ url, resource_type: url.endsWith('.pdf') ? 'raw' : 'image' }),
+                  });
+                  deletedCount++;
+              } catch(e) { console.warn(e); }
+          }
+          
+          Alert.alert("Success", `Cleanup command sent for ${deletedCount} resources.`);
+      } catch (e) {
+          Alert.alert("Error", e.message);
+      } finally {
+          setLoadingMap(prev => ({...prev, [item.id]: false}));
+      }
+  };
+
+  const filtered = cases.filter(c => {
+      const s = search.toLowerCase();
+      const matchesSearch = (c.matrixRefNo || c.id).toLowerCase().includes(s);
+      
+      let matchesDate = true;
+      if (dateFilter === '>3m') {
+          const dateToCheck = c.completedAt || c.assignedAt;
+          if (dateToCheck) {
+              const d = new Date(dateToCheck);
+              const threeMonthsAgo = new Date();
+              threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+              matchesDate = d < threeMonthsAgo;
+          } else matchesDate = false;
+      }
+      return matchesSearch && matchesDate && c.status === 'completed';
+  });
+
+  return (
+      <View style={styles.flexContainer}>
+          <View style={styles.searchContainer}>
+              <Ionicons name="search" size={20} color="#888" />
+              <TextInput 
+                  style={styles.searchInput} 
+                  placeholder="Search Completed Cases..." 
+                  placeholderTextColor="#888"
+                  value={search}
+                  onChangeText={setSearch}
+              />
+          </View>
+          <View style={{flexDirection: 'row', paddingHorizontal: 16, paddingBottom: 10}}>
+              <TouchableOpacity onPress={() => setDateFilter(dateFilter === 'all' ? '>3m' : 'all')} style={[styles.filterChip, dateFilter === '>3m' && {backgroundColor: '#ff9800'}]}>
+                  <Text style={[styles.filterText, dateFilter === '>3m' && {color: '#fff'}]}>{dateFilter === '>3m' ? '> 3 Months' : 'Date Filter'}</Text>
+              </TouchableOpacity>
+          </View>
+          <View style={styles.tableHeader}>
+              <Text style={[styles.tableHeaderText, { flex: 1.5 }]}>Ref No</Text>
+              <Text style={[styles.tableHeaderText, { flex: 0.8 }]}>Status</Text>
+              <Text style={[styles.tableHeaderText, { flex: 1 }]}>Assigned To</Text>
+              <Text style={[styles.tableHeaderText, { flex: 1, textAlign: 'right' }]}>Action</Text>
+          </View>
+          <FlatList 
+              data={filtered}
+              keyExtractor={i => i.id}
+              contentContainerStyle={{paddingBottom: 20}}
+              ListEmptyComponent={<Text style={{color: '#fff', textAlign: 'center', marginTop: 20}}>No completed cases found.</Text>}
+              renderItem={({item}) => (
+                  <View style={styles.tableRow}>
+                      <Text style={[styles.tableCell, { flex: 1.5, fontWeight: 'bold' }]} numberOfLines={1}>{item.matrixRefNo || item.id}</Text>
+                      <Text style={[styles.tableCell, { flex: 0.8, color: getStatusColor(item.status) }]}>{item.status?.toUpperCase()}</Text>
+                      <Text style={[styles.tableCell, { flex: 1 }]} numberOfLines={1}>{item.assigneeName || item.assignedTo || '-'}</Text>
+                      <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                          {item.status === 'completed' ? (
+                              <View style={{flexDirection: 'row', gap: 5}}>
+                              <TouchableOpacity 
+                                style={[styles.actionBtnSmall, {backgroundColor: '#ff9800', paddingHorizontal: 8, paddingVertical: 4}]} 
+                                onPress={() => handleCleanup(item)}
+                                disabled={loadingMap[item.id]}
+                              >
+                                  {loadingMap[item.id] ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{color: '#fff', fontSize: 10, fontWeight: 'bold'}}>Clean Files</Text>}
+                              </TouchableOpacity>
+                              </View>
+                          ) : (
+                              <Text style={{color: '#666', fontSize: 10, fontStyle: 'italic'}}>Active</Text>
+                          )}
+                      </View>
+                  </View>
+              )}
+          />
+      </View>
   );
 }
 
@@ -1268,6 +1590,9 @@ const getStatusColor = (status) => {
     case 'active': return '#4caf50';
     case 'banned': return '#f44336';
     case 'suspended': return '#ff9800';
+    case 'completed': return '#4caf50';
+    case 'assigned': return '#ff9800';
+    case 'audit': return '#2196f3';
     default: return '#9e9e9e';
   }
 };
@@ -1338,7 +1663,7 @@ const styles = StyleSheet.create({
 
   // Sections & Cards
   section: { marginBottom: 24 },
-  sectionTitle: { color: "#8e24aa", fontSize: 14, fontWeight: "bold", marginBottom: 10, textTransform: "uppercase", letterSpacing: 1 },
+  sectionTitle: { color: "#4fc3f7", fontSize: 14, fontWeight: "bold", marginBottom: 10, textTransform: "uppercase", letterSpacing: 1 },
   card: {
     backgroundColor: "rgba(255,255,255,0.05)",
     borderRadius: 12,
@@ -1423,17 +1748,47 @@ const styles = StyleSheet.create({
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#ff4444", marginRight: 6 },
   liveText: { color: "#ff4444", fontSize: 12, fontWeight: "bold" },
   logRow: { flexDirection: "row", paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.05)" },
-  logTime: { color: "#666", fontSize: 12, width: 70 },
-  logTag: { color: "#8e24aa", fontSize: 12, width: 100, fontWeight: "600" },
+  logTime: { color: "#aaa", fontSize: 12, width: 70 },
+  logTag: { color: "#ba68c8", fontSize: 12, width: 100, fontWeight: "600" },
   logMessage: { color: "#ccc", fontSize: 12, flex: 1 },
   
   // Utils
   listItem: { flexDirection: "row", alignItems: "center", paddingVertical: 12 },
   listItemText: { color: "#fff", fontSize: 16, marginLeft: 12, flex: 1 },
   divider: { height: 1, backgroundColor: "rgba(255,255,255,0.05)", marginVertical: 4 },
-  linkText: { color: "#8e24aa", fontWeight: "bold" },
+  linkText: { color: "#4fc3f7", fontWeight: "bold" },
   tabScroll: { flex: 1 },
   tabScrollContent: { padding: 20 },
+  
+  // Table Styles
+  tableHeader: {
+    flexDirection: 'row',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.1)',
+  },
+  tableHeaderText: {
+    color: '#aaa',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  tableRow: {
+    flexDirection: 'row',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+    alignItems: 'center',
+  },
+  tableCell: {
+    color: '#fff',
+    fontSize: 12,
+  },
+  iconBtn: {
+      padding: 5,
+  },
 
   // Sections & Cards
   section: { marginBottom: 24 },

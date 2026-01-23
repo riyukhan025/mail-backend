@@ -5,7 +5,7 @@ import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { LinearGradient } from "expo-linear-gradient";
 import * as MailComposer from "expo-mail-composer";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -66,6 +66,8 @@ export default function AuditCaseScreen({ navigation, route }) {
   const [rectifyModalVisible, setRectifyModalVisible] = useState(false);
   const [revertModalVisible, setRevertModalVisible] = useState(false);
   const [emailModalVisible, setEmailModalVisible] = useState(false);
+  const [showManualTools, setShowManualTools] = useState(false);
+  const [enableManualAudit, setEnableManualAudit] = useState(false);
   
   const [isFinalizing, setIsFinalizing] = useState(false);
   const [selectedRedoItems, setSelectedRedoItems] = useState([]);
@@ -114,6 +116,14 @@ export default function AuditCaseScreen({ navigation, route }) {
       if (emails.length > 0) setSelectedTo([emails[0]]);
   }, [caseData]);
 
+  useEffect(() => {
+    const devRef = firebase.database().ref("dev/enableManualAudit");
+    const listener = devRef.on("value", (snapshot) => {
+      setEnableManualAudit(!!snapshot.val());
+    });
+    return () => devRef.off("value", listener);
+  }, []);
+
   const handleDownloadAll = async () => {
     if (Platform.OS === 'web') {
         if (caseData.photosFolderLink) window.open(caseData.photosFolderLink, "_blank");
@@ -148,12 +158,51 @@ export default function AuditCaseScreen({ navigation, route }) {
         }
 
         const mergedPdf = await PDFDocument.create();
+        const font = await mergedPdf.embedFont(StandardFonts.HelveticaBold);
+
+        // --- NEW: Title Page (Page 1) ---
+        const titlePage = mergedPdf.addPage();
+        const { width, height } = titlePage.getSize();
+        
+        titlePage.drawText("SPACE SOLUTIONS", {
+            x: 50, y: height - 150, size: 30, font, color: rgb(0, 0, 0)
+        });
+        titlePage.drawText(`Case Ref: ${caseData.matrixRefNo || caseData.RefNo || caseId}`, {
+            x: 50, y: height - 200, size: 20, font, color: rgb(0, 0, 0)
+        });
+        // --------------------------------
         
         if (originalFormUrl) {
-            const formBytes = await fetch(originalFormUrl).then(r => r.arrayBuffer());
-            const formPdf = await PDFDocument.load(formBytes);
-            const pages = await mergedPdf.copyPages(formPdf, formPdf.getPageIndices());
-            pages.forEach(p => mergedPdf.addPage(p));
+            // Attempt to switch to PDF for better merging quality if it's a Cloudinary JPG
+            let fetchUrl = originalFormUrl;
+            if (fetchUrl.includes("cloudinary") && fetchUrl.endsWith(".jpg")) {
+                fetchUrl = fetchUrl.replace(".jpg", ".pdf");
+            }
+
+            try {
+                const formBytes = await fetch(fetchUrl).then(r => {
+                    if (!r.ok) throw new Error("Fetch failed");
+                    return r.arrayBuffer();
+                });
+                
+                // Simple PDF signature check (%PDF)
+                const header = new Uint8Array(formBytes.slice(0, 5));
+                const headerStr = String.fromCharCode(...header);
+                
+                if (headerStr.startsWith('%PDF')) {
+                    const formPdf = await PDFDocument.load(formBytes);
+                    const pages = await mergedPdf.copyPages(formPdf, formPdf.getPageIndices());
+                    pages.forEach(p => mergedPdf.addPage(p));
+                } else {
+                    // Fallback: Embed as Image (if the swap failed or it really is an image)
+                    const image = await mergedPdf.embedJpg(formBytes);
+                    const page = mergedPdf.addPage([image.width, image.height]);
+                    page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
+                }
+            } catch (e) {
+                console.warn("Failed to merge form PDF/Image:", e);
+                // Proceeding without form if it fails, or you could alert user
+            }
         }
 
         if (originalPhotosUrl) {
@@ -205,33 +254,8 @@ export default function AuditCaseScreen({ navigation, route }) {
 
         console.log(`[FINALIZE] Upload successful: ${newPdfUrl}`);
 
-        // --- NEW: Asynchronously delete original files from Cloudinary (fire and forget) ---
-        const deleteResource = (url, resource_type) => {
-            if (!url || url === newPdfUrl) return;
-            fetch(`${SERVER_URL}/cloudinary/destroy-from-url`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url, resource_type }),
-            })
-            .then(res => res.json())
-            .then(data => console.log(`[DELETE] Cleanup for ${url}:`, data.result))
-            .catch(e => console.warn(`[DELETE] Failed to cleanup ${url}:`, e));
-        };
-
-        // Delete original photo PDF and form PDF
-        deleteResource(originalPhotosUrl, 'raw');
-        deleteResource(originalFormUrl, 'raw');
-
-        // Delete individual photos
-        if (caseData.photosFolder) {
-            console.log('[FINALIZE] Deleting original photos from Cloudinary...');
-            const allPhotos = Object.values(caseData.photosFolder).flat();
-            for (const photo of allPhotos) {
-                if (photo.uri && photo.uri.includes('cloudinary')) {
-                    deleteResource(photo.uri, 'image');
-                }
-            }
-        }
+        // --- DELETION LOGIC REMOVED PER REQUEST ---
+        // Photos and original forms will be kept in Cloudinary.
 
         // Update Firebase
         await firebase.database().ref(`cases/${caseId}`).update({
@@ -245,6 +269,222 @@ export default function AuditCaseScreen({ navigation, route }) {
     } catch (e) {
         console.error("Finalize Report failed:", e);
         Alert.alert("Error", "Failed to finalize report: " + e.message);
+    } finally {
+        setIsFinalizing(false);
+    }
+  };
+
+  const handleManualPdfGeneration = async () => {
+    setIsFinalizing(true);
+    try {
+        const pdfDoc = await PDFDocument.create();
+        const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
+        // Helper to sanitize text for PDF (WinAnsi encoding)
+        const cleanText = (text) => {
+            if (!text) return "";
+            // Replace narrow no-break space (0x202F) and non-breaking space (0x00A0) with standard space
+            let cleaned = String(text).replace(/[\u202F\u00A0]/g, " ");
+            // Replace any other characters not supported by WinAnsi (roughly > 255) with '?'
+            return cleaned.replace(/[^\x00-\xFF]/g, "?");
+        };
+
+        // 1. Embed Form if exists
+        if (caseData.filledForm?.url) {
+            try {
+                const formBytes = await fetch(caseData.filledForm.url).then(r => r.arrayBuffer());
+                const formPdf = await PDFDocument.load(formBytes);
+                const pages = await pdfDoc.copyPages(formPdf, formPdf.getPageIndices());
+                pages.forEach(p => pdfDoc.addPage(p));
+            } catch (e) {
+                console.log("Error loading form pdf", e);
+                Alert.alert("Warning", "Could not load filled form PDF. Proceeding with photos only.");
+            }
+        }
+
+        // 2. Embed Photos from photosFolder
+        if (caseData.photosFolder) {
+            let allPhotos = [];
+            Object.keys(caseData.photosFolder).forEach(cat => {
+                const list = caseData.photosFolder[cat];
+                if (Array.isArray(list)) {
+                    list.forEach(p => allPhotos.push({ ...p, category: cat }));
+                }
+            });
+
+            for (const photo of allPhotos) {
+                if (!photo.uri) continue;
+                let page = null;
+                try {
+                    // --- NEW: Robust image fetching logic ---
+                    let imgBytes;
+                    let isPng = false;
+
+                    const fetchBuffer = async (u, retries = 3) => {
+                        for (let i = 0; i < retries; i++) {
+                            try {
+                                const r = await fetch(u);
+                            } catch (e) {
+                                console.warn(`[PDF-FETCH] Attempt ${i + 1} failed for ${u}: ${e.message}`);
+                                if (i === retries - 1) throw e;
+                                await new Promise(res => setTimeout(res, 1000 * (i + 1)));
+                            }
+                        }
+                    };
+
+                    const isSigned = photo.uri.includes("/s--");
+                    let optimizedUrl = photo.uri;
+                    // Only optimize if NOT signed to avoid breaking signature
+                    if (!isSigned && photo.uri.includes("cloudinary.com") && photo.uri.includes("/upload/") && !photo.uri.includes("f_jpg")) {
+                        optimizedUrl = photo.uri.replace("/upload/", "/upload/w_600,q_50,f_jpg/");
+                    }
+
+                    try {
+                        imgBytes = await fetchBuffer(optimizedUrl);
+                    } catch (e1) {
+                        try {
+                            imgBytes = await fetchBuffer(photo.uri);
+                            isPng = photo.uri.toLowerCase().endsWith('.png');
+                        } catch (e2) {
+                            if (!isSigned) {
+                                try {
+                                    imgBytes = await fetchBuffer(photo.uri + ".jpg");
+                                } catch (e3) { throw e2; }
+                            } else {
+                                throw e2;
+                            }
+                        }
+                    }
+
+                    let image;
+                    try {
+                        image = isPng ? await pdfDoc.embedPng(imgBytes) : await pdfDoc.embedJpg(imgBytes);
+                    } catch (e) {
+                        image = isPng ? await pdfDoc.embedJpg(imgBytes) : await pdfDoc.embedPng(imgBytes);
+                    }
+
+                    page = pdfDoc.addPage();
+                    const { width, height } = page.getSize();
+                    const dims = image.scaleToFit(width - 40, height - 40);
+                    
+                    const imageX = (width - dims.width) / 2;
+                    const imageY = (height - dims.height) / 2;
+                    
+                    page.drawImage(image, {
+                        x: imageX,
+                        y: imageY,
+                        width: dims.width,
+                        height: dims.height,
+                    });
+
+                    // Overlay for metadata (Like CaseDetailScreen)
+                    const overlayHeight = 85;
+                    page.drawRectangle({ 
+                        x: imageX, 
+                        y: imageY, 
+                        width: dims.width, 
+                        height: overlayHeight, 
+                        color: rgb(0, 0, 0), 
+                        opacity: 0.7 
+                    });
+
+                    let textY = imageY + 65;
+                    const fontSize = 10;
+                    const textColor = rgb(1, 1, 1);
+
+                    page.drawText(cleanText(`Category: ${photo.category}`), { x: imageX + 10, y: textY, size: fontSize, font, color: textColor });
+                    textY -= 12;
+                    
+                    if (photo.geotag && photo.geotag.latitude) {
+                        page.drawText(cleanText(`Loc: ${Number(photo.geotag.latitude).toFixed(6)}, ${Number(photo.geotag.longitude).toFixed(6)}`), { x: imageX + 10, y: textY, size: fontSize, font, color: textColor });
+                        textY -= 12;
+                    }
+
+                    if (photo.timestamp) {
+                        page.drawText(cleanText(`Time: ${photo.timestamp}`), { x: imageX + 10, y: textY, size: fontSize, font, color: textColor });
+                        textY -= 12;
+                    }
+
+                    if (photo.address) {
+                        const addressText = cleanText(`Addr: ${photo.address}`);
+                        const maxTextWidth = dims.width - 20;
+                        const words = addressText.split(' ');
+                        let currentLine = words[0] || '';
+
+                        for (let i = 1; i < words.length; i++) {
+                            const word = words[i];
+                            const testLine = `${currentLine} ${word}`;
+                            if (font.widthOfTextAtSize(testLine, fontSize) < maxTextWidth) {
+                                currentLine = testLine;
+                            } else {
+                                if (textY < imageY + 5) break;
+                                page.drawText(currentLine, { x: imageX + 10, y: textY, size: fontSize, font, color: textColor });
+                                textY -= 12;
+                                currentLine = word;
+                            }
+                        }
+                        if (textY >= imageY + 5) {
+                            page.drawText(currentLine, { x: imageX + 10, y: textY, size: fontSize, font, color: textColor });
+                        }
+                    }
+                } catch (e) {
+                    console.log("Error embedding photo", photo.uri, e);
+                    // Draw error placeholder so PDF generation doesn't fail completely
+                    try {
+                        const errorPage = pdfDoc.addPage();
+                        const { width, height } = errorPage.getSize();
+                        errorPage.drawRectangle({ x: 50, y: height / 2 - 50, width: width - 100, height: 100, color: rgb(0.95, 0.95, 0.95), borderColor: rgb(1, 0, 0), borderWidth: 1 });
+                        errorPage.drawText(`Error loading image: ${cleanText(photo.uri)}`, { x: 60, y: height / 2, size: 10, font, color: rgb(1, 0, 0) });
+                        errorPage.drawText(`(Image source inaccessible)`, { x: 60, y: height / 2 - 15, size: 8, font, color: rgb(0.5, 0.5, 0.5) });
+                    } catch (drawErr) {
+                        console.error("Failed to draw error placeholder", drawErr);
+                    }
+                }
+            }
+        }
+
+        // 3. Save and Upload
+        if (pdfDoc.getPageCount() === 0) {
+             const page = pdfDoc.addPage();
+             page.drawText("No content available (Form missing & Photos failed to load).", { x: 50, y: 700, size: 12, font, color: rgb(0, 0, 0) });
+        }
+
+        const pdfBytes = await pdfDoc.save();
+        const safeRef = (caseData.matrixRefNo || caseData.RefNo || caseId).replace(/[^a-zA-Z0-9-_]/g, '_');
+        const publicId = `ManualReport_${safeRef}_${Date.now()}`;
+
+        const formData = new FormData();
+        formData.append("upload_preset", UPLOAD_PRESET);
+        formData.append("public_id", publicId);
+        formData.append("folder", `cases/${safeRef}`);
+
+        if (Platform.OS === 'web') {
+            const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+            formData.append("file", blob, `${publicId}.pdf`);
+        } else {
+            const pdfBase64 = uint8ToBase64Safe(pdfBytes);
+            const fileUri = FileSystem.cacheDirectory + `${publicId}.pdf`;
+            await FileSystem.writeAsStringAsync(fileUri, pdfBase64, { encoding: FileSystem.EncodingType.Base64 });
+            formData.append("file", { uri: fileUri, type: 'application/pdf', name: `${publicId}.pdf` });
+        }
+
+        const uploadResponse = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/upload`, {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!uploadResponse.ok) throw new Error("Upload failed");
+        const uploadJson = await uploadResponse.json();
+        
+        await firebase.database().ref(`cases/${caseId}`).update({
+            photosFolderLink: uploadJson.secure_url,
+            filledForm: null,
+            mergedAt: Date.now(),
+            manualPdfGenerated: true
+        });
+        Alert.alert("Success", "Manual PDF generated and saved.");
+    } catch (e) {
+        Alert.alert("Error", "Failed to generate PDF: " + e.message);
     } finally {
         setIsFinalizing(false);
     }
@@ -535,7 +775,8 @@ Spacesolutions Team
         name: file.name || "manual_upload.pdf",
       });
       formData.append("upload_preset", UPLOAD_PRESET);
-      formData.append("folder", `cases/${caseData.matrixRefNo || caseData.RefNo || caseId}`);
+      const safeRef = (caseData.matrixRefNo || caseData.RefNo || caseId).replace(/[^a-zA-Z0-9-_]/g, '_');
+      formData.append("folder", `cases/${safeRef}`);
       
       const isPdf = file.mimeType === "application/pdf" || (file.name && file.name.endsWith(".pdf"));
       const resourceType = isPdf ? "raw" : "image";
@@ -603,6 +844,27 @@ Spacesolutions Team
               <Text style={styles.feedbackTitle}>Previous Failure Reason:</Text>
               <Text style={styles.feedbackText}>{caseData.auditFeedback}</Text>
             </View>
+          )}
+
+          {/* Manual Tools Toggle */}
+          {enableManualAudit && (
+            <TouchableOpacity onPress={() => setShowManualTools(!showManualTools)} style={{alignSelf: 'flex-end', padding: 5, marginTop: 5}}>
+               <Ionicons name={showManualTools ? "construct" : "construct-outline"} size={20} color="#555" />
+            </TouchableOpacity>
+          )}
+
+          {showManualTools && (
+              <View style={{backgroundColor: '#f0f0f0', padding: 10, borderRadius: 8, marginBottom: 10}}>
+                  <Text style={{fontWeight: 'bold', marginBottom: 5, color: '#333'}}>Developer Tools</Text>
+                  <TouchableOpacity 
+                    style={[styles.downloadButton, { backgroundColor: "#673AB7" }]}
+                    onPress={handleManualPdfGeneration}
+                    disabled={isFinalizing}
+                  >
+                    {isFinalizing ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="document-attach" size={20} color="#fff" />}
+                    <Text style={styles.downloadButtonText}>Generate Full PDF (Manual)</Text>
+                  </TouchableOpacity>
+              </View>
           )}
 
           <View style={styles.divider} />

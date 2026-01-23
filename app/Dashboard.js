@@ -99,7 +99,8 @@ export default function Dashboard({ navigation }) {
   // Feature Flags
   const [newUI, setNewUI] = useState(false);
   const [betaFeatures, setBetaFeatures] = useState(false);
-  const [maintenanceMode, setMaintenanceMode] = useState(false);
+  const [maintenanceModeMember, setMaintenanceModeMember] = useState(false);
+  const [maintenanceModalVisible, setMaintenanceModalVisible] = useState(false);
 
   useEffect(() => {
     const devRef = firebase.database().ref("dev");
@@ -109,7 +110,12 @@ export default function Dashboard({ navigation }) {
       // Handle both boolean and string "true"
       setNewUI(flags.enableNewUI === true || flags.enableNewUI === "true");
       setBetaFeatures(flags.enableBetaFeatures === true || flags.enableBetaFeatures === "true");
-      setMaintenanceMode(flags.maintenanceMode === true || flags.maintenanceMode === "true");
+      
+      const isMaint = flags.maintenanceModeMember === true || flags.maintenanceModeMember === "true";
+      if (isMaint && !maintenanceModeMember) {
+          setMaintenanceModalVisible(true);
+      }
+      setMaintenanceModeMember(isMaint);
     });
     return () => devRef.off("value", listener);
   }, []);
@@ -294,18 +300,6 @@ export default function Dashboard({ navigation }) {
   const completedCasesCount = cases.filter(c => c.status === 'completed' || c.status === 'closed').length;
   const pendingCasesCount = cases.filter(c => c.status === 'assigned' || c.status === 'audit' || c.status === 'open').length;
 
-  if (maintenanceMode) {
-    return (
-      <View style={styles.maintenanceScreen}>
-        <View style={styles.maintenanceAlertBox}>
-          <Ionicons name="warning" size={60} color="#fff" style={{ marginBottom: 15 }} />
-          <Text style={styles.maintenanceAlertTitle}>MAINTENANCE MODE ENABLED</Text>
-          <Text style={styles.maintenanceAlertText}>Wait for some time or contact dev.</Text>
-        </View>
-      </View>
-    );
-  }
-
   if (loading) return null;
 
   // Extract unique clients for filter
@@ -422,15 +416,15 @@ export default function Dashboard({ navigation }) {
       end={{ x: 1, y: 1 }}
       style={styles.container}
     >
-      {/* Maintenance Banner */}
-      {maintenanceMode && (
+      {/* Maintenance Banner (Non-blocking) */}
+      {maintenanceModeMember && (
         <View style={styles.maintenanceBanner}>
-          <Text style={styles.maintenanceText}>⚠️ MAINTENANCE MODE: ACTIONS ALL ARE TRACKED</Text>
+          <Text style={styles.maintenanceText}>⚠️ MAINTENANCE MODE ENABLED</Text>
         </View>
       )}
 
       {/* Header */}
-      <View style={[styles.headerRow, maintenanceMode && { marginTop: 10 }]}>
+      <View style={[styles.headerRow, maintenanceModeMember && { marginTop: 10 }]}>
         <TouchableOpacity onPress={() => setMenuOpen(true)}>
           <Ionicons name="menu" size={28} color="#fff" />
         </TouchableOpacity>
@@ -896,6 +890,25 @@ export default function Dashboard({ navigation }) {
               </TouchableOpacity>
             </View>
             <TouchableOpacity style={{ marginTop: 15, alignSelf: 'center' }} onPress={() => setTypeModalVisible(false)}><Text style={{ color: '#666' }}>Cancel</Text></TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Maintenance Warning Modal */}
+      <Modal
+        visible={maintenanceModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setMaintenanceModalVisible(false)}
+      >
+        <View style={styles.alertOverlay}>
+          <View style={[styles.alertBox, { backgroundColor: "#fff3e0", borderColor: "#ff9800", borderWidth: 2 }]}>
+            <Ionicons name="construct" size={50} color="#ff9800" style={{ marginBottom: 10 }} />
+            <Text style={[styles.alertTitle, { color: "#f57c00" }]}>Maintenance Mode</Text>
+            <Text style={[styles.alertSub, { color: "#ef6c00" }]}>The system is currently under maintenance. Some actions like filling forms or uploading photos are disabled.</Text>
+            <TouchableOpacity style={[styles.alertButton, { backgroundColor: "#ff9800" }]} onPress={() => setMaintenanceModalVisible(false)}>
+                <Text style={[styles.alertButtonText, { padding: 10, textAlign: 'center' }]}>I Understand</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>

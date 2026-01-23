@@ -57,7 +57,7 @@ export default function AdminPanelScreen({ navigation }) {
   // Feature Flags
   const [newUI, setNewUI] = useState(false);
   const [betaFeatures, setBetaFeatures] = useState(false);
-  const [maintenanceMode, setMaintenanceMode] = useState(false);
+  const [maintenanceModeAdmin, setMaintenanceModeAdmin] = useState(false);
 
   useEffect(() => {
     const devRef = firebase.database().ref("dev");
@@ -67,7 +67,7 @@ export default function AdminPanelScreen({ navigation }) {
       // Handle both boolean and string "true"
       setNewUI(flags.enableNewUI === true || flags.enableNewUI === "true");
       setBetaFeatures(flags.enableBetaFeatures === true || flags.enableBetaFeatures === "true");
-      setMaintenanceMode(flags.maintenanceMode === true || flags.maintenanceMode === "true");
+      setMaintenanceModeAdmin(flags.maintenanceModeAdmin === true || flags.maintenanceModeAdmin === "true");
     });
     return () => devRef.off("value", listener);
   }, []);
@@ -687,7 +687,7 @@ export default function AdminPanelScreen({ navigation }) {
     );
   };
 
-  if (maintenanceMode) {
+  if (maintenanceModeAdmin) {
     return (
       <View style={styles.maintenanceScreen}>
         <View style={styles.maintenanceAlertBox}>
@@ -791,7 +791,7 @@ export default function AdminPanelScreen({ navigation }) {
       )}
 
       {/* Fixed Top Section */}
-      <View style={{ paddingHorizontal: 10, paddingTop: maintenanceMode ? 10 : (Platform.OS === 'android' ? 40 : 50), paddingBottom: 5 }}>
+      <View style={{ paddingHorizontal: 10, paddingTop: maintenanceModeAdmin ? 10 : (Platform.OS === 'android' ? 40 : 50), paddingBottom: 5 }}>
         <View style={styles.headerRow}>
           <TouchableOpacity onPress={openMenu} style={styles.iconButton}>
             <Ionicons name="menu" size={32} color={isLightTheme ? "#333" : "#fff"} />

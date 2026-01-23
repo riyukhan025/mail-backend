@@ -108,16 +108,20 @@ async function uploadPdfToCloudinary(pdfData, caseId) {
   formData.append('upload_preset', UPLOAD_PRESET);
   formData.append('folder', `cases/${caseId}`);
   formData.append('public_id', publicId);
-  formData.append('resource_type', 'raw');
 
-  const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/raw/upload`, { method: 'POST', body: formData });
+  const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, { method: 'POST', body: formData });
   const data = await response.json();
 
   if (data.error) {
     throw new Error(data.error.message || "Cloudinary upload failed");
   }
 
-  return data.secure_url;
+  // Return JPG URL (Client Requirement)
+  let url = data.secure_url;
+  if (url && url.endsWith('.pdf')) {
+      return url.replace('.pdf', '.jpg');
+  }
+  return url;
 }
 /* ================= RADIO UI ================= */
 const RadioGroup = ({ title, value, onChange, options }) => (
@@ -219,13 +223,14 @@ export default function CESFormScreen() {
       if (data.cesType === "No" && !data.formCompleted) {
           setForm(prev => {
               const naTextFields = {};
-              ['fatherName', 'respondentName', 'relationship', 'fieldExecutiveName', 'detailsVerified'].forEach(k => {
+              ['fatherName', 'respondentName', 'relationship', 'detailsVerified'].forEach(k => {
                   naTextFields[k] = "NA";
               });
 
               return {
                   ...prev,
                   ...naTextFields,
+                  fieldExecutiveName: data.assigneeName || "",
                   stayFromDate: "NA",
                   stayToDate: "NA",
                   maritalStatus: "NA",
