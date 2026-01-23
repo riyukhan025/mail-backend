@@ -3,7 +3,7 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as Location from "expo-location";
 import { useEffect, useRef, useState } from "react";
-import { Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { captureRef } from "react-native-view-shot";
 
 export default function CameraGPSScreen({ navigation, route }) {
@@ -21,6 +21,7 @@ export default function CameraGPSScreen({ navigation, route }) {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [zoom, setZoom] = useState(0); // 👈 ZOOM
   const [previewUri, setPreviewUri] = useState(null);
+  const [processing, setProcessing] = useState(false);
 
   /* ---------------- Permissions ---------------- */
   useEffect(() => {
@@ -91,6 +92,8 @@ export default function CameraGPSScreen({ navigation, route }) {
 
   /* ---------------- Capture & Burn Logic ---------------- */
   const takePicture = async () => {
+    if (processing) return;
+    setProcessing(true);
     try {
       const photo = await cameraRef.current.takePictureAsync({
         quality: 1,
@@ -99,24 +102,23 @@ export default function CameraGPSScreen({ navigation, route }) {
       setPreviewUri(photo.uri); // Trigger render of snapshot view
     } catch (err) {
       console.error("Capture error:", err);
+      setProcessing(false);
     }
   };
 
-  // Effect to process the snapshot once preview is rendered
   useEffect(() => {
     if (previewUri) {
       const processSnapshot = async () => {
         try {
-          // Small delay to ensure the View is fully rendered
-          await new Promise((resolve) => setTimeout(resolve, 200));
+          // Wait for render - increased delay for stability
+          await new Promise((resolve) => setTimeout(resolve, 1000));
 
           const uri = await captureRef(snapshotRef, {
             format: "jpg",
-            quality: 0.9,
+            quality: 0.8,
             result: "tmpfile",
           });
 
-          // Resize/Compress final result
           const finalImage = await ImageManipulator.manipulateAsync(
             uri,
             [{ resize: { width: 1280 } }],
@@ -136,11 +138,16 @@ export default function CameraGPSScreen({ navigation, route }) {
             address: currentAddress,
           };
 
-          onPhotosCapture && onPhotosCapture([newPhoto]);
+          if (onPhotosCapture) await onPhotosCapture([newPhoto]);
           navigation.goBack();
         } catch (e) {
           console.error("Snapshot failed:", e);
-          setPreviewUri(null); // Reset to camera on error
+          // Fallback to raw photo if snapshot fails
+          setPreviewUri(null);
+          setProcessing(false);
+          Alert.alert("Error", "Failed to process photo overlay. Please try again.");
+        } finally {
+          // setProcessing(false) is handled by navigation unmount or error reset
         }
       };
       processSnapshot();
@@ -178,14 +185,29 @@ export default function CameraGPSScreen({ navigation, route }) {
     </View>
   );
 
-  if (previewUri) {
-    return (
-      <View style={styles.container} ref={snapshotRef} collapsable={false}>
-        <Image source={{ uri: previewUri }} style={styles.camera} />
-        {renderOverlay()}
-      </View>
-    );
-  }
+  const renderControls = () => (
+    <View style={styles.controlsContainer}>
+      <TouchableOpacity style={styles.iconButton} onPress={toggleCameraFacing}>
+        <Ionicons name="camera-reverse" size={28} color="white" />
+      </TouchableOpacity>
+
+      <TouchableOpacity style={styles.iconButton} onPress={() => handleZoom("out")}>
+        <Ionicons name="remove" size={28} color="white" />
+      </TouchableOpacity>
+
+      <TouchableOpacity style={styles.captureButton} onPress={takePicture}>
+        <View style={styles.captureInner} />
+      </TouchableOpacity>
+
+      <TouchableOpacity style={styles.iconButton} onPress={() => handleZoom("in")}>
+        <Ionicons name="add" size={28} color="white" />
+      </TouchableOpacity>
+
+      <TouchableOpacity style={styles.iconButton} onPress={toggleFlash}>
+        <Ionicons name={flash === "on" ? "flash" : "flash-off"} size={28} color="white" />
+      </TouchableOpacity>
+    </View>
+  );
 
   /* ---------------- RENDER ---------------- */
   return (
@@ -197,31 +219,22 @@ export default function CameraGPSScreen({ navigation, route }) {
         flash={flash}
         zoom={zoom}
       >
-        {renderOverlay()}
-
-        {/* CONTROLS */}
-        <View style={styles.controlsContainer}>
-          <TouchableOpacity style={styles.iconButton} onPress={toggleCameraFacing}>
-            <Ionicons name="camera-reverse" size={28} color="white" />
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.iconButton} onPress={() => handleZoom("out")}>
-            <Ionicons name="remove" size={28} color="white" />
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.captureButton} onPress={takePicture}>
-            <View style={styles.captureInner} />
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.iconButton} onPress={() => handleZoom("in")}>
-            <Ionicons name="add" size={28} color="white" />
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.iconButton} onPress={toggleFlash}>
-            <Ionicons name={flash === "on" ? "flash" : "flash-off"} size={28} color="white" />
-          </TouchableOpacity>
-        </View>
+        {!previewUri && renderOverlay()}
+        {!previewUri && renderControls()}
       </CameraView>
+
+      {previewUri && (
+        <View style={styles.fullScreenCapture}>
+          <View style={{ flex: 1 }} ref={snapshotRef} collapsable={false}>
+            <Image source={{ uri: previewUri }} style={{ flex: 1 }} />
+            {renderOverlay()}
+          </View>
+          <View style={styles.processingOverlay}>
+            <ActivityIndicator size="large" color="#fff" />
+            <Text style={{ color: "white", marginTop: 10, fontWeight: "bold" }}>Processing...</Text>
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -235,11 +248,11 @@ const styles = StyleSheet.create({
   overlay: {
     position: "absolute",
     top: 40,
-    left: 15,
-    backgroundColor: "rgba(0,0,0,0.6)",
-    padding: 12,
-    borderRadius: 8,
-    maxWidth: "90%",
+    left: 20,
+    right: 20,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    padding: 10,
+    borderRadius: 6,
   },
   overlayText: {
     color: "white",
@@ -281,5 +294,17 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.55)",
     justifyContent: "center",
     alignItems: "center",
+  },
+  processingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 10,
+  },
+  fullScreenCapture: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "black",
+    zIndex: 20,
   },
 });

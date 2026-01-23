@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
+import * as DocumentPicker from "expo-document-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import { useContext, useEffect, useState } from "react";
 import {
@@ -18,6 +19,7 @@ import {
   View
 } from "react-native";
 import { BarChart, LineChart, PieChart } from "react-native-chart-kit";
+import * as XLSX from "xlsx";
 import firebase from "../firebase";
 import { APPWRITE_CONFIG, client, databases, Query } from "./appwrite";
 import { AuthContext } from "./AuthContext";
@@ -33,6 +35,7 @@ const SERVER_URL = `http://${localIp}:3000`;
 
 const TABS = [
   { id: "overview", label: "Overview", icon: "grid-outline" },
+  { id: "reconciliation", label: "Reconciliation", icon: "git-compare-outline" },
   { id: "manual_audit", label: "Manual Audit", icon: "create-outline" },
   { id: "firebase", label: "Firebase DB", icon: "server-outline" },
   { id: "cloudinary", label: "Cloudinary", icon: "cloud-circle-outline" },
@@ -43,7 +46,6 @@ const TABS = [
   { id: "network", label: "Network", icon: "wifi-outline" },
   { id: "utils", label: "Utils", icon: "construct-outline" },
   { id: "statistics", label: "Statistics", icon: "stats-chart-outline" },
-  { id: "maintenance", label: "Maintenance", icon: "trash-outline" },
 ];
 
 // --- REAL DATA INTERCEPTORS ---
@@ -126,7 +128,7 @@ if (!global.isFetchPatched) {
 
 // --- MAIN SCREEN COMPONENT ---
 export default function DevDashboardScreen({ navigation }) {
-  const { user } = useContext(AuthContext);
+  const { user, logout } = useContext(AuthContext);
   const [activeTab, setActiveTab] = useState("overview");
   const [logs, setLogs] = useState(LOG_BUFFER);
   const [users, setUsers] = useState([]);
@@ -138,8 +140,8 @@ export default function DevDashboardScreen({ navigation }) {
     maintenanceModeMember: false,
     debugLogging: true,
     enableManualAudit: false,
+    maintenanceCamera: false,
   });
-  const [archiving, setArchiving] = useState(false);
 
   // Load feature flags on mount
   useEffect(() => {
@@ -150,7 +152,8 @@ export default function DevDashboardScreen({ navigation }) {
           ...prev, 
           ...val,
           maintenanceModeAdmin: val.maintenanceModeAdmin === true || val.maintenanceModeAdmin === "true",
-          maintenanceModeMember: val.maintenanceModeMember === true || val.maintenanceModeMember === "true"
+          maintenanceModeMember: val.maintenanceModeMember === true || val.maintenanceModeMember === "true",
+          maintenanceCamera: val.maintenanceCamera === true || val.maintenanceCamera === "true"
       }));
     });
     return () => devRef.off("value", listener);
@@ -319,116 +322,12 @@ export default function DevDashboardScreen({ navigation }) {
     }
   };
 
-  const handleArchiveOldCases = async () => {
-    if (archiving) return;
-    
-    setArchiving(true);
-    try {
-      // 1. Fetch all cases (snapshot)
-      const snapshot = await firebase.database().ref("cases").once("value");
-      const data = snapshot.val() || {};
-      const allCases = Object.keys(data).map(key => ({ id: key, ...data[key] }));
-
-      // 2. Filter for completed cases (Any time)
-      const toArchive = allCases.filter(c => {
-        return c.status === 'completed';
-      });
-
-      if (toArchive.length === 0) {
-        if (Platform.OS === 'web') alert("Maintenance: No completed cases found to archive.");
-        else Alert.alert("Maintenance", "No completed cases found to archive.");
-        setArchiving(false);
-        return;
-      }
-
-      const count = toArchive.length;
-      const message = `Found ${count} completed cases.\n\nThis will:\n1. Delete them from Firebase.\n2. Delete photos/PDFs from Cloudinary.\n3. Update the 'Archived Count' to preserve Admin stats.\n\nProceed?`;
-      
-      const executeArchive = async () => {
-        try {
-          // 3. Update Counter in Firebase
-          try {
-            const statsRef = firebase.database().ref("metadata/statistics/archivedCount");
-            const statsSnap = await statsRef.once("value");
-            const currentCount = statsSnap.val() || 0;
-            await statsRef.set(currentCount + count);
-          } catch (statErr) {
-            console.warn("Permission denied for stats update, skipping counter increment.", statErr);
-          }
-
-          // 4. Delete Cases & Resources
-          for (const c of toArchive) {
-              // Collect URLs to delete
-              const urlsToDelete = [];
-              if (c.photosFolderLink) urlsToDelete.push(c.photosFolderLink);
-              if (c.filledForm?.url) urlsToDelete.push(c.filledForm.url);
-              if (c.photosFolder) {
-                Object.values(c.photosFolder).forEach(list => {
-                  if (Array.isArray(list)) {
-                    list.forEach(p => {
-                      if (p.uri && p.uri.includes("cloudinary")) urlsToDelete.push(p.uri);
-                    });
-                  }
-                });
-              }
-
-              // Call server to delete resources (Best Effort)
-              for (const url of urlsToDelete) {
-                try {
-                  await fetch(`${SERVER_URL}/cloudinary/destroy-from-url`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ url, resource_type: url.endsWith('.pdf') ? 'raw' : 'image' }),
-                  }).catch(e => console.warn("Failed to delete resource", e));
-                } catch (e) {}
-              }
-
-              // Delete from Firebase
-              await firebase.database().ref(`cases/${c.id}`).remove();
-          }
-          
-          if (Platform.OS === 'web') alert(`Success: Archived ${count} cases successfully.`);
-          else Alert.alert("Success", `Archived ${count} cases successfully.`);
-        } catch (e) {
-          if (Platform.OS === 'web') alert("Error: Failed during archive: " + e.message);
-          else Alert.alert("Error", "Failed during archive: " + e.message);
-        } finally {
-          setArchiving(false);
-        }
-      };
-
-      if (Platform.OS === 'web') {
-        if (confirm(message)) {
-          executeArchive();
-        } else {
-          setArchiving(false);
-        }
-      } else {
-        Alert.alert(
-          "Confirm Archive",
-          message,
-          [
-            { text: "Cancel", onPress: () => setArchiving(false), style: "cancel" },
-            { 
-              text: "Archive", 
-              style: "destructive",
-              onPress: executeArchive
-            }
-          ]
-        );
-      }
-
-    } catch (e) {
-      if (Platform.OS === 'web') alert("Error: " + e.message);
-      else Alert.alert("Error", e.message);
-      setArchiving(false);
-    }
-  };
-
   const renderContent = () => {
     switch (activeTab) {
       case "overview":
         return <OverviewTab featureFlags={featureFlags} toggleFeatureFlag={toggleFeatureFlag} navigation={navigation} />;
+      case "reconciliation":
+        return <ReconciliationTab />;
       case "manual_audit":
         return <ManualAuditTab />;
       case "firebase":
@@ -449,21 +348,17 @@ export default function DevDashboardScreen({ navigation }) {
         return <UtilsTab />;
       case "statistics":
         return <StatisticsTab users={users} />;
-      case "maintenance":
-        return <MaintenanceTab onArchive={handleArchiveOldCases} archiving={archiving} />;
       default:
         return <OverviewTab />;
     }
   };
 
   return (
-    <LinearGradient colors={["#0f0c29", "#302b63", "#24243e"]} style={styles.container}>
+    <LinearGradient colors={["#0F2027", "#203A43", "#2C5364"]} style={styles.container}>
       <StatusBar barStyle="light-content" />
       <View style={styles.header}>
         <TouchableOpacity onPress={() => {
-            if (navigation.canGoBack()) navigation.goBack();
-            else if (user?.role === 'admin') navigation.navigate("AdminPanel");
-            else navigation.navigate("Dashboard");
+            firebase.auth().signOut().then(() => { if (logout) logout(); });
         }} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
@@ -509,6 +404,7 @@ export default function DevDashboardScreen({ navigation }) {
 
 
 function OverviewTab({ featureFlags = {}, toggleFeatureFlag = () => {}, navigation }) {
+  const { logout } = useContext(AuthContext);
   return (
     <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
       <View style={styles.section}>
@@ -531,10 +427,25 @@ function OverviewTab({ featureFlags = {}, toggleFeatureFlag = () => {}, navigati
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Quick Actions</Text>
-        <View style={styles.grid}>
-          <ActionButton icon="refresh" label="Reload App" onPress={() => { if (Platform.OS === 'web') window.location.reload(); else Alert.alert("Info", "Use Expo reload"); }} />
-          <ActionButton icon="log-out" label="Force Logout" onPress={() => firebase.auth().signOut()} color="#ff4444" />
-          <ActionButton icon="bug" label="Crash Test" onPress={() => { throw new Error("Manual Crash Test"); }} color="#ffbb33" />
+        <View style={[styles.grid, { gap: 10 }]}>
+          <GradientButton 
+            colors={['#2193b0', '#6dd5ed']} 
+            icon="refresh" label="Reload" 
+            onPress={() => { if (Platform.OS === 'web') window.location.reload(); else Alert.alert("Info", "Use Expo reload"); }} 
+            style={{ width: '31%' }}
+          />
+          <GradientButton 
+            colors={['#ff416c', '#ff4b2b']} 
+            icon="log-out" label="Logout" 
+            onPress={() => firebase.auth().signOut().then(() => { if (logout) logout(); })} 
+            style={{ width: '31%' }}
+          />
+          <GradientButton 
+            colors={['#f12711', '#f5af19']} 
+            icon="bug" label="Crash" 
+            onPress={() => { throw new Error("Manual Crash Test"); }} 
+            style={{ width: '31%' }}
+          />
         </View>
       </View>
       
@@ -550,10 +461,198 @@ function OverviewTab({ featureFlags = {}, toggleFeatureFlag = () => {}, navigati
   );
 }
 
+function ReconciliationTab() {
+  const [mismatches, setMismatches] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [stats, setStats] = useState(null);
+  const [excelCompletedData, setExcelCompletedData] = useState(null);
+  const [dbCases, setDbCases] = useState(null);
+  const [activeCheck, setActiveCheck] = useState(null);
+
+  const handleImport = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+
+      if (result.canceled) return;
+      
+      setLoading(true);
+      setExcelCompletedData(null);
+      setDbCases(null);
+      setMismatches([]);
+      setActiveCheck(null);
+
+      const fileUri = result.assets ? result.assets[0].uri : result.uri;
+
+      // Read File
+      let workbook;
+      if (Platform.OS === "web") {
+        const response = await fetch(fileUri);
+        const arrayBuffer = await response.arrayBuffer();
+        workbook = XLSX.read(arrayBuffer, { type: "array" });
+      } else {
+        const response = await fetch(fileUri);
+        const blob = await response.blob();
+        const b64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result.split(',')[1]);
+          reader.onerror = (e) => reject(e);
+          reader.readAsDataURL(blob);
+        });
+        workbook = XLSX.read(b64, { type: "base64" });
+      }
+
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const jsonData = XLSX.utils.sheet_to_json(sheet);
+
+      // Filter Excel for Completed
+      const excelCompleted = jsonData.filter(row => {
+          const status = row["Status"] || row["status"];
+          return status && status.toString().toLowerCase() === "completed";
+      });
+      setExcelCompletedData(excelCompleted);
+
+      // Fetch Firebase Data
+      const snapshot = await firebase.database().ref("cases").once("value");
+      const dbData = snapshot.val() || {};
+      setDbCases(Object.values(dbData));
+
+      setStats({
+          totalExcel: jsonData.length,
+          excelCompleted: excelCompleted.length,
+          mismatches: 0
+      });
+
+    } catch (e) {
+        Alert.alert("Error", "Failed to process file: " + e.message);
+    } finally {
+        setLoading(false);
+    }
+  };
+
+  const runCheck = (checkType) => {
+    if (!excelCompletedData || !dbCases) {
+        Alert.alert("Info", "Please import an Excel file first.");
+        return;
+    }
+    setLoading(true);
+    setActiveCheck(checkType);
+
+    const foundMismatches = [];
+
+    excelCompletedData.forEach(row => {
+        const refNo = row["Reference ID"] || row["Reference No"] || row["Ref No"] || row["matrixRefNo"];
+        if (!refNo) return;
+
+        const dbCase = dbCases.find(c => 
+            (c.matrixRefNo && c.matrixRefNo.toString() === refNo.toString()) || 
+            (c.RefNo && c.RefNo.toString() === refNo.toString()) ||
+            (c.id && c.id.toString() === refNo.toString())
+        );
+
+        const isMissing = !dbCase;
+        const isStatusMismatch = dbCase && dbCase.status !== "completed";
+
+        if (checkType === 'missing' && isMissing) {
+            foundMismatches.push({ refNo, excelStatus: "Completed", dbStatus: "Missing", reason: "Case not found in Database" });
+        } else if (checkType === 'status' && isStatusMismatch) {
+            foundMismatches.push({ refNo, excelStatus: "Completed", dbStatus: dbCase.status, reason: `Status mismatch (DB: ${dbCase.status})`, id: dbCase.id });
+        } else if (checkType === 'all') {
+            if (isMissing) {
+                foundMismatches.push({ refNo, excelStatus: "Completed", dbStatus: "Missing", reason: "Case not found in Database" });
+            } else if (isStatusMismatch) {
+                foundMismatches.push({ refNo, excelStatus: "Completed", dbStatus: dbCase.status, reason: `Status mismatch (DB: ${dbCase.status})`, id: dbCase.id });
+            }
+        }
+    });
+
+    setMismatches(foundMismatches);
+    setStats(prev => ({ ...prev, mismatches: foundMismatches.length }));
+    setLoading(false);
+  };
+
+  return (
+      <View style={styles.flexContainer}>
+          <View style={styles.toolbar}>
+              <Text style={styles.toolbarTitle}>Excel Reconciliation</Text>
+              <GradientButton 
+                  colors={['#2e7d32', '#4caf50']}
+                  icon="cloud-upload"
+                  label="Import Excel"
+                  small
+                  onPress={handleImport}
+                  loading={loading && !excelCompletedData}
+              />
+          </View>
+          
+          {excelCompletedData && (
+            <View style={{ padding: 10, flexDirection: 'row', justifyContent: 'space-around', backgroundColor: 'rgba(0,0,0,0.2)', gap: 10 }}>
+                <GradientButton 
+                    colors={activeCheck === 'status' ? ['#c62828', '#f44336'] : ['#6a1b9a', '#aa00ff']}
+                    label="Status Mismatch"
+                    small
+                    onPress={() => runCheck('status')}
+                    loading={loading && activeCheck === 'status'}
+                />
+                <GradientButton 
+                    colors={activeCheck === 'missing' ? ['#c62828', '#f44336'] : ['#6a1b9a', '#aa00ff']}
+                    label="Missing in DB"
+                    small
+                    onPress={() => runCheck('missing')}
+                    loading={loading && activeCheck === 'missing'}
+                />
+                <GradientButton 
+                    colors={activeCheck === 'all' ? ['#c62828', '#f44336'] : ['#6a1b9a', '#aa00ff']}
+                    label="All Mismatches"
+                    small
+                    onPress={() => runCheck('all')}
+                    loading={loading && activeCheck === 'all'}
+                />
+            </View>
+          )}
+
+          {stats && (
+              <View style={{flexDirection: 'row', padding: 10, justifyContent: 'space-around', backgroundColor: 'rgba(255,255,255,0.05)'}}>
+                  <Text style={{color: '#ccc'}}>Excel Total: <Text style={{color: '#fff', fontWeight: 'bold'}}>{stats.totalExcel}</Text></Text>
+                  <Text style={{color: '#ccc'}}>Excel Completed: <Text style={{color: '#4caf50', fontWeight: 'bold'}}>{stats.excelCompleted}</Text></Text>
+                  <Text style={{color: '#ccc'}}>Mismatches Found: <Text style={{color: '#ff4444', fontWeight: 'bold'}}>{stats.mismatches}</Text></Text>
+              </View>
+          )}
+
+          <View style={styles.tableHeader}>
+              <Text style={[styles.tableHeaderText, { flex: 1 }]}>Ref No</Text>
+              <Text style={[styles.tableHeaderText, { flex: 1 }]}>DB Status</Text>
+              <Text style={[styles.tableHeaderText, { flex: 1.5 }]}>Reason</Text>
+          </View>
+
+          <FlatList 
+              data={mismatches}
+              keyExtractor={(item, index) => item.refNo + index}
+              contentContainerStyle={{paddingBottom: 20}}
+              renderItem={({item}) => (
+                  <View style={styles.tableRow}>
+                      <Text style={[styles.tableCell, { flex: 1, fontWeight: 'bold' }]}>{item.refNo}</Text>
+                      <Text style={[styles.tableCell, { flex: 1, color: getStatusColor(item.dbStatus) }]}>{item.dbStatus.toUpperCase()}</Text>
+                      <Text style={[styles.tableCell, { flex: 1.5, color: '#ff4444' }]}>{item.reason}</Text>
+                  </View>
+              )}
+              ListEmptyComponent={
+                  !loading && excelCompletedData ? <Text style={{color: '#4caf50', textAlign: 'center', marginTop: 20}}>No mismatches found for this check.</Text> : 
+                  !loading && !excelCompletedData ? <Text style={{color: '#ccc', textAlign: 'center', marginTop: 20}}>Import an Excel file to begin.</Text> : 
+                  null
+              }
+          />
+      </View>
+  );
+}
+
 function ManualAuditTab() {
   const [cases, setCases] = useState([]);
   const [search, setSearch] = useState("");
   const [loadingMap, setLoadingMap] = useState({});
+  const [selectedCases, setSelectedCases] = useState([]);
 
   useEffect(() => {
     const ref = firebase.database().ref("cases");
@@ -623,6 +722,47 @@ function ManualAuditTab() {
       }
   };
 
+  const toggleSelect = (id) => {
+    setSelectedCases(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  };
+
+  const handleBulkComplete = async () => {
+    if (selectedCases.length === 0) return;
+    
+    const confirmMsg = `Mark ${selectedCases.length} cases as COMPLETED?`;
+    
+    const execute = async () => {
+        setLoadingMap(prev => ({...prev, bulk: true}));
+        try {
+            const updates = {};
+            selectedCases.forEach(id => {
+                const c = cases.find(x => x.id === id);
+                updates[`cases/${id}/status`] = 'completed';
+                updates[`cases/${id}/completedAt`] = (c && c.completedAt) ? c.completedAt : new Date().toISOString();
+                updates[`cases/${id}/finalizedAt`] = Date.now();
+                updates[`cases/${id}/finalizedBy`] = 'dev_manual_bulk';
+            });
+            await firebase.database().ref().update(updates);
+            setSelectedCases([]);
+            if (Platform.OS !== 'web') Alert.alert("Success", "Bulk completion successful.");
+            else Alert.alert("Success", "Bulk completion successful.");
+        } catch (e) {
+            Alert.alert("Error", e.message);
+        } finally {
+            setLoadingMap(prev => ({...prev, bulk: false}));
+        }
+    };
+
+    if (Platform.OS === 'web') {
+        if (confirm(confirmMsg)) execute();
+    } else {
+        Alert.alert("Confirm Bulk Complete", confirmMsg, [
+            { text: "Cancel", style: "cancel" },
+            { text: "Complete All", style: "destructive", onPress: execute }
+        ]);
+    }
+  };
+
   const filtered = cases.filter(c => {
       const s = search.toLowerCase();
       return (c.matrixRefNo || c.id).toLowerCase().includes(s) || (c.assigneeName || "").toLowerCase().includes(s);
@@ -640,7 +780,22 @@ function ManualAuditTab() {
                   onChangeText={setSearch}
               />
           </View>
+
+          {selectedCases.length > 0 && (
+            <View style={{flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 10, justifyContent: 'space-between'}}>
+                <Text style={{color: '#fff', fontWeight: 'bold'}}>{selectedCases.length} Selected</Text>
+                <GradientButton 
+                    colors={['#11998e', '#38ef7d']}
+                    label={`Complete Selected (${selectedCases.length})`}
+                    small
+                    onPress={handleBulkComplete}
+                    loading={loadingMap['bulk']}
+                />
+            </View>
+          )}
+
           <View style={styles.tableHeader}>
+              <Text style={[styles.tableHeaderText, { flex: 0.4 }]}>#</Text>
               <Text style={[styles.tableHeaderText, { flex: 1.5 }]}>Ref No</Text>
               <Text style={[styles.tableHeaderText, { flex: 1 }]}>Status</Text>
               <Text style={[styles.tableHeaderText, { flex: 1, textAlign: 'right' }]}>Action</Text>
@@ -651,23 +806,29 @@ function ManualAuditTab() {
               contentContainerStyle={{paddingBottom: 20}}
               renderItem={({item}) => (
                   <View style={styles.tableRow}>
+                      <TouchableOpacity 
+                        style={{flex: 0.4, justifyContent: 'center'}} 
+                        onPress={() => toggleSelect(item.id)}
+                      >
+                        <Ionicons name={selectedCases.includes(item.id) ? "checkbox" : "square-outline"} size={20} color={selectedCases.includes(item.id) ? "#4caf50" : "#888"} />
+                      </TouchableOpacity>
                       <Text style={[styles.tableCell, { flex: 1.5, fontWeight: 'bold' }]} numberOfLines={1}>{item.matrixRefNo || item.id}</Text>
                       <Text style={[styles.tableCell, { flex: 1, color: getStatusColor(item.status) }]}>{item.status?.toUpperCase()}</Text>
                       <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'flex-end', gap: 5 }}>
-                          <TouchableOpacity 
-                            style={[styles.actionBtnSmall, {backgroundColor: '#4caf50', paddingHorizontal: 8, paddingVertical: 4, marginLeft: 0}]} 
+                          <GradientButton 
+                            colors={['#11998e', '#38ef7d']}
+                            label="Complete"
+                            small
                             onPress={() => handleForceComplete(item)}
-                            disabled={loadingMap[item.id]}
-                          >
-                              {loadingMap[item.id] ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{color: '#fff', fontSize: 10, fontWeight: 'bold'}}>Complete</Text>}
-                          </TouchableOpacity>
-                          <TouchableOpacity 
-                            style={[styles.actionBtnSmall, {backgroundColor: '#f44336', paddingHorizontal: 8, paddingVertical: 4, marginLeft: 0}]} 
+                            loading={loadingMap[item.id]}
+                          />
+                          <GradientButton 
+                            colors={['#ff416c', '#ff4b2b']}
+                            label="Revert"
+                            small
                             onPress={() => handleForceRevert(item)}
-                            disabled={loadingMap[item.id]}
-                          >
-                              <Text style={{color: '#fff', fontSize: 10, fontWeight: 'bold'}}>Revert</Text>
-                          </TouchableOpacity>
+                            loading={loadingMap[item.id]}
+                          />
                       </View>
                   </View>
               )}
@@ -876,14 +1037,14 @@ function CloudinaryTab() {
                       <Text style={[styles.tableCell, { flex: 1 }]} numberOfLines={1}>{item.assigneeName || item.assignedTo || '-'}</Text>
                       <View style={{ flex: 1, alignItems: 'flex-end' }}>
                           {item.status === 'completed' ? (
-                              <View style={{flexDirection: 'row', gap: 5}}>
-                              <TouchableOpacity 
-                                style={[styles.actionBtnSmall, {backgroundColor: '#ff9800', paddingHorizontal: 8, paddingVertical: 4}]} 
+                              <View style={{flexDirection: 'row'}}>
+                              <GradientButton 
+                                colors={['#f12711', '#f5af19']}
+                                label="Clean Files"
+                                small
                                 onPress={() => handleCleanup(item)}
-                                disabled={loadingMap[item.id]}
-                              >
-                                  {loadingMap[item.id] ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{color: '#fff', fontSize: 10, fontWeight: 'bold'}}>Clean Files</Text>}
-                              </TouchableOpacity>
+                                loading={loadingMap[item.id]}
+                              />
                               </View>
                           ) : (
                               <Text style={{color: '#666', fontSize: 10, fontStyle: 'italic'}}>Active</Text>
@@ -971,20 +1132,20 @@ function TicketsTab() {
             
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
               {item.status !== 'closed' && (
-                <TouchableOpacity 
-                  style={[styles.actionBtnSmall, { backgroundColor: '#4caf50' }]} 
+                <GradientButton 
+                  colors={['#11998e', '#38ef7d']}
+                  label="Close Ticket"
+                  small
                   onPress={() => handleUpdateStatus(item.$id, 'closed')}
-                >
-                  <Text style={styles.actionBtnText}>Close Ticket</Text>
-                </TouchableOpacity>
+                />
               )}
               {item.status === 'open' && (
-                <TouchableOpacity 
-                  style={[styles.actionBtnSmall, { backgroundColor: '#2196f3' }]} 
+                <GradientButton 
+                  colors={['#2193b0', '#6dd5ed']}
+                  label="In-Progress"
+                  small
                   onPress={() => handleUpdateStatus(item.$id, 'in-progress')}
-                >
-                  <Text style={styles.actionBtnText}>Mark In-Progress</Text>
-                </TouchableOpacity>
+                />
               )}
               <View style={[styles.badge, { backgroundColor: '#333', marginLeft: 'auto' }]}>
                  <Text style={styles.badgeText}>{item.status.toUpperCase()}</Text>
@@ -1041,27 +1202,20 @@ function UsersTab({ users, onRevoke, onGrant }) {
               <Text style={styles.detailText}>Active: {item.lastActive}</Text>
             </View>
             <View style={styles.userActions}>
-              <TouchableOpacity style={styles.actionBtnSmall} onPress={() => {
+              <GradientButton 
+                colors={['#485563', '#29323c']}
+                label="JSON"
+                small
+                onPress={() => {
                   const json = JSON.stringify(item, null, 2);
                   if (Platform.OS === 'web') alert(json);
                   else Alert.alert("Details", json);
-              }}>
-                <Text style={styles.actionBtnText}>View JSON</Text>
-              </TouchableOpacity>
+                }}
+              />
               {item.status === 'banned' ? (
-                <TouchableOpacity 
-                  style={[styles.actionBtnSmall, { backgroundColor: "#4caf50" }]} 
-                  onPress={() => onGrant(item.id)}
-                >
-                  <Text style={styles.actionBtnText}>Grant Access</Text>
-                </TouchableOpacity>
+                <GradientButton colors={['#11998e', '#38ef7d']} label="Grant" small onPress={() => onGrant(item.id)} />
               ) : (
-                <TouchableOpacity 
-                  style={[styles.actionBtnSmall, { backgroundColor: "#ff4444" }]} 
-                  onPress={() => onRevoke(item.id)}
-                >
-                  <Text style={styles.actionBtnText}>Revoke Access</Text>
-                </TouchableOpacity>
+                <GradientButton colors={['#ff416c', '#ff4b2b']} label="Revoke" small onPress={() => onRevoke(item.id)} />
               )}
             </View>
           </View>
@@ -1419,20 +1573,26 @@ function StatisticsTab({ users }) {
            {requestStatus === 'pending' && (
              <View>
                <Text style={{color: '#ffbb33', fontWeight: 'bold', marginBottom: 10, fontSize: 16}}>⚠️ Admin Requested Report Access</Text>
-               <TouchableOpacity style={[styles.actionButton, {backgroundColor: '#4caf50', width: '100%', flexDirection: 'row', justifyContent: 'center'}]} onPress={handleGrant}>
-                 <Ionicons name="paper-plane" size={20} color="#fff" style={{marginRight: 10}} />
-                 <Text style={styles.actionLabel}>Send Report (Grant Access)</Text>
-               </TouchableOpacity>
+               <GradientButton 
+                 colors={['#11998e', '#38ef7d']}
+                 icon="paper-plane"
+                 label="Send Report (Grant Access)"
+                 onPress={handleGrant}
+                 style={{ width: '100%' }}
+               />
              </View>
            )}
            {requestStatus === 'approved' && (
              <View>
                <Text style={{color: '#4caf50', fontWeight: 'bold', marginBottom: 10, fontSize: 16}}>✅ Access Currently Granted</Text>
                <Text style={{color: '#ccc', fontSize: 12, marginBottom: 15}}>Revoke access at start of next month or manually.</Text>
-               <TouchableOpacity style={[styles.actionButton, {backgroundColor: '#f44336', width: '100%', flexDirection: 'row', justifyContent: 'center'}]} onPress={handleRevoke}>
-                 <Ionicons name="lock-closed" size={20} color="#fff" style={{marginRight: 10}} />
-                 <Text style={styles.actionLabel}>Revoke Access</Text>
-               </TouchableOpacity>
+               <GradientButton 
+                 colors={['#ff416c', '#ff4b2b']}
+                 icon="lock-closed"
+                 label="Revoke Access"
+                 onPress={handleRevoke}
+                 style={{ width: '100%' }}
+               />
              </View>
            )}
            {requestStatus === 'none' && (
@@ -1451,14 +1611,14 @@ function StatisticsTab({ users }) {
           </View>
           
           {!statsData && (
-            <TouchableOpacity 
-              style={[styles.actionButton, { width: '100%', backgroundColor: '#4caf50', marginTop: 15, flexDirection: 'row', justifyContent: 'center' }]} 
+            <GradientButton 
+              colors={['#8E2DE2', '#4A00E0']}
+              icon="analytics"
+              label="Generate Report"
               onPress={handleCalculateStats}
-              disabled={calculating}
-            >
-              {calculating ? <ActivityIndicator color="#fff" style={{marginRight: 10}} /> : <Ionicons name="analytics" size={20} color="#fff" style={{marginRight: 10}} />}
-              <Text style={styles.actionLabel}>Generate Report</Text>
-            </TouchableOpacity>
+              loading={calculating}
+              style={{ width: '100%', marginTop: 15 }}
+            />
           )}
 
           {statsData && (
@@ -1539,32 +1699,6 @@ function StatisticsTab({ users }) {
   );
 }
 
-function MaintenanceTab({ onArchive, archiving }) {
-  return (
-    <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Data Retention</Text>
-        <View style={styles.card}>
-          <Text style={{color:'#ccc', marginBottom: 15, lineHeight: 20}}>
-            Clear ALL cases with status 'completed'.
-            This will remove them from the active database and delete associated files from Cloudinary to save space.
-            {"\n\n"}
-            <Text style={{fontWeight:'bold', color:'#fff'}}>Note:</Text> The "Total" and "Done" counts in the Admin Panel will be preserved by adding these archived cases to a separate counter.
-          </Text>
-          <TouchableOpacity 
-            style={[styles.actionButton, { width: '100%', backgroundColor: '#d32f2f', flexDirection: 'row', justifyContent: 'center' }]} 
-            onPress={onArchive}
-            disabled={archiving}
-          >
-            {archiving ? <ActivityIndicator color="#fff" style={{marginRight: 10}} /> : <Ionicons name="trash-bin" size={20} color="#fff" style={{marginRight: 10}} />}
-            <Text style={styles.actionLabel}>Archive All Completed Cases</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </ScrollView>
-  );
-}
-
 // --- HELPER COMPONENTS ---
 
 const InfoRow = ({ label, value }) => (
@@ -1574,12 +1708,29 @@ const InfoRow = ({ label, value }) => (
   </View>
 );
 
-const ActionButton = ({ icon, label, onPress, color = "#fff" }) => (
-  <TouchableOpacity style={styles.actionButton} onPress={onPress}>
-    <View style={[styles.actionIcon, { backgroundColor: 'rgba(255,255,255,0.1)' }]}>
-      <Ionicons name={icon} size={24} color={color} />
-    </View>
-    <Text style={styles.actionLabel}>{label}</Text>
+const GradientButton = ({ colors, icon, label, onPress, style, small, disabled, loading }) => (
+  <TouchableOpacity onPress={onPress} disabled={disabled} style={[style, { opacity: disabled ? 0.7 : 1 }]}>
+    <LinearGradient
+      colors={colors}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 0 }}
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: small ? 8 : 14,
+        paddingHorizontal: small ? 12 : 20,
+        borderRadius: 12,
+        minHeight: small ? 32 : 48,
+      }}
+    >
+      {loading ? (
+        <ActivityIndicator color="#fff" size="small" style={{ marginRight: label ? 8 : 0 }} />
+      ) : (
+        icon && <Ionicons name={icon} size={small ? 16 : 20} color="#fff" style={{ marginRight: label ? 8 : 0 }} />
+      )}
+      {label && <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: small ? 12 : 14 }}>{label}</Text>}
+    </LinearGradient>
   </TouchableOpacity>
 );
 
@@ -1683,10 +1834,6 @@ const styles = StyleSheet.create({
 
   // Grid Actions
   grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
-  actionButton: { width: "31%", alignItems: "center", marginBottom: 15 },
-  actionIcon: { width: 50, height: 50, borderRadius: 25, justifyContent: "center", alignItems: "center", marginBottom: 8 },
-  actionLabel: { color: "#ccc", fontSize: 12, textAlign: "center" },
-
   // User Management
   searchContainer: {
     flexDirection: "row",
@@ -1717,8 +1864,6 @@ const styles = StyleSheet.create({
   userDetails: { flexDirection: "row", justifyContent: "space-between", marginBottom: 12, paddingVertical: 8, borderTopWidth: 1, borderBottomWidth: 1, borderColor: "rgba(255,255,255,0.05)" },
   detailText: { color: "#888", fontSize: 12 },
   userActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10 },
-  actionBtnSmall: { paddingHorizontal: 12, paddingVertical: 6, backgroundColor: "#444", borderRadius: 6, marginLeft: 8 },
-  actionBtnText: { color: "#fff", fontSize: 12, fontWeight: "600" },
 
   // Logs
   filterBar: { flexDirection: "row", padding: 10, alignItems: "center" },
@@ -1812,10 +1957,6 @@ const styles = StyleSheet.create({
 
   // Grid Actions
   grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
-  actionButton: { width: "31%", alignItems: "center", marginBottom: 15 },
-  actionIcon: { width: 50, height: 50, borderRadius: 25, justifyContent: "center", alignItems: "center", marginBottom: 8 },
-  actionLabel: { color: "#ccc", fontSize: 12, textAlign: "center" },
-
   // User Management
   searchContainer: {
     flexDirection: "row",
@@ -1846,8 +1987,6 @@ const styles = StyleSheet.create({
   userDetails: { flexDirection: "row", justifyContent: "space-between", marginBottom: 12, paddingVertical: 8, borderTopWidth: 1, borderBottomWidth: 1, borderColor: "rgba(255,255,255,0.05)" },
   detailText: { color: "#888", fontSize: 12 },
   userActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10 },
-  actionBtnSmall: { paddingHorizontal: 12, paddingVertical: 6, backgroundColor: "#444", borderRadius: 6, marginLeft: 8 },
-  actionBtnText: { color: "#fff", fontSize: 12, fontWeight: "600" },
 
   // Logs
   filterBar: { flexDirection: "row", padding: 10, alignItems: "center" },

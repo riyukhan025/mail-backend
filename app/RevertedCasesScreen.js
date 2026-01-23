@@ -3,7 +3,7 @@ import { Picker } from "@react-native-picker/picker";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import { useEffect, useState } from "react";
-import { Alert, FlatList, Modal, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Alert, FlatList, Modal, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import firebase from "../firebase";
 
 export default function RevertedCasesScreen({ navigation }) {
@@ -12,6 +12,8 @@ export default function RevertedCasesScreen({ navigation }) {
   const [assignModalVisible, setAssignModalVisible] = useState(false);
   const [selectedCaseForAssign, setSelectedCaseForAssign] = useState(null);
   const [assignTo, setAssignTo] = useState("");
+  const [search, setSearch] = useState("");
+  const [pincodeFilter, setPincodeFilter] = useState("");
 
   useEffect(() => {
     const casesRef = firebase.database().ref("cases");
@@ -66,10 +68,22 @@ export default function RevertedCasesScreen({ navigation }) {
     });
   };
 
+  const filteredCases = cases.filter(c => {
+      const s = search.toLowerCase();
+      const matchesSearch = (c.matrixRefNo || c.id || "").toLowerCase().includes(s) || 
+                            (c.candidateName || "").toLowerCase().includes(s);
+      const matchesPincode = pincodeFilter ? String(c.pincode || "").includes(pincodeFilter) : true;
+      return matchesSearch && matchesPincode;
+  });
+
   const renderItem = ({ item }) => (
     <BlurView intensity={40} tint="dark" style={styles.card}>
-      <Text style={styles.title}>{item.matrixRefNo || item.id}</Text>
+      <View style={styles.cardHeader}>
+        <Text style={styles.title}>{item.matrixRefNo || item.id}</Text>
+        <Text style={styles.pincode}>{item.pincode || "No Pin"}</Text>
+      </View>
       <Text style={styles.text}>Candidate: {item.candidateName || "N/A"}</Text>
+      <Text style={styles.text} numberOfLines={1}>{item.address || "No Address"}</Text>
       <TouchableOpacity
         style={styles.button}
         onPress={() => {
@@ -90,8 +104,33 @@ export default function RevertedCasesScreen({ navigation }) {
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Reverted Cases</Text>
       </View>
+
+      <View style={styles.filterContainer}>
+          <View style={styles.searchBox}>
+              <Ionicons name="search" size={16} color="#ccc" />
+              <TextInput 
+                  style={styles.input} 
+                  placeholder="Search Ref/Name" 
+                  placeholderTextColor="#aaa"
+                  value={search}
+                  onChangeText={setSearch}
+              />
+          </View>
+          <View style={[styles.searchBox, { marginLeft: 10, flex: 0.5 }]}>
+              <Ionicons name="location-outline" size={16} color="#ccc" />
+              <TextInput 
+                  style={styles.input} 
+                  placeholder="Pincode" 
+                  placeholderTextColor="#aaa"
+                  value={pincodeFilter}
+                  onChangeText={setPincodeFilter}
+                  keyboardType="numeric"
+              />
+          </View>
+      </View>
+
       <FlatList
-        data={cases}
+        data={filteredCases}
         keyExtractor={(item) => item.id}
         renderItem={renderItem}
         contentContainerStyle={styles.list}
@@ -154,7 +193,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.1)"
   },
-  title: { fontSize: 18, fontWeight: "bold", color: "#fff", marginBottom: 5 },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 },
+  title: { fontSize: 18, fontWeight: "bold", color: "#fff" },
+  pincode: { fontSize: 12, color: "#ffd700", fontWeight: 'bold', backgroundColor: 'rgba(0,0,0,0.3)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
   text: { color: "#ccc", marginBottom: 5 },
   button: { marginTop: 10, backgroundColor: "#ff9800", padding: 10, borderRadius: 5, alignItems: "center" },
   buttonText: { color: "#fff", fontWeight: "bold" },
@@ -169,4 +210,26 @@ const styles = StyleSheet.create({
   cancelButton: { padding: 10, marginRight: 10 },
   confirmButton: { backgroundColor: "#28a745", paddingVertical: 10, paddingHorizontal: 15, borderRadius: 8 },
   confirmButtonText: { color: "#fff", fontWeight: "bold" },
+  filterContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: 20,
+    marginBottom: 10,
+  },
+  searchBox: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    height: 40,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)'
+  },
+  input: {
+    flex: 1,
+    color: '#fff',
+    marginLeft: 5,
+    fontSize: 12
+  },
 });

@@ -5,11 +5,13 @@ import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { LinearGradient } from "expo-linear-gradient";
 import * as MailComposer from "expo-mail-composer";
+import JSZip from "jszip";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Linking,
   Modal,
   Platform,
@@ -51,6 +53,7 @@ export default function AuditCaseScreen({ navigation, route }) {
   const { caseId, caseData: initialCaseData, user, manualMode } = route.params || {};
   const [caseData, setCaseData] = useState(initialCaseData || {});
   const [isUploadingManual, setIsUploadingManual] = useState(false);
+  const [selectedPhoto, setSelectedPhoto] = useState(null);
   
   useEffect(() => {
     const caseRef = firebase.database().ref(`cases/${caseId}`);
@@ -145,6 +148,97 @@ export default function AuditCaseScreen({ navigation, route }) {
     setEmailModalVisible(true);
   };
 
+  const handleDownloadZip = async () => {
+    setIsFinalizing(true);
+    try {
+        const zip = new JSZip();
+        const safeRef = (caseData.matrixRefNo || caseData.RefNo || caseId).replace(/[^a-zA-Z0-9-_]/g, '_');
+        let count = 0;
+        
+        // Include Filled Form if available
+        if (caseData.filledForm?.url) {
+            try {
+                let formUrl = caseData.filledForm.url;
+                let extension = "pdf";
+
+                const isCES = (caseData.client || caseData.company || "").toUpperCase().includes("CES");
+                const isMaintenance = caseData.maintenanceSubmission;
+
+                if (isCES || isMaintenance) {
+                    if (formUrl.includes("cloudinary") && formUrl.toLowerCase().includes(".pdf")) {
+                        formUrl = formUrl.replace(/\.pdf/i, ".jpg");
+                        extension = "jpg";
+                    } else if (formUrl.toLowerCase().includes(".jpg") || formUrl.toLowerCase().includes(".jpeg")) {
+                        extension = "jpg";
+                    }
+                } else if (formUrl.toLowerCase().includes(".jpg") || formUrl.toLowerCase().includes(".jpeg")) {
+                    extension = "jpg";
+                }
+
+                const formFilename = `Form_${safeRef}.${extension}`;
+                if (Platform.OS === 'web') {
+                    const response = await fetch(formUrl);
+                    const blob = await response.blob();
+                    zip.file(formFilename, blob);
+                } else {
+                    const tmp = FileSystem.cacheDirectory + `tmp_form_${Date.now()}.${extension}`;
+                    await FileSystem.downloadAsync(formUrl, tmp);
+                    const b64 = await FileSystem.readAsStringAsync(tmp, { encoding: FileSystem.EncodingType.Base64 });
+                    zip.file(formFilename, b64, { base64: true });
+                }
+                count++;
+            } catch (e) {
+                console.warn("Failed to add form to zip", e);
+            }
+        }
+
+        // Iterate through all photo categories and add them to the zip
+        if (caseData.photosFolder) {
+            for (const [category, photos] of Object.entries(caseData.photosFolder)) {
+                if (Array.isArray(photos)) {
+                    for (let i = 0; i < photos.length; i++) {
+                        const photo = photos[i];
+                        if (photo.uri) {
+                            const filename = `${category}_${i + 1}.jpg`;
+                            if (Platform.OS === 'web') {
+                                const response = await fetch(photo.uri);
+                                const blob = await response.blob();
+                                zip.file(filename, blob);
+                            } else {
+                                // Native: Download to cache then read as base64
+                                const tmp = FileSystem.cacheDirectory + `tmp_${count}.jpg`;
+                                await FileSystem.downloadAsync(photo.uri, tmp);
+                                const b64 = await FileSystem.readAsStringAsync(tmp, { encoding: FileSystem.EncodingType.Base64 });
+                                zip.file(filename, b64, { base64: true });
+                            }
+                            count++;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (count === 0) throw new Error("No photos or form found to zip.");
+
+        const zipBase64 = await zip.generateAsync({ type: "base64" });
+
+        if (Platform.OS === 'web') {
+            const link = document.createElement('a');
+            link.href = `data:application/zip;base64,${zipBase64}`;
+            link.download = `Case_${safeRef}.zip`;
+            link.click();
+        } else {
+            const uri = FileSystem.cacheDirectory + `Case_${safeRef}.zip`;
+            await FileSystem.writeAsStringAsync(uri, zipBase64, { encoding: FileSystem.EncodingType.Base64 });
+            Alert.alert("Success", `Zip saved to: ${uri}`);
+        }
+    } catch (e) {
+        Alert.alert("Error", "Failed to download zip: " + e.message);
+    } finally {
+        setIsFinalizing(false);
+    }
+  };
+
   const handleFinalizeReport = async () => {
     setIsFinalizing(true);
     const originalFormUrl = caseData.filledForm?.url;
@@ -164,11 +258,34 @@ export default function AuditCaseScreen({ navigation, route }) {
         const titlePage = mergedPdf.addPage();
         const { width, height } = titlePage.getSize();
         
-        titlePage.drawText("SPACE SOLUTIONS", {
-            x: 50, y: height - 150, size: 30, font, color: rgb(0, 0, 0)
+        const titleText = "Audit Report";
+        const dateText = new Date().toLocaleDateString();
+        const refText = `Ref No: ${caseData.matrixRefNo || caseData.RefNo || caseId}`;
+
+        const titleWidth = font.widthOfTextAtSize(titleText, 30);
+        const dateWidth = font.widthOfTextAtSize(dateText, 18);
+        const refWidth = font.widthOfTextAtSize(refText, 24);
+
+        titlePage.drawText(titleText, {
+            x: (width - titleWidth) / 2,
+            y: height / 2 + 50,
+            size: 30,
+            font,
+            color: rgb(0, 0, 0)
         });
-        titlePage.drawText(`Case Ref: ${caseData.matrixRefNo || caseData.RefNo || caseId}`, {
-            x: 50, y: height - 200, size: 20, font, color: rgb(0, 0, 0)
+        titlePage.drawText(dateText, {
+            x: (width - dateWidth) / 2,
+            y: height / 2,
+            size: 18,
+            font,
+            color: rgb(0, 0, 0)
+        });
+        titlePage.drawText(refText, {
+            x: (width - refWidth) / 2,
+            y: height / 2 - 50,
+            size: 24,
+            font,
+            color: rgb(0, 0, 0)
         });
         // --------------------------------
         
@@ -208,7 +325,15 @@ export default function AuditCaseScreen({ navigation, route }) {
         if (originalPhotosUrl) {
             const photoBytes = await fetch(originalPhotosUrl).then(r => r.arrayBuffer());
             const photoPdf = await PDFDocument.load(photoBytes);
-            const pages = await mergedPdf.copyPages(photoPdf, photoPdf.getPageIndices());
+            
+            let pagesToCopy = photoPdf.getPageIndices();
+            // Skip the first page (Title Page) if it comes from the standard member flow
+            // to avoid duplicate title pages (since we just added one).
+            if (!caseData.manualPdfGenerated && !caseData.manualUpload && pagesToCopy.length > 0) {
+                 pagesToCopy = pagesToCopy.slice(1);
+            }
+
+            const pages = await mergedPdf.copyPages(photoPdf, pagesToCopy);
             pages.forEach(p => mergedPdf.addPage(p));
         }
 
@@ -377,56 +502,6 @@ export default function AuditCaseScreen({ navigation, route }) {
                         height: dims.height,
                     });
 
-                    // Overlay for metadata (Like CaseDetailScreen)
-                    const overlayHeight = 85;
-                    page.drawRectangle({ 
-                        x: imageX, 
-                        y: imageY, 
-                        width: dims.width, 
-                        height: overlayHeight, 
-                        color: rgb(0, 0, 0), 
-                        opacity: 0.7 
-                    });
-
-                    let textY = imageY + 65;
-                    const fontSize = 10;
-                    const textColor = rgb(1, 1, 1);
-
-                    page.drawText(cleanText(`Category: ${photo.category}`), { x: imageX + 10, y: textY, size: fontSize, font, color: textColor });
-                    textY -= 12;
-                    
-                    if (photo.geotag && photo.geotag.latitude) {
-                        page.drawText(cleanText(`Loc: ${Number(photo.geotag.latitude).toFixed(6)}, ${Number(photo.geotag.longitude).toFixed(6)}`), { x: imageX + 10, y: textY, size: fontSize, font, color: textColor });
-                        textY -= 12;
-                    }
-
-                    if (photo.timestamp) {
-                        page.drawText(cleanText(`Time: ${photo.timestamp}`), { x: imageX + 10, y: textY, size: fontSize, font, color: textColor });
-                        textY -= 12;
-                    }
-
-                    if (photo.address) {
-                        const addressText = cleanText(`Addr: ${photo.address}`);
-                        const maxTextWidth = dims.width - 20;
-                        const words = addressText.split(' ');
-                        let currentLine = words[0] || '';
-
-                        for (let i = 1; i < words.length; i++) {
-                            const word = words[i];
-                            const testLine = `${currentLine} ${word}`;
-                            if (font.widthOfTextAtSize(testLine, fontSize) < maxTextWidth) {
-                                currentLine = testLine;
-                            } else {
-                                if (textY < imageY + 5) break;
-                                page.drawText(currentLine, { x: imageX + 10, y: textY, size: fontSize, font, color: textColor });
-                                textY -= 12;
-                                currentLine = word;
-                            }
-                        }
-                        if (textY >= imageY + 5) {
-                            page.drawText(currentLine, { x: imageX + 10, y: textY, size: fontSize, font, color: textColor });
-                        }
-                    }
                 } catch (e) {
                     console.log("Error embedding photo", photo.uri, e);
                     // Draw error placeholder so PDF generation doesn't fail completely
@@ -867,6 +942,36 @@ Spacesolutions Team
               </View>
           )}
 
+          {/* --- NEW: Maintenance / Raw Photos View --- */}
+          {(caseData.maintenanceSubmission || (!caseData.photosFolderLink && caseData.photosFolder)) && (
+             <View style={styles.maintenanceBox}>
+                 <Text style={styles.maintenanceHeader}>⚠️ Maintenance Submission</Text>
+                 <Text style={styles.maintenanceText}>Raw photos uploaded. Download zip to audit.</Text>
+                 
+                 {Object.entries(caseData.photosFolder || {}).map(([cat, photos]) => (
+                     <View key={cat} style={{marginTop: 10}}>
+                         <Text style={{fontWeight:'bold', fontSize:12, color:'#555', marginBottom:5}}>{cat.toUpperCase()}</Text>
+                         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                             {Array.isArray(photos) && photos.map((p, i) => (
+                                 <TouchableOpacity key={i} onPress={() => setSelectedPhoto(p)}>
+                                     <Image source={{uri: p.uri}} style={styles.auditThumb} />
+                                 </TouchableOpacity>
+                             ))}
+                         </ScrollView>
+                     </View>
+                 ))}
+
+                 <TouchableOpacity 
+                    style={[styles.downloadButton, { backgroundColor: "#009688", marginTop: 15 }]}
+                    onPress={handleDownloadZip}
+                    disabled={isFinalizing}
+                  >
+                    {isFinalizing ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="download-outline" size={20} color="#fff" />}
+                    <Text style={styles.downloadButtonText}>Download Assets (Zip)</Text>
+                  </TouchableOpacity>
+             </View>
+          )}
+
           <View style={styles.divider} />
 
           <View style={{ flexDirection: 'row', gap: 10, marginBottom: 15 }}>
@@ -1094,6 +1199,18 @@ Spacesolutions Team
           </View>
         </View>
       </Modal>
+
+      {/* Photo Preview Modal */}
+      <Modal visible={!!selectedPhoto} transparent={true} animationType="fade" onRequestClose={() => setSelectedPhoto(null)}>
+        <View style={styles.modalOverlay}>
+            <TouchableOpacity style={styles.modalClose} onPress={() => setSelectedPhoto(null)}>
+                <Ionicons name="close-circle" size={40} color="#fff" />
+            </TouchableOpacity>
+            {selectedPhoto && (
+                <Image source={{ uri: selectedPhoto.uri }} style={{ width: '90%', height: '80%', resizeMode: 'contain' }} />
+            )}
+        </View>
+      </Modal>
     </LinearGradient>
   );
 }
@@ -1165,4 +1282,9 @@ const styles = StyleSheet.create({
   },
   emailOption: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#eee' },
   emailText: { marginLeft: 10, fontSize: 14, color: '#333' },
+  maintenanceBox: { backgroundColor: '#f3e5f5', padding: 10, borderRadius: 8, marginTop: 10, borderWidth: 1, borderColor: '#ce93d8' },
+  maintenanceHeader: { fontWeight: 'bold', color: '#4a148c', fontSize: 14 },
+  maintenanceText: { fontSize: 12, color: '#6a1b9a', marginBottom: 5 },
+  auditThumb: { width: 60, height: 60, borderRadius: 6, marginRight: 8, backgroundColor: '#ddd' },
+  modalClose: { position: 'absolute', top: 40, right: 20, zIndex: 10, padding: 10 },
 });

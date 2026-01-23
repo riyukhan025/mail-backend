@@ -1,8 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Picker } from "@react-native-picker/picker";
+import * as FileSystem from "expo-file-system/legacy";
 import { LinearGradient } from "expo-linear-gradient";
+import * as Sharing from "expo-sharing";
 import { useEffect, useState } from "react";
-import { FlatList, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Alert, FlatList, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import * as XLSX from "xlsx";
 import firebase from "../firebase";
 
 export default function CompletedCasesScreen({ navigation }) {
@@ -83,16 +86,69 @@ export default function CompletedCasesScreen({ navigation }) {
       setEndDate("");
   };
 
+  const handleExport = async () => {
+    if (filteredCases.length === 0) {
+      Alert.alert("No Data", "No cases to export.");
+      return;
+    }
+
+    try {
+      const dataToExport = filteredCases.map(c => ({
+        "Client": c.client || "",
+        "Reference ID": c.matrixRefNo || c.id || "",
+        "Check type": c.checkType || "",
+        "company": c.company || "",
+        "Candidate Name": c.candidateName || "",
+        "Address": c.address || "",
+        "ChkType": c.chkType || "",
+        "Date Initiated": c.dateInitiated ? new Date(c.dateInitiated).toLocaleDateString() : "",
+        "Contact Number": c.contactNumber || "",
+        "Status": c.status || "",
+        "Location": c.city || "",
+        "Pincode": c.pincode || "",
+        "fe name": c.assigneeName || "",
+        "Completed date": c.completedAt ? new Date(c.completedAt).toLocaleDateString() : "",
+        "coments": c.comments || ""
+      }));
+
+      const ws = XLSX.utils.json_to_sheet(dataToExport);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "CompletedCases");
+      const wbout = XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
+      
+      if (Platform.OS === "web") {
+        const uri = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${wbout}`;
+        const link = document.createElement("a");
+        link.href = uri;
+        link.download = `Completed_Cases_${Date.now()}.xlsx`;
+        link.click();
+      } else {
+        const uri = FileSystem.cacheDirectory + `Completed_Cases_${Date.now()}.xlsx`;
+        await FileSystem.writeAsStringAsync(uri, wbout, { encoding: FileSystem.EncodingType.Base64 });
+        await Sharing.shareAsync(uri, {
+          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          dialogTitle: 'Export Completed Cases',
+          UTI: 'com.microsoft.excel.xlsx'
+        });
+      }
+    } catch (error) {
+      console.error("Export Error:", error);
+      Alert.alert("Error", "Failed to export Excel file.");
+    }
+  };
+
   const renderItem = ({ item }) => (
     <View style={styles.card}>
       <View style={styles.row}>
         <Text style={styles.title}>{item.matrixRefNo || item.id}</Text>
         <Text style={styles.date}>{item.completedAt ? new Date(item.completedAt).toLocaleDateString() : "-"}</Text>
       </View>
+      <Text style={styles.clientText}>{item.client || item.company || "Unknown Client"}</Text>
       <View style={styles.row}>
         <Text style={styles.subText} numberOfLines={1}>{item.candidateName || "N/A"}</Text>
         <Text style={[styles.status, { color: item.status === 'completed' ? '#4caf50' : '#aaa' }]}>{item.status.toUpperCase()}</Text>
       </View>
+      <Text style={styles.feText}>Completed by: {item.assigneeName || "Unknown"}</Text>
       <View style={styles.actionRow}>
         <TouchableOpacity
           style={[styles.button, { backgroundColor: "#28a745", marginRight: 5 }]}
@@ -122,6 +178,14 @@ export default function CompletedCasesScreen({ navigation }) {
         </TouchableOpacity>
       </View>
 
+      <View style={styles.summaryBar}>
+        <Text style={styles.summaryText}>Total: {filteredCases.length}</Text>
+        <TouchableOpacity style={styles.exportButton} onPress={handleExport}>
+            <Ionicons name="download-outline" size={18} color="#fff" style={{ marginRight: 5 }} />
+            <Text style={styles.exportButtonText}>Export Excel</Text>
+        </TouchableOpacity>
+      </View>
+
       {showFilters && (
           <View style={styles.filterContainer}>
               <TextInput 
@@ -147,14 +211,14 @@ export default function CompletedCasesScreen({ navigation }) {
               <View style={styles.dateRow}>
                   <TextInput 
                       style={[styles.searchInput, { flex: 1, marginRight: 5 }]} 
-                      placeholder="Start (YYYY-MM-DD)" 
+                      placeholder="From Date (YYYY-MM-DD)" 
                       placeholderTextColor="#ccc"
                       value={startDate}
                       onChangeText={setStartDate}
                   />
                   <TextInput 
                       style={[styles.searchInput, { flex: 1, marginLeft: 5 }]} 
-                      placeholder="End (YYYY-MM-DD)" 
+                      placeholder="To Date (YYYY-MM-DD)" 
                       placeholderTextColor="#ccc"
                       value={endDate}
                       onChangeText={setEndDate}
@@ -240,4 +304,25 @@ const styles = StyleSheet.create({
   picker: { color: "#fff", height: 50 },
   dateRow: { flexDirection: 'row', justifyContent: 'space-between' },
   footerText: { color: "#888", textAlign: "center", marginTop: 20, fontSize: 12, fontStyle: 'italic' },
+  summaryBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    marginBottom: 10
+  },
+  summaryText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
+  exportButton: {
+    flexDirection: 'row',
+    backgroundColor: '#2e7d32',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    alignItems: 'center'
+  },
+  exportButtonText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
+  clientText: { fontSize: 12, color: "#ffd700", fontWeight: "bold", marginBottom: 2 },
+  feText: { fontSize: 12, color: "#aaa", fontStyle: "italic", marginTop: 2 },
 });

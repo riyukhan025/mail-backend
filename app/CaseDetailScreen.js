@@ -146,6 +146,7 @@ export default function CaseDetailScreen({ navigation, route }) {
     const [isUploadingPhotos, setIsUploadingPhotos] = useState(false);
 
     const [maintenanceModeMember, setMaintenanceModeMember] = useState(false);
+    const [maintenanceCamera, setMaintenanceCamera] = useState(false);
 
     const [optionalCategories, setOptionalCategories] = useState([]);
     const [addPhotoModalVisible, setAddPhotoModalVisible] = useState(false);
@@ -183,7 +184,9 @@ export default function CaseDetailScreen({ navigation, route }) {
     useEffect(() => {
         const devRef = firebase.database().ref("dev/maintenanceModeMember");
         const listener = devRef.on("value", (snapshot) => {
-            setMaintenanceModeMember(snapshot.val() === true || snapshot.val() === "true");
+            const val = snapshot.val() || {};
+            setMaintenanceModeMember(val.maintenanceModeMember === true || val.maintenanceModeMember === "true");
+            setMaintenanceCamera(val.maintenanceCamera === true || val.maintenanceCamera === "true");
         });
         return () => devRef.off("value", listener);
     }, []);
@@ -526,16 +529,27 @@ export default function CaseDetailScreen({ navigation, route }) {
 
     const showPhotoOptions = (category) => {
         if (checkMaintenance()) return;
+
+        const options = [
+            {
+                text: "Take Photo with GPS",
+                onPress: () => openCamera(category),
+            },
+        ];
+
+        if (maintenanceCamera) {
+            options.push({
+                text: "Import from Gallery",
+                onPress: () => pickImage(category),
+            });
+        }
+
+        options.push({ text: "Cancel", style: "cancel" });
+
         Alert.alert(
             "Add Photo",
             "How would you like to add a photo?",
-            [
-                {
-                    text: "Take Photo with GPS",
-                    onPress: () => openCamera(category),
-                },
-                { text: "Cancel", style: "cancel" },
-            ]
+            options
         );
     };
     const openCamera = (category) => {
@@ -786,6 +800,44 @@ const handleCloseCase = async () => {
         }
         console.log("💾 Prepared sanitized photos for PDF & Firebase:", photoUrls);
 
+        const isCESClient = (caseData?.client || caseData?.company || "").toUpperCase().includes("CES");
+
+        // --- NEW: Conditional logic for maintenance camera mode OR CES Client ---
+        if (maintenanceCamera || isCESClient) {
+            console.log(`[SUBMISSION] Submitting raw assets. Maintenance: ${maintenanceCamera}, CES: ${isCESClient}`);
+            tick("Finalizing Case...");
+
+            // Save sanitized photos to Firebase
+            await firebase.database().ref(`cases/${caseId}/photosFolder`).set(photoUrls);
+            
+            // Update case status to 'audit'
+            await firebase.database().ref(`cases/${caseId}`).update({
+                status: "audit",
+                completedAt: Date.now(),
+                closedBy: user.uid,
+                maintenanceSubmission: true, // Flag for admin to identify (or just rely on null link)
+                photosFolderLink: null, // Ensure no old PDF link remains
+            });
+
+            // Remove any photosToRedo marker
+            try {
+                await firebase.database().ref(`cases/${caseId}/photosToRedo`).remove();
+            } catch (e) {
+                console.warn('[DB-UPDATE] Failed to clear photosToRedo:', e);
+            }
+
+            console.log("🔒 Case successfully submitted for audit (Raw/JPG Mode)!");
+            setShowProgressModal(false);
+            
+            Alert.alert("Success", "Case submitted for audit.", [
+                {
+                    text: "OK", 
+                    onPress: () => navigation.goBack()
+                }
+            ]);
+            return; // Exit the function here
+        }
+
         // --- NEW: Generate PDF on the client ---
         console.log('[PDF-LOG] 🚀 Starting PDF generation...');
         console.log('[PDF-LOG] Input photo object keys:', Object.keys(photoUrls || {}));
@@ -796,12 +848,35 @@ const handleCloseCase = async () => {
         // --- NEW: Title Page (Page 1) ---
         const titlePage = pdfDoc.addPage();
         const { width: tWidth, height: tHeight } = titlePage.getSize();
+
+        const titleText = "Audit Report";
+        const dateText = new Date().toLocaleDateString();
+        const refText = `Ref No: ${rawRefNo}`;
+
+        const titleWidth = font.widthOfTextAtSize(titleText, 30);
+        const dateWidth = font.widthOfTextAtSize(dateText, 18);
+        const refWidth = font.widthOfTextAtSize(refText, 24);
         
-        titlePage.drawText("SPACE SOLUTIONS", {
-            x: 50, y: tHeight - 150, size: 30, font, color: rgb(0, 0, 0)
+        titlePage.drawText(titleText, {
+            x: (tWidth - titleWidth) / 2,
+            y: tHeight / 2 + 50,
+            size: 30,
+            font,
+            color: rgb(0, 0, 0)
         });
-        titlePage.drawText(`Case Ref: ${rawRefNo}`, {
-            x: 50, y: tHeight - 200, size: 20, font, color: rgb(0, 0, 0)
+        titlePage.drawText(dateText, {
+            x: (tWidth - dateWidth) / 2,
+            y: tHeight / 2,
+            size: 18,
+            font,
+            color: rgb(0, 0, 0)
+        });
+        titlePage.drawText(refText, {
+            x: (tWidth - refWidth) / 2,
+            y: tHeight / 2 - 50,
+            size: 24,
+            font,
+            color: rgb(0, 0, 0)
         });
         // --------------------------------
 
@@ -914,7 +989,7 @@ const handleCloseCase = async () => {
                     const dims = image.scaleToFit(page.getWidth() - 100, 300);
 
                     // --- PAGE BREAK CHECK: Prevent Overlap ---
-                    if (y - dims.height < 150) { // Increased margin to prevent overlap
+                    if (y - dims.height < 200) { // Increased margin to prevent overlap
                         page = pdfDoc.addPage();
                         y = page.getHeight() - 50;
                     }
@@ -923,80 +998,13 @@ const handleCloseCase = async () => {
                     const imageY = y - dims.height;
                     page.drawImage(image, { x: imageX, y: imageY, width: dims.width, height: dims.height });
 
-                    // Draw metadata overlay at the bottom of the image
-                    const overlayHeight = 75; // Increased height for more text
-                    page.drawRectangle({ x: imageX, y: imageY, width: dims.width, height: overlayHeight, color: rgb(0, 0, 0), opacity: 0.7 });
-                    
-                    let metadataY = imageY + 60; // Start higher to fit more lines
-                    if (photo.geotag) {
-                        page.drawText(`Loc: ${photo.geotag.latitude.toFixed(6)}, ${photo.geotag.longitude.toFixed(6)}`, { 
-                            x: imageX + 10, 
-                            y: metadataY, 
-                            font, 
-                            size: 9, 
-                            color: rgb(1, 1, 1) 
-                        });
-                        metadataY -= 14;
-                    }
-                    if (photo.timestamp) {
-                        page.drawText(`Time: ${photo.timestamp}`, { 
-                            x: imageX + 10, 
-                            y: metadataY, 
-                            font, 
-                            size: 9, 
-                            color: rgb(1, 1, 1) 
-                        });
-                        metadataY -= 14;
-                    }
-                    if (photo.address) {
-                        // --- FIX: Wrap address text to fit within the image width ---
-                        const addressText = `Addr: ${photo.address}`;
-                        const maxTextWidth = dims.width - 20; // 10px padding on each side
-                        const words = addressText.split(' ');
-                        const lines = [];
-                        let currentLine = words[0] || '';
-
-                        for (let i = 1; i < words.length; i++) {
-                            const word = words[i];
-                            const testLine = `${currentLine} ${word}`;
-                            if (font.widthOfTextAtSize(testLine, 8) < maxTextWidth) {
-                                currentLine = testLine;
-                            } else {
-                                lines.push(currentLine);
-                                currentLine = word;
-                            }
-                        }
-                        lines.push(currentLine);
-
-                        // Draw the wrapped lines
-                        for (const line of lines) {
-                            if (metadataY < imageY + 8) break; // Stop if we run out of space in the overlay
-                            page.drawText(line, { 
-                                x: imageX + 10, y: metadataY, font, size: 8, color: rgb(1, 1, 1) 
-                            });
-                            metadataY -= 12; // Line height for address
-                        }
-                    }
-
                     // Update y-position for the next element
-                    y = imageY - 40; // Increased padding
+                    y = imageY - 20; // Reduced padding since overlay is gone
 
                 } catch (imgErr) {
                     console.error(`[PDF-LOG] ❌ FAILED to embed image ${photo.uri}:`, imgErr);
-                    // Draw error placeholder to indicate failure in PDF
-                    try {
-                        const errorHeight = 100;
-                        if (y - errorHeight < 50) {
-                            page = pdfDoc.addPage();
-                            y = page.getHeight() - 50;
-                        }
-                        const errY = y - errorHeight;
-                        page.drawRectangle({ x: 50, y: errY, width: 400, height: errorHeight, color: rgb(0.95, 0.95, 0.95), borderColor: rgb(1, 0, 0), borderWidth: 1 });
-                        page.drawText(`Error loading image: ${photo.uri}`, { x: 60, y: errY + 50, size: 10, font, color: rgb(1, 0, 0) });
-                        y = errY - 20;
-                    } catch (drawErr) {
-                        console.error("Failed to draw error placeholder", drawErr);
-                    }
+                    // REMOVED: Error placeholder drawing. 
+                    // If image fails, we simply skip drawing it in the PDF to avoid error messages appearing in the report.
                 }
             }
         }
@@ -1345,10 +1353,12 @@ const handleCloseCase = async () => {
                                     </Text>
                                 </View>
                                 {showAddButton && (
-                                    <TouchableOpacity style={styles.cameraButton} onPress={() => showPhotoOptions(req.id)}>
-                                        <Ionicons name="camera" size={20} color="#fff" />
-                                        <Text style={styles.cameraButtonText}>{t("add")}</Text>
-                                    </TouchableOpacity>
+                                    <View>
+                                        <TouchableOpacity style={styles.cameraButton} onPress={() => showPhotoOptions(req.id)}>
+                                            <Ionicons name="camera" size={20} color="#fff" />
+                                            <Text style={styles.cameraButtonText}>{t("add")}</Text>
+                                        </TouchableOpacity>
+                                    </View>
                                 )}
                             </View>
 
