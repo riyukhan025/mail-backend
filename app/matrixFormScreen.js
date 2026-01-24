@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Picker } from "@react-native-picker/picker";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -111,6 +111,7 @@ export default function MatrixFormScreen() {
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState("");
   const [signingField, setSigningField] = useState(null);
+  const canGoBack = useRef(false);
 
   const [form, setForm] = useState({
     matrixRefNo: "",
@@ -165,7 +166,7 @@ export default function MatrixFormScreen() {
           landmark: data.landmark || "",
           policeStation: data.policeStation || "",
           verificationComments: data.verificationComments || "",
-          matrixRepNameDate: data.matrixRepNameDate || "",
+          matrixRepNameDate: data.matrixRepNameDate || (data.assigneeName ? `${data.assigneeName} ${new Date().toLocaleDateString()}` : ""),
           natureLocation: data.natureLocation || "",
           addressProof: data.addressProof || prev.addressProof,
           respondentSignature: data.respondentSignature || "",
@@ -183,6 +184,39 @@ export default function MatrixFormScreen() {
       });
     }
   }, [caseId, route.params]);
+
+  /* ================= BACK HANDLER ================= */
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      if (canGoBack.current) {
+        return;
+      }
+      e.preventDefault();
+      if (Platform.OS === 'web') {
+          if (confirm('Discard changes? You have unsaved changes. Are you sure to discard them and leave the screen?')) {
+              canGoBack.current = true;
+              navigation.dispatch(e.data.action);
+          }
+      } else {
+          Alert.alert(
+            'Discard changes?',
+            'You have unsaved changes. Are you sure to discard them and leave the screen?',
+            [
+              { text: "Don't leave", style: 'cancel', onPress: () => {} },
+              {
+                text: 'Discard',
+                style: 'destructive',
+                onPress: () => {
+                  canGoBack.current = true;
+                  navigation.dispatch(e.data.action);
+                },
+              },
+            ]
+          );
+      }
+    });
+    return unsubscribe;
+  }, [navigation]);
 
   /* ================= SIGNATURE HANDLER ================= */
 
@@ -241,7 +275,7 @@ export default function MatrixFormScreen() {
       /* FIX MATRIX BLUE BOX ISSUE - Set default appearance */
       pdfForm.getFields().forEach(field => {
         try {
-          field.acroField.setDefaultAppearance('/Helv 9 Tf 0 g');
+          field.acroField.setDefaultAppearance('/TiIt 9 Tf 0 g');
         } catch (e) {}
       });
 
@@ -348,6 +382,7 @@ export default function MatrixFormScreen() {
 
       setProgress(1.0);
       Alert.alert("Success", "Matrix PV PDF Generated & Uploaded");
+      canGoBack.current = true;
       navigation.goBack();
     } catch (e) {
       console.error("PDF Generation Error:", e);
@@ -487,6 +522,26 @@ export default function MatrixFormScreen() {
           );
         }
 
+        // 5. Neighbour Confirmation (Dropdown)
+        if (k === "neighbourConfirmation") {
+          return (
+            <View key={k} style={styles.fieldContainer}>
+              <Text style={styles.label}>{label}</Text>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={form[k]}
+                  onValueChange={(v) => setForm({ ...form, [k]: v })}
+                  style={styles.picker}
+                >
+                  <Picker.Item label="Select..." value="" />
+                  <Picker.Item label="Yes" value="Yes" />
+                  <Picker.Item label="No" value="No" />
+                </Picker>
+              </View>
+            </View>
+          );
+        }
+
         return (
           <View key={k} style={styles.fieldContainer}>
             <Text style={styles.label}>{label}</Text>
@@ -563,7 +618,7 @@ export default function MatrixFormScreen() {
             trimWhitespace={true}
             minWidth={3}
             maxWidth={5}
-            webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 20px; width: 100%; position: absolute; } .m-signature-pad--body { margin-bottom: 80px; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
+            webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 60px; width: 100%; position: absolute; } .m-signature-pad--body { margin-bottom: 100px; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
           />
           <TouchableOpacity
             style={styles.close}

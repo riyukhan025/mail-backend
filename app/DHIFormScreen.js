@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -116,6 +116,7 @@ export default function DHIFormScreen() {
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState("");
   const [signingField, setSigningField] = useState(null);
+  const canGoBack = useRef(false);
 
   const [form, setForm] = useState({
     caseReferenceNumber: "",
@@ -176,6 +177,39 @@ export default function DHIFormScreen() {
       });
     }
   }, [caseId, route.params]);
+
+  /* ================= BACK HANDLER ================= */
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      if (canGoBack.current) {
+        return;
+      }
+      e.preventDefault();
+      if (Platform.OS === 'web') {
+          if (confirm('Discard changes? You have unsaved changes. Are you sure to discard them and leave the screen?')) {
+              canGoBack.current = true;
+              navigation.dispatch(e.data.action);
+          }
+      } else {
+          Alert.alert(
+            'Discard changes?',
+            'You have unsaved changes. Are you sure to discard them and leave the screen?',
+            [
+              { text: "Don't leave", style: 'cancel', onPress: () => {} },
+              {
+                text: 'Discard',
+                style: 'destructive',
+                onPress: () => {
+                  canGoBack.current = true;
+                  navigation.dispatch(e.data.action);
+                },
+              },
+            ]
+          );
+      }
+    });
+    return unsubscribe;
+  }, [navigation]);
 
   /* ================= SIGNATURE HANDLER ================= */
   const handleSignature = sig => {
@@ -247,7 +281,7 @@ export default function DHIFormScreen() {
       /* FIX BLUE BOX ISSUE - Set default appearance */
       pdfForm.getFields().forEach(field => {
         try {
-          field.acroField.setDefaultAppearance('/Helv 9 Tf 0 g');
+          field.acroField.setDefaultAppearance('/TiIt 9 Tf 0 g');
         } catch (e) {}
       });
 
@@ -279,7 +313,7 @@ export default function DHIFormScreen() {
 
       // Manually place Field Assistant Name
       if (form.fieldAssistantName) {
-        const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+        const font = await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
         const page = pdfDoc.getPages()[0];
         page.drawText(form.fieldAssistantName, {
             x: 330,
@@ -353,6 +387,7 @@ export default function DHIFormScreen() {
 
       setProgress(1.0);
       Alert.alert("Success", "DHI PDF generated & uploaded!");
+      canGoBack.current = true;
       navigation.goBack();
     } catch (e) {
       console.error(e);
@@ -432,7 +467,7 @@ export default function DHIFormScreen() {
             trimWhitespace={true}
             minWidth={3}
             maxWidth={5}
-            webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 20px; width: 100%; position: absolute; } .m-signature-pad--body { margin-bottom: 80px; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
+            webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 60px; width: 100%; position: absolute; } .m-signature-pad--body { margin-bottom: 100px; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
           />
           <TouchableOpacity style={styles.close} onPress={() => setSigningField(null)}>
             <Text style={{ color: "#fff" }}>Close</Text>

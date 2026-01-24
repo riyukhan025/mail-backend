@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en" style="height: 100%;">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+
+  <!-- This is the PWA manifest. It provides metadata used when your web app is installed on a user's mobile device or desktop. https://developer.mozilla.org/en-US/docs/Web/Manifest -->
+  <link rel="manifest" href="/manifest.json" />
+
+  <title>SpaceSolutions</title>
+
+  <!-- This style block is the fix -->
+  <style>
+    body {
+      margin: 0;
+      background-color: #121212;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    #root {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    /* Skeleton UI Styles */
+    .sk-header {
+      height: 60px;
+      background-color: #1e1e1e;
+      border-bottom: 1px solid #333;
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+    }
+    .sk-logo { width: 30px; height: 30px; background-color: #333; border-radius: 50%; margin-right: 15px; }
+    .sk-title { width: 150px; height: 20px; background-color: #333; border-radius: 4px; }
+    .sk-body { padding: 20px; flex: 1; display: flex; flex-direction: column; gap: 15px; }
+    .sk-stats { display: flex; gap: 10px; height: 70px; }
+    .sk-stat-card { flex: 1; background-color: #1e1e1e; border-radius: 8px; opacity: 0.8; }
+    .sk-table { flex: 1; background-color: #1e1e1e; border-radius: 12px; opacity: 0.6; }
+    
+    /* Simple pulse animation */
+    .sk-stat-card, .sk-table, .sk-title, .sk-logo {
+      animation: pulse 1.5s infinite ease-in-out;
+    }
+    @keyframes pulse {
+      0% { opacity: 0.6; }
+      50% { opacity: 0.4; }
+      100% { opacity: 0.6; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <!-- Skeleton Screen: Visible until React loads -->
+    <div class="sk-header"><div class="sk-logo"></div><div class="sk-title"></div></div>
+    <div class="sk-body">
+      <div class="sk-stats"><div class="sk-stat-card"></div><div class="sk-stat-card"></div><div class="sk-stat-card"></div><div class="sk-stat-card"></div><div class="sk-stat-card"></div></div>
+      <div class="sk-table"></div>
+    </div>
+  </div>
+</body>
+</html>

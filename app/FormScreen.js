@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useEffect, useState } from "react";
+import { Picker } from "@react-native-picker/picker";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -23,12 +24,12 @@ import SignatureScreen from "react-native-signature-canvas";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { get, getDatabase, ref, update } from "firebase/database";
 
-/* ================= ACROFIELDS ================= */
+/* ================= ACROFIELDS (Common) ================= */
 const TEXT_FIELDS = {
   caseReferenceNumber: "Text-JM7eGiSQlK",
   candidateName: "Text-3IJtUHL9te",
   fatherName: "Text-mLkeL_HVnb",
-  address: "Text-YmUPMvWsRg",
+  address: "Text-YmUPMvWsRg", 
   contactNumber: "Text-PqKLQjykrn",
   detailsVerified: "Text-ktvG_z3JGc",
   respondentName: "Text-dYn35TmOEI",
@@ -40,7 +41,7 @@ const DATE_FIELDS = {
   stayToDate: "Date-bpnWj8ltjv",
 };
 
-const CHECKBOX = {
+const CHECKBOX = { // Is this even used?
   addressType: {
     current: "CheckBox-Z8-bpQ1Egz",
     permanent: "CheckBox-rpoxYzXGRo",
@@ -70,6 +71,7 @@ const CHECKBOX = {
   },
 };
 
+// Marital Status is a dropdown, not a checkbox
 const MARITAL_STATUS = "Dropdown-m2CY7O4n-W";
 
 /* ================= SIGNATURE COORDS ================= */
@@ -124,6 +126,7 @@ async function uploadPdfToCloudinary(pdfData, caseId) {
   return url;
 }
 /* ================= RADIO UI ================= */
+
 const RadioGroup = ({ title, value, onChange, options }) => (
   <View style={styles.group}>
     <Text style={styles.groupTitle}>{title}</Text>
@@ -140,6 +143,45 @@ const RadioGroup = ({ title, value, onChange, options }) => (
   </View>
 );
 
+/* ================= DROPDOWN UI ================= */
+const Dropdown = ({ title, value, onChange, options }) => (
+    <View style={styles.group}>
+        <Text style={styles.groupTitle}>{title}</Text>
+        <View style={styles.pickerContainer}>
+            <Picker
+                selectedValue={value}
+                onValueChange={onChange}
+                style={styles.picker}
+            >
+                <Picker.Item label={`Select ${title}...`} value="" />
+                {options.map(o => (
+                    <Picker.Item key={o.value} label={o.label} value={o.value} />
+                ))}
+            </Picker>
+        </View>
+    </View>
+);
+
+const RelationshipOptions = [
+    { label: "Mother", value: "Mother" },
+    { label: "Father", value: "Father" },
+    { label: "Grandmother", value: "Grandmother" },
+    { label: "Grandfather", value: "Grandfather" },
+    { label: "Sister", value: "Sister" },
+    { label: "Brother", value: "Brother" },
+    { label: "Wife", value: "Wife" },
+    { label: "Neighbour", value: "Neighbour" },
+    { label: "Uncle", value: "Uncle" },
+    { label: "Aunt", value: "Aunt" },
+];
+
+const MaritalStatusOptions = [
+    { label: "Single", value: "Single" },
+    { label: "Married", value: "Married" },
+    { label: "Divorced", value: "Divorced" },
+    { label: "Widowed", value: "Widowed" }
+];
+
 /* ================= COMPONENT ================= */
 export default function CESFormScreen() {
   const route = useRoute();
@@ -152,6 +194,7 @@ export default function CESFormScreen() {
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState("");
   const [signingField, setSigningField] = useState(null);
+  const canGoBack = useRef(false);
 
   const [form, setForm] = useState({
     caseReferenceNumber: "",
@@ -205,7 +248,7 @@ export default function CESFormScreen() {
         detailsVerified: String(data.detailsVerified || ""),
         respondentName: String(data.respondentName || ""),
         relationship: String(data.relationship || ""),
-        fieldExecutiveName: String(data.fieldExecutiveName || ""),
+        fieldExecutiveName: String(data.fieldExecutiveName || data.assigneeName || ""),
         stayFromDate: String(data.stayFromDate || ""),
         stayToDate: String(data.stayToDate || ""),
         addressType: String(data.addressType || ""),
@@ -256,6 +299,39 @@ export default function CESFormScreen() {
       });
     }
   }, [caseId, route.params]);
+
+  /* ================= BACK HANDLER ================= */
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      if (canGoBack.current) {
+        return;
+      }
+      e.preventDefault();
+      if (Platform.OS === 'web') {
+          if (confirm('Discard changes? You have unsaved changes. Are you sure to discard them and leave the screen?')) {
+              canGoBack.current = true;
+              navigation.dispatch(e.data.action);
+          }
+      } else {
+          Alert.alert(
+            'Discard changes?',
+            'You have unsaved changes. Are you sure to discard them and leave the screen?',
+            [
+              { text: "Don't leave", style: 'cancel', onPress: () => {} },
+              {
+                text: 'Discard',
+                style: 'destructive',
+                onPress: () => {
+                  canGoBack.current = true;
+                  navigation.dispatch(e.data.action);
+                },
+              },
+            ]
+          );
+      }
+    });
+    return unsubscribe;
+  }, [navigation]);
 
   /* ================= SIGNATURE FIX (IMPORTANT) ================= */
   const handleSignature = sig => {
@@ -311,6 +387,13 @@ export default function CESFormScreen() {
       
       const pdfForm = pdfDoc.getForm();
 
+      // Set default appearance to Times-Italic to simulate handwriting
+      pdfForm.getFields().forEach(field => {
+        try {
+          field.acroField.setDefaultAppearance('/TiIt 10 Tf 0 g');
+        } catch (e) {}
+      });
+
       setProgress(0.4);
       setProgressMessage("Filling form data...");
       Object.entries(TEXT_FIELDS).forEach(([k, v]) => {
@@ -322,7 +405,7 @@ export default function CESFormScreen() {
       });
 
       const pageForOverlay = pdfDoc.getPages()[0];
-      const fontForOverlay = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const fontForOverlay = await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
 
       Object.entries(CHECKBOX).forEach(([group, map]) => {
         if (form[group] === "NA") {
@@ -368,7 +451,7 @@ export default function CESFormScreen() {
 
       /* ================= DRAW OVERLAY AFTER FLATTEN ================= */
       const page = pdfDoc.getPages()[0];
-      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const font = await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
 
       if (form.maritalStatus) {
         // 1. Draw White Rectangle (Mask) over the flattened "Divorced" text
@@ -455,6 +538,7 @@ export default function CESFormScreen() {
 
       setProgress(1.0);
       Alert.alert("Success", "CES PDF generated & uploaded!");
+      canGoBack.current = true;
       navigation.goBack();
     } catch (e) {
       console.error(e);
@@ -475,7 +559,7 @@ export default function CESFormScreen() {
         <Text style={styles.headerTitle}>CES Form</Text>
       </View>
 
-      {Object.keys(TEXT_FIELDS).filter(k => k !== 'detailsVerified').map(k => (
+      {Object.keys(TEXT_FIELDS).filter(k => k !== 'detailsVerified' && k !== 'relationship').map(k => (
         <View key={k} style={styles.inputRow}>
           <TextInput
             placeholder={k}
@@ -485,6 +569,11 @@ export default function CESFormScreen() {
           />
         </View>
       ))}
+
+      <Dropdown title="Relationship" value={form.relationship}
+        onChange={v => setForm({ ...form, relationship: v })}
+        options={RelationshipOptions}
+      />
 
       <RadioGroup title="Details Verified (ID Proof)" value={form.detailsVerified}
         onChange={v => setForm({ ...form, detailsVerified: v })}
@@ -547,11 +636,9 @@ export default function CESFormScreen() {
         ]}
       />
 
-      <TextInput
-        placeholder="Marital Status"
-        style={styles.input}
-        value={form.maritalStatus}
-        onChangeText={v => setForm({ ...form, maritalStatus: v })}
+      <Dropdown title="Marital Status" value={form.maritalStatus}
+        onChange={v => setForm({ ...form, maritalStatus: v })}
+        options={MaritalStatusOptions}
       />
 
       <RadioGroup title="Nature of Location" value={form.locationType}
@@ -636,7 +723,7 @@ export default function CESFormScreen() {
             trimWhitespace={true}
             minWidth={3}
             maxWidth={5}
-            webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 20px; width: 100%; position: absolute; } .m-signature-pad--body { margin-bottom: 80px; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
+            webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 60px; width: 100%; position: absolute; } .m-signature-pad--body { margin-bottom: 100px; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
           />
           <TouchableOpacity style={styles.close} onPress={() => setSigningField(null)}>
             <Text style={{ color: "#fff" }}>Close</Text>
@@ -703,4 +790,6 @@ const styles = StyleSheet.create({
   },
   progressBarFill: { height: "100%", backgroundColor: "#007AFF" },
   percentageText: { marginTop: 5, color: "#666", fontSize: 12 },
+  pickerContainer: { borderWidth: 1, borderColor: '#ccc', borderRadius: 5, backgroundColor: '#fff', overflow: 'hidden' },
+  picker: { height: 50, width: '100%' },
 });

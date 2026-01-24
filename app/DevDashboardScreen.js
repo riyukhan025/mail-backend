@@ -405,6 +405,15 @@ export default function DevDashboardScreen({ navigation }) {
 
 function OverviewTab({ featureFlags = {}, toggleFeatureFlag = () => {}, navigation }) {
   const { logout } = useContext(AuthContext);
+
+  const toggleGlobalMaintenance = () => {
+      const newState = !featureFlags.maintenanceModeAdmin;
+      firebase.database().ref("dev").update({
+          maintenanceModeAdmin: newState,
+          maintenanceModeMember: newState
+      });
+  };
+
   return (
     <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
       <View style={styles.section}>
@@ -417,7 +426,7 @@ function OverviewTab({ featureFlags = {}, toggleFeatureFlag = () => {}, navigati
                 <Ionicons
                   name={featureFlags[key] ? "toggle" : "toggle-outline"}
                   size={32}
-                  color={featureFlags[key] ? "#4caf50" : "#666"}
+                  color={featureFlags[key] ? (key.toLowerCase().includes('maintenance') ? "#ff4444" : "#4caf50") : "#666"}
                 />
               </TouchableOpacity>
             </View>
@@ -444,6 +453,12 @@ function OverviewTab({ featureFlags = {}, toggleFeatureFlag = () => {}, navigati
             colors={['#f12711', '#f5af19']} 
             icon="bug" label="Crash" 
             onPress={() => { throw new Error("Manual Crash Test"); }} 
+            style={{ width: '31%' }}
+          />
+          <GradientButton 
+            colors={['#d32f2f', '#b71c1c']} 
+            icon="construct" label="Maintenance" 
+            onPress={toggleGlobalMaintenance} 
             style={{ width: '31%' }}
           />
         </View>
