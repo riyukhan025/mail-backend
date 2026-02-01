@@ -59,10 +59,12 @@ export default function RevertedCasesScreen({ navigation }) {
       status: "assigned",
       assignedAt: new Date().toISOString(),
     }).then(() => {
-      Alert.alert("Success", "Case assigned successfully.");
       setAssignModalVisible(false);
       setSelectedCaseForAssign(null);
       setAssignTo("");
+      setTimeout(() => {
+          Alert.alert("Success", "Case assigned successfully.");
+      }, 100);
     }).catch(error => {
       Alert.alert("Error", "Failed to assign case: " + error.message);
     });
@@ -77,32 +79,51 @@ export default function RevertedCasesScreen({ navigation }) {
   });
 
   const renderItem = ({ item }) => (
-    <BlurView intensity={40} tint="dark" style={styles.card}>
-      <View style={styles.cardHeader}>
-        <Text style={styles.title}>{item.matrixRefNo || item.id}</Text>
-        <Text style={styles.pincode}>{item.pincode || "No Pin"}</Text>
+    <BlurView intensity={20} tint="dark" style={styles.card}>
+      <View style={styles.cardRow}>
+        <View style={{flex: 1}}>
+            <Text style={styles.title}>{item.matrixRefNo || item.id}</Text>
+            <Text style={styles.candidate}>{item.candidateName || "N/A"}</Text>
+        </View>
+        <View style={{alignItems: 'flex-end'}}>
+            <View style={styles.clientBadge}>
+                <Text style={styles.clientText}>{(item.client || item.company || "Unknown").toUpperCase()}</Text>
+            </View>
+            <View style={styles.pincodeContainer}>
+                <Ionicons name="navigate-outline" size={10} color="#ccc" />
+                <Text style={styles.pincode}>{item.pincode || "No Pin"}</Text>
+            </View>
+        </View>
       </View>
-      <Text style={styles.text}>Candidate: {item.candidateName || "N/A"}</Text>
-      <Text style={styles.text} numberOfLines={1}>{item.address || "No Address"}</Text>
-      <TouchableOpacity
-        style={styles.button}
-        onPress={() => {
-            setSelectedCaseForAssign(item);
-            setAssignModalVisible(true);
-        }}
-      >
-        <Text style={styles.buttonText}>Assign</Text>
-      </TouchableOpacity>
+      
+      <View style={styles.divider} />
+      
+      <View style={styles.cardRow}>
+          <View style={{flex: 1, flexDirection: 'row', alignItems: 'center'}}>
+             <Ionicons name="location-outline" size={12} color="#666" style={{marginRight: 4}} />
+             <Text style={styles.address} numberOfLines={1}>{item.address || "No Address"}</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.assignBtn}
+            onPress={() => {
+                setSelectedCaseForAssign(item);
+                setAssignModalVisible(true);
+            }}
+          >
+            <Text style={styles.assignBtnText}>RE-ASSIGN</Text>
+            <Ionicons name="arrow-forward" size={10} color="#000" />
+          </TouchableOpacity>
+      </View>
     </BlurView>
   );
 
   return (
-    <LinearGradient colors={["#0f2027", "#203a43", "#2c5364"]} style={styles.container}>
+    <LinearGradient colors={["#0f0c29", "#302b63", "#24243e"]} style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Reverted Cases</Text>
+        <Text style={[styles.headerTitle, { textShadowColor: '#ff9800', textShadowRadius: 10 }]}>Reverted Cases</Text>
       </View>
 
       <View style={styles.filterContainer}>
@@ -185,20 +206,29 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 20, fontWeight: "bold", color: "#fff" },
   list: { padding: 20 },
   card: { 
-    backgroundColor: "rgba(0,0,0,0.3)", 
-    padding: 15, 
-    borderRadius: 15, 
-    marginBottom: 15,
+    backgroundColor: "rgba(255,255,255,0.05)", 
+    padding: 12, 
+    borderRadius: 12, 
+    marginBottom: 10,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)"
+    borderColor: "rgba(255,255,255,0.1)",
+    shadowColor: "#7b2cbf",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
   },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 },
-  title: { fontSize: 18, fontWeight: "bold", color: "#fff" },
-  pincode: { fontSize: 12, color: "#ffd700", fontWeight: 'bold', backgroundColor: 'rgba(0,0,0,0.3)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-  text: { color: "#ccc", marginBottom: 5 },
-  button: { marginTop: 10, backgroundColor: "#ff9800", padding: 10, borderRadius: 5, alignItems: "center" },
-  buttonText: { color: "#fff", fontWeight: "bold" },
+  cardRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  title: { fontSize: 14, fontWeight: "bold", color: "#4cc9f0", letterSpacing: 0.5 },
+  candidate: { fontSize: 12, color: "#fff", marginTop: 2 },
+  clientBadge: { backgroundColor: "rgba(247, 37, 133, 0.15)", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginBottom: 4, borderWidth: 1, borderColor: "rgba(247, 37, 133, 0.3)" },
+  clientText: { color: "#f72585", fontSize: 9, fontWeight: "bold" },
+  pincodeContainer: { flexDirection: 'row', alignItems: 'center' },
+  pincode: { fontSize: 10, color: "#ccc", marginLeft: 3 },
+  divider: { height: 1, backgroundColor: "rgba(255,255,255,0.05)", marginVertical: 8 },
+  address: { color: "#888", fontSize: 11, flex: 1, marginRight: 10 },
+  assignBtn: { backgroundColor: "#4361ee", flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 14, borderRadius: 20, shadowColor: "#4361ee", shadowOpacity: 0.4, shadowRadius: 5 },
+  assignBtnText: { color: "#fff", fontSize: 10, fontWeight: "bold", marginRight: 4 },
   emptyText: { color: "#ccc", textAlign: "center", marginTop: 50 },
   // Modal Styles
   modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "center", padding: 20 },

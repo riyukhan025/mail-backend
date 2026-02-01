@@ -1,26 +1,28 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import { Picker } from "@react-native-picker/picker";
 import { BlurView } from "expo-blur";
 import * as DocumentPicker from "expo-document-picker";
 import { LinearGradient } from "expo-linear-gradient";
-import { useContext, useEffect, useRef, useState } from "react";
+import * as Speech from "expo-speech";
+import { createElement, useContext, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Animated,
   Dimensions,
-  FlatList,
   Image,
-  ImageBackground,
   Modal,
   Platform,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
   View
 } from "react-native";
+import { LineChart } from "react-native-chart-kit";
 import * as XLSX from "xlsx";
 import firebase from "../firebase";
 import { AuthContext } from "./AuthContext";
@@ -28,6 +30,75 @@ import { AuthContext } from "./AuthContext";
 const SCREEN_HEIGHT = Dimensions.get("window").height;
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const MENU_WIDTH = SCREEN_WIDTH * 0.6;
+const MINI_SIDEBAR_WIDTH = 56; // 14 in tailwind units (14*4=56)
+const IS_DESKTOP = SCREEN_WIDTH > 768;
+
+const THEME = {
+  light: {
+    background: ["#f8fafc", "#f8fafc"],
+    cardBg: "rgba(255, 255, 255, 0.85)",
+    text: "#1E293B",
+    textSecondary: "#64748B",
+    primary: "#4F7DFF",
+    border: "#E2E8F0",
+    shadow: "rgba(148, 163, 184, 0.2)",
+    success: "#10B981",
+    warning: "#F59E0B",
+    error: "#EF4444",
+    info: "#8B5CF6",
+    menuBg: "rgba(255, 255, 255, 0.95)"
+  },
+  dark: {
+    background: ["#020617", "#020617"],
+    cardBg: "rgba(30, 41, 59, 0.6)",
+    text: "#F8FAFC",
+    textSecondary: "#94A3B8",
+    primary: "#60A5FA",
+    border: "#334155",
+    shadow: "rgba(0, 0, 0, 0.3)",
+    success: "#34D399",
+    warning: "#FBBF24",
+    error: "#F87171",
+    info: "#A78BFA",
+    menuBg: "rgba(30, 41, 59, 0.95)"
+  }
+};
+
+const BackgroundDecorations = ({ theme }) => {
+  return (
+    <View style={[StyleSheet.absoluteFill, { zIndex: 0 }]} pointerEvents="none">
+      <View style={styles.glow1} />
+      <View style={styles.glow2} />
+      <View style={styles.glow3} />
+      {/* Threads */}
+      <View style={{ position: 'absolute', top: '-20%', left: '10%', width: 1, height: 800, backgroundColor: theme.primary + '1A', transform: [{ rotate: '45deg' }] }} />
+      <View style={{ position: 'absolute', top: '20%', left: '80%', width: 1, height: 1000, backgroundColor: theme.primary + '1A', transform: [{ rotate: '-30deg' }] }} />
+      <View style={{ position: 'absolute', top: '70%', left: '5%', width: 1, height: 900, backgroundColor: theme.primary + '1A', transform: [{ rotate: '25deg' }] }} />
+      <View style={{ position: 'absolute', top: '50%', left: '-20%', width: 1, height: 1200, backgroundColor: theme.primary + '1A', transform: [{ rotate: '60deg' }] }} />
+      <View style={{ position: 'absolute', top: '90%', left: '60%', width: 1, height: 700, backgroundColor: theme.primary + '1A', transform: [{ rotate: '-55deg' }] }} />
+    </View>
+  );
+};
+
+const CyberCorner = ({ theme, color }) => (
+  <>
+    <View style={[styles.cyberCorner, styles.cyberCornerTopLeft, { borderColor: color ? color + '99' : theme.primary + '30' }]} />
+    <View style={[styles.cyberCorner, styles.cyberCornerBottomRight, { borderColor: color ? color + '99' : theme.primary + '30' }]} />
+  </>
+);
+
+const BlinkingDot = ({ color }) => {
+  const opacity = useRef(new Animated.Value(0.3)).current;
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 1, duration: 800, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.3, duration: 800, useNativeDriver: true })
+      ])
+    ).start();
+  }, []);
+  return <Animated.View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color, opacity, marginRight: 8 }} />;
+};
 
 export default function AdminPanelScreen({ navigation }) {
   const { user, logout } = useContext(AuthContext);
@@ -49,8 +120,18 @@ export default function AdminPanelScreen({ navigation }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [uploadModalVisible, setUploadModalVisible] = useState(false);
   const [pendingUploadData, setPendingUploadData] = useState(null);
-  const [isLightTheme, setIsLightTheme] = useState(false);
+  const [isLightTheme, setIsLightTheme] = useState(false); // Default to dark theme
   const [archivedCount, setArchivedCount] = useState(0);
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [assignMode, setAssignMode] = useState(false);
+  const [dateInitiatedFilter, setDateInitiatedFilter] = useState("");
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [uploadDateFilter, setUploadDateFilter] = useState("");
+  const [showUploadDatePicker, setShowUploadDatePicker] = useState(false);
+  const [voiceModalVisible, setVoiceModalVisible] = useState(false);
+  const [voiceCommand, setVoiceCommand] = useState("");
+  const [aiResponse, setAiResponse] = useState("Listening for command...");
 
   // Alert System State
   const [auditAlert, setAuditAlert] = useState(null);
@@ -61,6 +142,26 @@ export default function AdminPanelScreen({ navigation }) {
   const [newUI, setNewUI] = useState(false);
   const [betaFeatures, setBetaFeatures] = useState(false);
   const [maintenanceModeAdmin, setMaintenanceModeAdmin] = useState(false);
+
+  const [insightsOpen, setInsightsOpen] = useState(false);
+  const [chartData, setChartData] = useState(null);
+  const theme = isLightTheme ? THEME.light : THEME.dark;
+  
+  const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
+  const [activeSidebarItem, setActiveSidebarItem] = useState("Command");
+
+  const sidebarItems = [
+    { label: "Command", icon: "grid-outline", screen: "AdminPanel" },
+    { label: "Users", icon: "people-outline", screen: "MemberViewScreen" },
+    { label: "Completed", icon: "checkmark-done-circle-outline", screen: "CompletedCases" },
+    { label: "Reverted", icon: "refresh-circle-outline", screen: "RevertedCasesScreen" },
+    { label: "Verify", icon: "shield-checkmark-outline", screen: "VerifyProfileScreen" },
+    { label: "DSR", icon: "document-text-outline", screen: "MemberDSRScreen" },
+    { label: "Mails", icon: "mail-outline", screen: "MailRecordsScreen" },
+    { label: "Analytics", icon: "stats-chart-outline", screen: "StatisticsScreen" },
+    { label: "Tickets", icon: "ticket-outline", screen: "AllTicketsScreen" }, // Assuming this exists
+    { label: "Settings", icon: "settings-outline" },
+  ];
 
   useEffect(() => {
     const devRef = firebase.database().ref("dev");
@@ -79,15 +180,136 @@ export default function AdminPanelScreen({ navigation }) {
   const slideAnim = useRef(new Animated.Value(-MENU_WIDTH)).current;
 
   useEffect(() => {
-    if (menuOpen) {
-      slideAnim.setValue(-MENU_WIDTH);
+    if (!IS_DESKTOP) {
       Animated.timing(slideAnim, {
-        toValue: 0,
+        toValue: menuOpen ? 0 : -MENU_WIDTH,
         duration: 300,
-        useNativeDriver: true,
+        useNativeDriver: false, // 'left' is not supported by native driver
       }).start();
     }
-  }, [menuOpen]);
+  }, [menuOpen, IS_DESKTOP]);
+
+  // Chart Data Generation
+  useEffect(() => {
+    if (cases.length === 0) return;
+
+    const completedCases = cases.filter(c => c.status === 'completed' || c.status === 'closed');
+    const pendingCases = cases.filter(c => c.status === 'assigned' || c.status === 'audit' || c.status === 'fired' || c.status === 'reverted');
+
+    const groupedCompleted = {};
+    const groupedPending = {};
+
+    completedCases.forEach(c => {
+        const dateKey = new Date(c.completedAt || c.finalizedAt || c.updatedAt).toLocaleDateString();
+        if (!groupedCompleted[dateKey]) groupedCompleted[dateKey] = 0;
+        groupedCompleted[dateKey]++;
+    });
+    
+    pendingCases.forEach(c => {
+        const dateKey = new Date(c.assignedAt || c.dateInitiated).toLocaleDateString(); // Use assigned/initiated for pending
+        if (!groupedPending[dateKey]) groupedPending[dateKey] = 0;
+        groupedPending[dateKey]++;
+    });
+
+    const labels = [];
+    const completedDataPoints = [];
+    const pendingDataPoints = [];
+
+    for (let i = 6; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        const dateKey = d.toLocaleDateString();
+        labels.push(`${d.getMonth() + 1}/${d.getDate()}`);
+        completedDataPoints.push(groupedCompleted[dateKey] || 0);
+        pendingDataPoints.push(groupedPending[dateKey] || 0);
+    }
+
+    setChartData({ 
+        labels, 
+        datasets: [
+            { data: completedDataPoints, color: (opacity = 1) => theme.success, strokeWidth: 3 }, 
+            { data: pendingDataPoints, color: (opacity = 1) => theme.warning, strokeWidth: 3 }
+        ],
+        legend: ["Verified Cycles", "Queue Load"]
+    });
+  }, [cases, theme]);
+
+  const clearAllFilters = () => {
+    setCityFilter("");
+    setSearchText("");
+    setStatusFilter("");
+    setRefNoFilter("");
+    setVerificationFilter("");
+    setFromDate(null);
+    setToDate(null);
+    setDateInitiatedFilter("");
+    setUploadDateFilter("");
+    setHeaderFilters({});
+  };
+
+  useEffect(() => {
+    if (voiceModalVisible) {
+        Speech.speak("System under development. AI module offline.", { pitch: 1.0, rate: 0.9 });
+    } else {
+        Speech.stop();
+    }
+  }, [voiceModalVisible]);
+
+  // --- SPACE_ADMIN AI LOGIC ---
+  const processVoiceCommand = (cmd) => {
+    const lowerCmd = cmd.toLowerCase();
+    let response = "Command not recognized.";
+    let closeDelay = 1500;
+
+    if (lowerCmd.includes("filter by city") || lowerCmd.includes("filter city")) {
+        const city = lowerCmd.replace("filter by city", "").replace("filter city", "").trim();
+        setCityFilter(city); 
+        response = `Filtering by city: ${city}`;
+    } else if (lowerCmd.includes("filter by name") || lowerCmd.includes("search")) {
+        const text = lowerCmd.replace("filter by name", "").replace("search", "").trim();
+        setSearchText(text);
+        response = `Searching for: ${text}`;
+    } else if (lowerCmd.includes("select all")) {
+        const allIds = fullyFilteredCases.map(c => c.id);
+        setSelectedCases(allIds);
+        response = `Selected ${allIds.length} cases.`;
+    } else if (lowerCmd.includes("assign")) {
+        if (selectedCases.length > 0) {
+            setAssignModalVisible(true);
+            response = "Opening assignment menu...";
+            closeDelay = 500;
+        } else {
+            response = "No cases selected to assign.";
+        }
+    } else if (lowerCmd.includes("confirm")) {
+        if (assignModalVisible && assignTo) {
+            assignCases();
+            response = "Assignment confirmed.";
+        } else {
+            response = "Cannot confirm. Check assignment menu.";
+        }
+    } else if (lowerCmd.includes("manual audit")) {
+        if (fullyFilteredCases.length === 1) {
+            const item = fullyFilteredCases[0];
+            navigation.navigate("AuditCaseScreen", { caseId: item.id, caseData: item, manualMode: true });
+            response = "Opening Manual Audit...";
+            closeDelay = 500;
+        } else {
+            response = "Please filter to a single case first.";
+        }
+    } else if (lowerCmd.includes("clear")) {
+        clearAllFilters();
+        response = "Filters and selection cleared.";
+    }
+
+    setAiResponse(response);
+    Speech.speak(response, { pitch: 1.0, rate: 0.9 });
+    setTimeout(() => {
+        setVoiceModalVisible(false);
+        setVoiceCommand("");
+        setAiResponse("Listening for command...");
+    }, closeDelay);
+  };
 
   // Listen for account status changes (Revoke Access)
   useEffect(() => {
@@ -115,11 +337,7 @@ export default function AdminPanelScreen({ navigation }) {
   };
 
   const closeMenu = () => {
-    Animated.timing(slideAnim, {
-      toValue: -MENU_WIDTH,
-      duration: 300,
-      useNativeDriver: true,
-    }).start(() => setMenuOpen(false));
+    setMenuOpen(false);
   };
 
   // Fetch cases
@@ -214,6 +432,13 @@ export default function AdminPanelScreen({ navigation }) {
   // Auto-dismiss alert after 4 seconds
   useEffect(() => {
     if (auditAlert) {
+      setNotifications(prev => [{
+          id: Date.now(),
+          title: "Audit Request",
+          message: `${auditAlert.refNo} submitted by ${auditAlert.memberName}`,
+          time: new Date().toLocaleTimeString()
+      }, ...prev]);
+
       const timer = setTimeout(() => {
         setAuditAlert(null);
       }, 4000);
@@ -221,7 +446,8 @@ export default function AdminPanelScreen({ navigation }) {
     }
   }, [auditAlert]);
 
-  const uniqueCities = [...new Set(cases.map(c => c.city).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const toTitleCase = (str) => str.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase());
+  const uniqueCities = [...new Set(cases.map(c => toTitleCase((c.city || "").trim())).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const sortedMembers = [...members].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
   // Counters
@@ -230,6 +456,8 @@ export default function AdminPanelScreen({ navigation }) {
   const assignedFE = cases.filter((c) => c.status === "assigned").length;
   const audited = cases.filter((c) => c.status === "audit").length;
   const completed = cases.filter((c) => c.status === "completed").length + archivedCount;
+
+  const uniqueDates = [...new Set(cases.map(c => c.dateInitiated ? new Date(c.dateInitiated).toLocaleDateString() : null).filter(Boolean))].sort();
 
   // Filtered cases
   const filteredCases = cases.filter((c) => {
@@ -244,11 +472,31 @@ export default function AdminPanelScreen({ navigation }) {
     const matchesVerification = verificationFilter
       ? c.checkType?.toUpperCase() === verificationFilter.toUpperCase()
       : true;
-    const matchesCity = cityFilter ? c.city === cityFilter : true;
+    const matchesCity = cityFilter ? (c.city || "").toLowerCase() === cityFilter.toLowerCase() : true;
     let matchesDate = true;
     if (fromDate) matchesDate = matchesDate && new Date(c.dateInitiated) >= fromDate;
     if (toDate) matchesDate = matchesDate && new Date(c.dateInitiated) <= toDate;
-    return matchesSearch && matchesStatus && matchesRefNo && matchesVerification && matchesCity && matchesDate;
+    
+    let matchesDateInitiated = true;
+    if (dateInitiatedFilter) {
+        if (!c.dateInitiated) matchesDateInitiated = false;
+        else {
+            const d = new Date(c.dateInitiated);
+            const localYMD = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            matchesDateInitiated = localYMD === dateInitiatedFilter;
+        }
+    }
+
+    let matchesUploadDate = true;
+    if (uploadDateFilter) {
+        if (!c.ingestedAt) matchesUploadDate = false;
+        else {
+            const d = new Date(c.ingestedAt);
+            const localYMD = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            matchesUploadDate = localYMD === uploadDateFilter;
+        }
+    }
+    return matchesSearch && matchesStatus && matchesRefNo && matchesVerification && matchesCity && matchesDate && matchesDateInitiated && matchesUploadDate;
   });
 
   const fullyFilteredCases = filteredCases.filter((c) => {
@@ -273,13 +521,59 @@ export default function AdminPanelScreen({ navigation }) {
       else if (key === "assigneeRole") val = c.assigneeRole;
       else if (key === "comments") val = c.comments;
       else if (key === "completedAt") val = c.completedAt ? new Date(c.completedAt).toLocaleDateString() : "";
-      else if (key === "dateInitiated") val = c.dateInitiated ? new Date(c.dateInitiated).toLocaleDateString() : "";
+      else if (key === "dateInitiated") {
+          if (c.dateInitiated) {
+              const d = new Date(c.dateInitiated);
+              if (!isNaN(d.getTime())) {
+                  const day = String(d.getDate()).padStart(2, '0');
+                  const month = String(d.getMonth() + 1).padStart(2, '0');
+                  const year = d.getFullYear();
+                  val = `${day}/${month}/${year}`;
+              }
+          }
+      }
       return (val || "").toString().toLowerCase().includes(filterVal);
     });
+  }).sort((a, b) => {
+    const dateA = new Date(a.assignedAt || a.dateInitiated || 0).getTime();
+    const dateB = new Date(b.assignedAt || b.dateInitiated || 0).getTime();
+    return dateB - dateA;
   });
+
+  const handleDateChange = (event, selectedDate) => {
+    if (Platform.OS === 'android') setShowDatePicker(false);
+    if (selectedDate) {
+      const year = selectedDate.getFullYear();
+      const month = String(selectedDate.getMonth() + 1).padStart(2, '0');
+      const day = String(selectedDate.getDate()).padStart(2, '0');
+      setDateInitiatedFilter(`${year}-${month}-${day}`);
+    }
+  };
+
+  const handleUploadDateChange = (event, selectedDate) => {
+    if (Platform.OS === 'android') setShowUploadDatePicker(false);
+    if (selectedDate) {
+      const year = selectedDate.getFullYear();
+      const month = String(selectedDate.getMonth() + 1).padStart(2, '0');
+      const day = String(selectedDate.getDate()).padStart(2, '0');
+      setUploadDateFilter(`${year}-${month}-${day}`);
+    }
+  };
 
   const toggleSelectCase = (id) => {
     setSelectedCases((prev) => (prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]));
+  };
+
+  const handleSelectAll = () => {
+    const allIds = fullyFilteredCases.map(c => c.id);
+    const allSelected = allIds.length > 0 && allIds.every(id => selectedCases.includes(id));
+    
+    if (allSelected) {
+      setSelectedCases(prev => prev.filter(id => !allIds.includes(id)));
+    } else {
+      const newSelected = [...new Set([...selectedCases, ...allIds])];
+      setSelectedCases(newSelected);
+    }
   };
 
   const assignCases = () => {
@@ -311,8 +605,10 @@ export default function AdminPanelScreen({ navigation }) {
       setSelectedCases([]);
       setAssignTo("");
       setAssignModalVisible(false);
-      if (Platform.OS === "web") alert("Success: Cases assigned successfully!");
-      else Alert.alert("Success", "Cases assigned successfully!");
+      setTimeout(() => {
+          if (Platform.OS === "web") alert("Success: Cases assigned successfully!");
+          else Alert.alert("Success", "Cases assigned successfully!");
+      }, 100);
     };
 
     const alreadyAssigned = selectedCases
@@ -428,6 +724,7 @@ export default function AdminPanelScreen({ navigation }) {
         assigneeRole: "",
         completedAt: null,
         comments: row["comments"] || "",
+        ingestedAt: new Date().toISOString(),
       };
 
       // Check for exact duplicates (all fields match) to prevent re-uploading same file
@@ -532,8 +829,54 @@ export default function AdminPanelScreen({ navigation }) {
     }
   };
 
+  const StatCard = ({ label, value, icon, color, change }) => {
+    const [isPressed, setIsPressed] = useState(false);
+    const [realtimeValue, setRealtimeValue] = useState(0);
+    const isPositive = change && change.startsWith('+');
+
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setRealtimeValue(prev => prev + Math.floor(Math.random() * 3) + 1);
+        }, 2500 + Math.random() * 1500);
+
+        return () => clearInterval(interval);
+    }, []);
+
+    return (
+      <TouchableOpacity
+        activeOpacity={1}
+        onPressIn={() => setIsPressed(true)}
+        onPressOut={() => setIsPressed(false)}
+        style={[
+          styles.statCardTouchable,
+          isPressed && { transform: [{ scale: 1.02 }] }
+        ]}
+      >
+        <BlurView intensity={30} tint={isLightTheme ? 'light' : 'dark'} style={[styles.statCard, { borderColor: theme.border, shadowColor: isPressed ? color : theme.shadow }]}>
+          <CyberCorner theme={theme} color={color} />
+          <View style={styles.statCardHeader}>
+            <View style={[styles.statIconContainer, { backgroundColor: isLightTheme ? theme.border : 'rgba(15, 23, 42, 0.5)' }]}>
+              <Ionicons name={icon} size={22} color={color} style={{ textShadowColor: color, textShadowRadius: 8 }} />
+            </View>
+            {change && (
+              <Text style={[styles.statChange, { color: isPositive ? theme.success : theme.error, backgroundColor: (isPositive ? theme.success : theme.error) + '15', borderColor: (isPositive ? theme.success : theme.error) + '30' }]}>{change}</Text>
+            )}
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'baseline', marginBottom: 2 }}>
+            <Text style={[styles.statValue, { color: theme.text, textShadowColor: color, textShadowRadius: 15, textShadowOffset: {width: 0, height: 0} }]}>{value}</Text>
+            <View style={styles.realtimeContainer}>
+                <Text style={[styles.realtimeArrow, { color: theme.success }]}>↝</Text>
+                <Text style={[styles.realtimeValue, { color: theme.success }]}>+{realtimeValue}</Text>
+            </View>
+          </View>
+          <Text style={[styles.statLabel, { color: theme.textSecondary }]}>{label}</Text>
+        </BlurView>
+      </TouchableOpacity>
+    );
+  };
+
   const columnWidths = {
-    number: 40,
+    number: 55,
     select: 30,
     client: 100,
     ReferenceNo: 100,
@@ -548,7 +891,7 @@ export default function AdminPanelScreen({ navigation }) {
     pincode: 80,
     contactNumber: 100,
     status: 100,
-    assigneeName: 100,
+    assigneeName: 120,
     assigneeRole: 80,
     completedAt: 100,
     comments: 150,
@@ -557,13 +900,25 @@ export default function AdminPanelScreen({ navigation }) {
     manualAudit: 60,
   };
 
+  const getVisibleColumns = () => {
+      if (!assignMode) return columnWidths;
+      const hidden = ['tmName', 'checkType', 'chkType', 'state', 'assigneeRole', 'completedAt', 'comments'];
+      const visible = {};
+      Object.keys(columnWidths).forEach(key => {
+          if (!hidden.includes(key)) visible[key] = columnWidths[key];
+      });
+      return visible;
+  };
+  const visibleCols = getVisibleColumns();
+
+  // Table Row Renderer
   const renderCase = ({ item, index }) => {
     const isSelected = selectedCases.includes(item.id);
     const isOdd = index % 2 === 1;
 
     return (
-      <View style={[styles.caseRow, isOdd && (isLightTheme ? styles.caseRowOdd : styles.caseRowOddDark)]}>
-        {Object.keys(columnWidths).map((key) => {
+      <View style={[styles.caseRow, { borderBottomColor: theme.border, borderBottomWidth: 0, backgroundColor: isOdd ? (isLightTheme ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.02)") : "transparent" }]}>
+        {Object.keys(visibleCols).map((key) => {
           let value = "";
           let component = null;
           switch (key) {
@@ -614,6 +969,28 @@ export default function AdminPanelScreen({ navigation }) {
               break;
             case "assigneeName":
               value = item.assigneeName || "-";
+              if (item.assignedTo && item.assignedTo !== "null") {
+                const member = members.find(m => m.id === item.assignedTo);
+                component = (
+                  <View key={key} style={[styles.assigneeCell, { width: visibleCols[key] }]}>
+                    {member?.photoURL ? (
+                      <Image source={{ uri: member.photoURL }} style={styles.assigneeAvatar} />
+                    ) : (
+                      <View style={[styles.assigneeAvatarPlaceholder, { backgroundColor: theme.primary + '30' }]}>
+                        <Text style={[styles.assigneeAvatarText, { color: theme.primary }]}>{(value || '?').charAt(0)}</Text>
+                      </View>
+                    )}
+                    <Text style={[styles.cell, { flex: 1, paddingHorizontal: 4, color: theme.text }]} numberOfLines={2}>{value}</Text>
+                  </View>
+                );
+              } else {
+                component = (
+                  <View key={key} style={[styles.assigneeCell, { width: visibleCols[key], opacity: 0.6 }]}>
+                     <Ionicons name="person-add-outline" size={16} color={theme.textSecondary} style={{ marginRight: 6 }} />
+                     <Text style={[styles.cell, { fontSize: 11, color: theme.textSecondary, fontStyle: 'italic' }]}>Select Member</Text>
+                  </View>
+                );
+              }
               break;
             case "assigneeRole":
               value = item.assigneeRole || "-";
@@ -625,7 +1002,19 @@ export default function AdminPanelScreen({ navigation }) {
               value = item.comments || "-";
               break;
             case "dateInitiated":
-              value = item.dateInitiated ? new Date(item.dateInitiated).toLocaleDateString() : "-";
+              if (item.dateInitiated) {
+                  const d = new Date(item.dateInitiated);
+                  if (!isNaN(d.getTime())) {
+                      const day = String(d.getDate()).padStart(2, '0');
+                      const month = String(d.getMonth() + 1).padStart(2, '0');
+                      const year = d.getFullYear();
+                      value = `${day}/${month}/${year}`;
+                  } else {
+                      value = "Invalid Date";
+                  }
+              } else {
+                  value = "-";
+              }
               break;
             case "revert":
               value = "Revert";
@@ -636,38 +1025,39 @@ export default function AdminPanelScreen({ navigation }) {
             component = (
               <TouchableOpacity
                 key={key}
-                style={{ width: columnWidths[key], justifyContent: "center", alignItems: "center" }}
+                style={[styles.iconActionBtn, { width: 36, height: 36, backgroundColor: theme.error + '15' }]}
                 onPress={() => handleRevert(item.id)}
               >
-                <Ionicons name="refresh-circle" size={24} color="#ffbb33" />
+                <Ionicons name="arrow-undo" size={18} color={theme.error} />
               </TouchableOpacity>
             );
           } else if (key === "manualAudit") {
             component = (
               <TouchableOpacity
                 key={key}
-                style={{ width: columnWidths[key], justifyContent: "center", alignItems: "center" }}
+                style={[styles.iconActionBtn, { width: 36, height: 36, backgroundColor: theme.info + '15' }]}
                 onPress={() => navigation.navigate("AuditCaseScreen", { caseId: item.id, caseData: item, manualMode: true })}
               >
-                <Ionicons name="cloud-upload" size={24} color="#2196f3" />
+                <Ionicons name="create-outline" size={18} color={theme.info} />
               </TouchableOpacity>
             );
           } else if (key === "status") {
              const statusColor = 
-                (item.status === "completed" || item.status === "audit") ? "#00C851" : 
-                item.status === "assigned" ? "#FFC107" : 
-                (item.status === "reverted" || item.status === "fired") ? "#ff4444" : 
-                "#bdbdbd";
+                (item.status === "completed") ? theme.success : 
+                (item.status === "audit") ? theme.info :
+                item.status === "assigned" ? theme.warning : 
+                (item.status === "reverted" || item.status === "fired") ? theme.error : 
+                theme.textSecondary;
              
              if (item.status === "audit") {
                component = (
                   <TouchableOpacity 
-                    key={key} 
-                    style={{ width: columnWidths[key], justifyContent: 'center', paddingRight: 5 }}
+                    key={key}
+                    style={{ width: visibleCols[key], justifyContent: 'center', paddingRight: 5 }}
                     onPress={() => navigation.navigate("AuditCaseScreen", { caseId: item.id, caseData: item })}
                   >
-                      <View style={{ backgroundColor: statusColor + '33', borderRadius: 4, paddingVertical: 2, paddingHorizontal: 6, borderWidth: 1, borderColor: statusColor }}>
-                          <Text style={{ color: statusColor, fontSize: 10, fontWeight: 'bold', textAlign: 'center' }}>
+                      <View style={[styles.statusPill, { backgroundColor: statusColor + '20', borderColor: statusColor, shadowColor: statusColor, shadowOpacity: 0.5, shadowRadius: 8, shadowOffset: {width: 0, height: 0} }]}>
+                          <Text style={[styles.statusText, { color: statusColor, textShadowColor: statusColor, textShadowRadius: 5 }]}>
                               {value.toUpperCase()}
                           </Text>
                       </View>
@@ -675,9 +1065,9 @@ export default function AdminPanelScreen({ navigation }) {
                );
              } else {
                component = (
-                  <View key={key} style={{ width: columnWidths[key], justifyContent: 'center', paddingRight: 5 }}>
-                      <View style={{ backgroundColor: statusColor + '33', borderRadius: 4, paddingVertical: 2, paddingHorizontal: 6, borderWidth: 1, borderColor: statusColor }}>
-                          <Text style={{ color: statusColor, fontSize: 10, fontWeight: 'bold', textAlign: 'center' }}>
+                  <View key={key} style={{ width: visibleCols[key], justifyContent: 'center', paddingRight: 5 }}>
+                      <View style={[styles.statusPill, { backgroundColor: statusColor + '20', borderColor: statusColor, shadowColor: statusColor, shadowOpacity: 0.3, shadowRadius: 5, shadowOffset: {width: 0, height: 0} }]}>
+                          <Text style={[styles.statusText, { color: statusColor }]}>
                               {value.toUpperCase()}
                           </Text>
                       </View>
@@ -691,8 +1081,8 @@ export default function AdminPanelScreen({ navigation }) {
           return (
             <Text
               key={key}
-              style={[styles.cell, { width: columnWidths[key] }, !isLightTheme && { color: "#fff" }, isLightTheme && { fontWeight: "bold" }]}
-              numberOfLines={2}
+              style={[styles.cell, { width: visibleCols[key], color: theme.text }]}
+              numberOfLines={key === 'number' ? 1 : 2}
               ellipsizeMode="tail"
               onPress={
                 key === "select"
@@ -710,6 +1100,53 @@ export default function AdminPanelScreen({ navigation }) {
     );
   };
 
+  const FilterRow = () => (
+    <View style={[styles.filterRow, { borderBottomColor: theme.border, backgroundColor: isLightTheme ? "#F8FAFC" : "#1E293B" }]}>
+        {Object.keys(visibleCols).map(key => {
+            if (['select', 'number', 'revert', 'manualAudit'].includes(key)) {
+                return <View key={key} style={{ width: visibleCols[key] }} />;
+            }
+            return (
+                <View key={key} style={{ width: visibleCols[key], paddingHorizontal: 4 }}>
+                    <TextInput
+                        style={[styles.compactFilterInput, { backgroundColor: theme.background[0], color: theme.text, borderColor: theme.border }]}
+                        placeholder={`Filter...`}
+                        placeholderTextColor={theme.textSecondary}
+                        value={headerFilters[key] || ''}
+                        onChangeText={text => setHeaderFilters(prev => ({ ...prev, [key]: text }))}
+                    />
+                </View>
+            );
+        })}
+    </View>
+  );
+
+  const ActiveFiltersBar = () => {
+    const filters = [];
+    if (cityFilter) filters.push({ label: `City: ${cityFilter}`, clear: () => setCityFilter("") });
+    if (statusFilter) filters.push({ label: `Status: ${statusFilter}`, clear: () => setStatusFilter("") });
+    if (searchText) filters.push({ label: `Search: ${searchText}`, clear: () => setSearchText("") });
+    if (dateInitiatedFilter) filters.push({ label: `Init: ${dateInitiatedFilter}`, clear: () => setDateInitiatedFilter("") });
+    if (uploadDateFilter) filters.push({ label: `Upload: ${uploadDateFilter}`, clear: () => setUploadDateFilter("") });
+    
+    if (filters.length === 0) return null;
+
+    return (
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+            <Text style={{ color: theme.textSecondary, fontSize: 12, fontWeight: 'bold' }}>Active Filters:</Text>
+            {filters.map((f, i) => (
+                <TouchableOpacity key={i} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.primary + '20', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderColor: theme.primary }} onPress={f.clear}>
+                    <Text style={{ color: theme.primary, fontSize: 11, fontWeight: 'bold', marginRight: 4 }}>{f.label}</Text>
+                    <Ionicons name="close-circle" size={14} color={theme.primary} />
+                </TouchableOpacity>
+            ))}
+            <TouchableOpacity onPress={clearAllFilters} style={{ marginLeft: 4 }}>
+                <Text style={{ color: theme.error, fontSize: 11, fontWeight: 'bold', textDecorationLine: 'underline' }}>Clear All</Text>
+            </TouchableOpacity>
+        </View>
+    );
+  };
+
   if (maintenanceModeAdmin) {
     return (
       <View style={styles.maintenanceScreen}>
@@ -723,40 +1160,77 @@ export default function AdminPanelScreen({ navigation }) {
   }
 
   return (
-    <View style={{ flex: 1, flexDirection: "column", backgroundColor: isLightTheme ? "#f0f2f5" : "#121212" }}>
-      {/* Hamburger Menu Overlay */}
-      {menuOpen && (
-        <View style={styles.menuOverlay}>
-          <Animated.View style={[styles.menu, { transform: [{ translateX: slideAnim }], backgroundColor: isLightTheme ? "#fff" : "#1a1a2e" }]}>
-            {/* Modern Header */}
-            <LinearGradient colors={["#4e0360", "#c471ed"]} style={styles.menuHeader}>
-                <View style={styles.menuUserAvatar}>
-                    <Text style={styles.menuUserInitials}>{(user?.name || user?.email || "A").charAt(0).toUpperCase()}</Text>
+    <LinearGradient colors={theme.background} style={styles.container}>
+      <BackgroundDecorations theme={theme} />
+      <View style={{flex: 1, flexDirection: 'row'}}>
+      
+      {/* 1️⃣ SIDEBAR (Desktop) */}
+      {IS_DESKTOP && (
+        <BlurView intensity={80} tint={isLightTheme ? 'light' : 'dark'} style={[styles.sidebar, { width: isSidebarExpanded ? 240 : MINI_SIDEBAR_WIDTH, borderColor: theme.border, shadowColor: theme.primary, shadowOpacity: 0.15, shadowRadius: 25, zIndex: 20 }]}>
+            <View style={[styles.sidebarHeader, !isSidebarExpanded && { alignItems: 'center' }]}>
+                <TouchableOpacity onPress={() => setIsSidebarExpanded(!isSidebarExpanded)} style={{ marginBottom: 24 }}>
+                    <Ionicons name="menu-outline" size={24} color={theme.textSecondary} />
+                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Image source={require("../assets/logo.png")} style={styles.sidebarLogoImage} />
+                    {isSidebarExpanded && <Text style={[styles.sidebarTitle, { color: theme.text, textShadowColor: theme.primary, textShadowRadius: 10 }]}>SPACE SOLUTIONS</Text>}
                 </View>
-                <View style={{flex: 1}}>
-                    <Text style={styles.menuUserName} numberOfLines={1}>{user?.name || "Admin"}</Text>
-                    <Text style={styles.menuUserEmail} numberOfLines={1}>{user?.email}</Text>
-                </View>
-            </LinearGradient>
+            </View>
+            
+            <ScrollView style={{flex: 1}}>
+                {sidebarItems.map((item, idx) => (
+                    <TouchableOpacity 
+                        key={idx} 
+                        style={[styles.sidebarItem, activeSidebarItem === item.label && { backgroundColor: theme.primary + '20' }, isSidebarExpanded && styles.sidebarItemExpanded]}
+                        onPress={() => {
+                            setActiveSidebarItem(item.label);
+                            if(item.screen && item.screen !== "AdminPanel") navigation.navigate(item.screen);
+                        }}
+                    >
+                        <Ionicons name={item.icon} size={20} color={activeSidebarItem === item.label ? theme.primary : theme.textSecondary} />
+                        <Text style={[styles.sidebarItemText, { color: activeSidebarItem === item.label ? theme.primary : theme.textSecondary }, isSidebarExpanded && styles.sidebarItemTextExpanded]}>{item.label}</Text>
+                        {activeSidebarItem === item.label && <View style={[styles.activeIndicator, { backgroundColor: theme.primary }]} />}
+                    </TouchableOpacity>
+                ))}
+            </ScrollView>
+            <View style={styles.sidebarFooter}>
+                <TouchableOpacity onPress={() => setIsLightTheme(!isLightTheme)} style={styles.sidebarIcon}>
+                    <Ionicons name={isLightTheme ? "moon-outline" : "sunny-outline"} size={18} color={theme.textSecondary} />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => {
+                    firebase.auth().signOut().then(() => logout());
+                }}>
+                    <Image 
+                    source={{ uri: user?.photoURL || 'https://picsum.photos/id/11/60/60' }} 
+                    style={styles.sidebarAvatar}
+                    />
+                </TouchableOpacity>
+            </View>
+        </BlurView>
+      )}
 
-            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingVertical: 10 }}>
-                {[
-                    { label: "Member View", icon: "people-outline", screen: "MemberViewScreen" },
-                    { label: "Completed Cases", icon: "checkmark-done-circle-outline", screen: "CompletedCases" },
-                    { label: "Reverted Cases", icon: "refresh-circle-outline", screen: "RevertedCasesScreen" },
-                    { label: "Verify Profile", icon: "shield-checkmark-outline", screen: "VerifyProfileScreen" },
-                    { label: "Member DSR", icon: "document-text-outline", screen: "MemberDSRScreen" },
-                    { label: "Mail Records", icon: "mail-outline", screen: "MailRecordsScreen" },
-                    { label: "Statistics", icon: "stats-chart-outline", screen: "StatisticsScreen" },
-                    { label: "Support Tickets", icon: "ticket-outline", screen: "AllTicketsScreen" },
-                ].map((item, index) => (
-                    <TouchableOpacity key={index} style={[styles.menuItem, { borderBottomColor: isLightTheme ? "#f0f0f0" : "rgba(255,255,255,0.1)" }]} onPress={() => { closeMenu(); navigation.navigate(item.screen); }}>
-                        <Ionicons name={item.icon} size={22} color={isLightTheme ? "#555" : "#ccc"} style={{ marginRight: 15 }} />
-                        <Text style={[styles.menuText, { color: isLightTheme ? "#333" : "#fff" }]}>{item.label}</Text>
+      {/* Mobile Sidebar (Pushes Content) */}
+      {!IS_DESKTOP && (
+        <Animated.View style={[styles.sidebarMobile, { left: slideAnim, width: MENU_WIDTH, backgroundColor: theme.menuBg, borderColor: theme.border }]}>
+            <View style={{ width: MENU_WIDTH, height: '100%' }}>
+            <View style={styles.menuHeader}>
+                <Ionicons name="cube" size={28} color={theme.primary} />
+                <Text style={[styles.sidebarTitle, { color: theme.text }]}>Admin</Text>
+            </View>
+            
+            <ScrollView style={{flex: 1}}>
+                {sidebarItems.map((item, idx) => (
+                    <TouchableOpacity 
+                        key={idx} 
+                        style={styles.menuItem}
+                        onPress={() => { closeMenu(); navigation.navigate(item.screen); }}
+                    >
+                        <Ionicons name={item.icon} size={20} color={theme.textSecondary} />
+                        <Text style={[styles.menuText, { color: theme.textSecondary, marginLeft: 12 }]}>{item.label}</Text>
                     </TouchableOpacity>
                 ))}
 
-                <TouchableOpacity style={[styles.menuItem, { borderBottomColor: isLightTheme ? "#f0f0f0" : "rgba(255,255,255,0.1)" }]} onPress={() => { 
+                <TouchableOpacity style={[styles.menuItem, { marginTop: 20 }]} onPress={() => {
                     closeMenu(); 
                     firebase.auth().signOut().then(() => {
                       logout(); // This updates App.js state and switches to AuthStack
@@ -765,13 +1239,12 @@ export default function AdminPanelScreen({ navigation }) {
                       else Alert.alert("Error", "Failed to log off: " + error.message);
                     });
                 }}>
-                    <Ionicons name="log-out-outline" size={22} color="#ff4444" style={{ marginRight: 15 }} />
-                    <Text style={[styles.menuText, { color: "#ff4444" }]}>Log Off</Text>
+                    <Ionicons name="log-out-outline" size={20} color={theme.error} />
+                    <Text style={[styles.menuText, { color: theme.error, marginLeft: 12 }]}>Log Off</Text>
                 </TouchableOpacity>
             </ScrollView>
-          </Animated.View>
-          <TouchableOpacity style={{ flex: 1 }} onPress={closeMenu} activeOpacity={1} />
-        </View>
+            </View>
+        </Animated.View>
       )}
 
       {/* Upload Mode Modal (Web Support) */}
@@ -813,224 +1286,353 @@ export default function AdminPanelScreen({ navigation }) {
         </View>
       )}
 
-      {/* Header Section with Background Image */}
-      <ImageBackground
-        source={isLightTheme ? require("../assets/admin_bg_light.jpg") : require("../assets/admin_bg_dark.jpg")}
-        style={{ width: "100%", paddingBottom: 10 }}
-        resizeMode="cover"
-      >
-      <View style={{ paddingHorizontal: 10, paddingTop: maintenanceModeAdmin ? 10 : (Platform.OS === 'android' ? 40 : 50) }}>
-        <View style={styles.headerRow}>
-          <TouchableOpacity onPress={openMenu} style={styles.iconButton}>
-            <Ionicons name="menu" size={32} color="#fff" />
-          </TouchableOpacity>
-
-          <View style={styles.logoContainer}>
-            <Image source={require("../assets/logo.png")} style={styles.logo} resizeMode="contain" />
-            <View>
-              <Text style={[styles.title, isLightTheme && { color: "#333" }]}>SpaceSolutions Admin</Text>
-            </View>
-          </View>
-
-          <TouchableOpacity onPress={() => setIsLightTheme(!isLightTheme)} style={styles.iconButton}>
-            <Ionicons name={isLightTheme ? "bulb" : "bulb-outline"} size={28} color={isLightTheme ? "#ffd700" : "#fff"} />
-          </TouchableOpacity>
-        </View>
-
-        {/* Counters */}
-        <View style={styles.counterRow}>
-          {[
-            { label: "Total", value: assignedTL, color: isLightTheme ? "#004d40" : "#33b5e5" },
-            { label: "Reverted", value: reverted, color: isLightTheme ? "#b71c1c" : "#ff4444" },
-            { label: "Assigned", value: assignedFE, color: isLightTheme ? "#01579b" : "#0099CC" },
-            { label: "Audit", value: audited, color: isLightTheme ? "#bf360c" : "#FF8800" },
-            { label: "Done", value: completed, color: isLightTheme ? "#1b5e20" : "#00C851" },
-          ].map((c, idx) => (
-            isLightTheme ? (
-              <View key={idx} style={[styles.counterBox, { borderLeftColor: c.color, backgroundColor: "#fff", borderRadius: 5, paddingVertical: 5 }]}>
-                <Text style={[styles.counterValue, { color: c.color }]}>{c.value}</Text>
-                <Text style={[styles.counterLabel, { color: "#333" }]}>{c.label}</Text>
-              </View>
-            ) : (
-              <BlurView intensity={40} tint="dark" key={idx} style={[styles.counterBox, { borderLeftColor: c.color, borderRadius: 5, overflow: 'hidden' }]}>
-                <Text style={[styles.counterValue, { color: c.color }]}>{c.value}</Text>
-                <Text style={[styles.counterLabel, { color: "#ddd" }]}>{c.label}</Text>
-              </BlurView>
-            )
-          ))}
-        </View>
-
-        {/* Beta Heavy Features: Smart Actions Toolbar */}
-        {betaFeatures && (
-          <View style={styles.betaToolbar}>
-            <Text style={styles.betaLabel}>ADVANCED TOOLS</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingHorizontal: 10 }}>
-              <TouchableOpacity style={styles.betaButton}>
-                <Ionicons name="analytics" size={14} color="#fff" />
-                <Text style={styles.betaButtonText}>AI Analysis</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.betaButton}>
-                <Ionicons name="download" size={14} color="#fff" />
-                <Text style={styles.betaButtonText}>Bulk Export</Text>
-              </TouchableOpacity>
-            </ScrollView>
-          </View>
+      {/* MAIN CONTENT AREA */}
+      <View style={{ flex: 1, zIndex: 1, marginLeft: IS_DESKTOP ? (isSidebarExpanded ? 240 : MINI_SIDEBAR_WIDTH) : 0 }}>
+        
+        {/* Overlay to close menu when tapping content */}
+        {!IS_DESKTOP && menuOpen && (
+            <TouchableOpacity 
+               style={styles.contentOverlay} 
+               activeOpacity={1} 
+               onPress={closeMenu} 
+            />
         )}
-
-        {/* Upload & Assign */}
-        <View style={styles.uploadAssignRow}>
-          <TouchableOpacity style={[styles.actionButton, { backgroundColor: "#2e7d32" }]} onPress={uploadExcel}>
-            <Ionicons name="cloud-upload-outline" size={16} color="#fff" style={{ marginRight: 5 }} />
-            <Text style={styles.filterButtonText}>Upload Excel</Text>
+        
+        {/* 2️⃣ TOP NAV BAR */}
+        <BlurView intensity={50} tint={isLightTheme ? 'light' : 'dark'} style={[styles.topBar, { borderBottomColor: theme.border }]}>
+          {!IS_DESKTOP && (
+          <TouchableOpacity onPress={openMenu} style={styles.iconButton}>
+            <Ionicons name="menu" size={24} color={theme.text} />
           </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: "#f9a825" }]}
-            onPress={() => {
-              if (selectedCases.length === 0) {
-                if (Platform.OS === "web") return alert("Error: Select at least one case first.");
-                return Alert.alert("Error", "Select at least one case first.");
-              }
-              setAssignTo(""); // Reset selection
-              setAssignSearchText("");
-              setAssignModalVisible(true);
-            }}
-          >
-            <Ionicons name="person-add-outline" size={16} color="#fff" style={{ marginRight: 5 }} />
-            <Text style={styles.filterButtonText}>Assign</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Search Filters */}
-        <View style={styles.searchFilter}>
-          <View style={[styles.searchContainer, { backgroundColor: isLightTheme ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.1)" }]}>
-             <Ionicons name="search" size={16} color={isLightTheme ? "#333" : "#aaa"} style={{ marginRight: 5 }} />
-             <TextInput
-                placeholder="Search Name..."
-                placeholderTextColor={isLightTheme ? "#333" : "#ccc"}
+          )}
+          
+          <View style={[styles.topBarSearch, { backgroundColor: isLightTheme ? "#F1F5F9" : "#1E293B" }]}>
+             <Ionicons name="search" size={18} color={theme.textSecondary} />
+             <TextInput 
+                placeholder="Search..." 
+                placeholderTextColor={theme.textSecondary}
                 value={searchText}
                 onChangeText={setSearchText}
-                style={[styles.searchInput, { color: isLightTheme ? "#000" : "#fff" }]}
+                style={{ flex: 1, marginLeft: 10, color: theme.text, height: '100%' }}
              />
           </View>
-          <View style={[styles.searchContainer, { backgroundColor: isLightTheme ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.1)" }]}>
-             <Ionicons name="qr-code-outline" size={16} color={isLightTheme ? "#333" : "#aaa"} style={{ marginRight: 5 }} />
-             <TextInput
-                placeholder="Ref No..."
-                placeholderTextColor={isLightTheme ? "#333" : "#ccc"}
-                value={refNoFilter}
-                onChangeText={setRefNoFilter}
-                style={[styles.searchInput, { color: isLightTheme ? "#000" : "#fff" }]}
-             />
-          </View>
-          
-          <View style={[styles.pickerContainer, { backgroundColor: isLightTheme ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.9)" }]}>
-              <Picker selectedValue={statusFilter} onValueChange={setStatusFilter} style={styles.picker} dropdownIconColor="#333">
-                <Picker.Item label="Status: All" value="" style={{fontSize: 12, color: '#000'}} />
-                <Picker.Item label="Assigned" value="assigned" style={{fontSize: 12, color: '#000'}} />
-                <Picker.Item label="Audit" value="audit" style={{fontSize: 12, color: '#000'}} />
-                <Picker.Item label="Fired" value="fired" style={{fontSize: 12, color: '#000'}} />
-              </Picker>
+
+          {/* Top Actions: Upload & Assign */}
+          <View style={{ flexDirection: 'row', gap: 10, marginHorizontal: 10 }}>
+             <TouchableOpacity style={[styles.topActionButton, { backgroundColor: theme.primary }]} onPress={uploadExcel}>
+                <Ionicons name="cloud-upload-outline" size={16} color="#fff" />
+                <Text style={styles.topActionButtonText}>BATCH_INGEST</Text>
+             </TouchableOpacity>
+             <TouchableOpacity 
+                style={[styles.topActionButton, { backgroundColor: isLightTheme ? theme.cardBg : 'rgba(255,255,255,0.05)', borderColor: theme.border, borderWidth: 1 }]} 
+                onPress={() => {
+                    if (selectedCases.length === 0) {
+                        if (Platform.OS === 'web') return alert("Please select at least one case to assign.");
+                        return Alert.alert("Error", "Please select at least one case to assign.");
+                    }
+                    setAssignModalVisible(true);
+                }}
+             >
+                <Ionicons name="person-add-outline" size={16} color={theme.text} />
+                <Text style={[styles.topActionButtonText, { color: theme.text }]}>ASSIGN_LINK</Text>
+             </TouchableOpacity>
+
+             {/* 🎤 SPACE_ADMIN AI MIC BUTTON */}
+             <TouchableOpacity 
+                style={[styles.iconButton, { backgroundColor: voiceModalVisible ? theme.primary : 'transparent', borderColor: theme.primary, borderWidth: 1, width: 40, height: 40, borderRadius: 20 }]}
+                onPress={() => setVoiceModalVisible(true)}
+             >
+                <Ionicons name="mic" size={20} color={voiceModalVisible ? "#fff" : theme.primary} />
+             </TouchableOpacity>
           </View>
 
-          <View style={[styles.pickerContainer, { backgroundColor: isLightTheme ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.9)" }]}>
-              <Picker selectedValue={cityFilter} onValueChange={setCityFilter} style={styles.picker} dropdownIconColor="#333">
-                <Picker.Item label="City: All" value="" style={{fontSize: 12, color: '#000'}} />
-                {uniqueCities.map(city => <Picker.Item key={city} label={city} value={city} style={{fontSize: 12, color: '#000'}} />)}
-              </Picker>
+          <View style={{ height: 24, width: 1, backgroundColor: theme.border, marginHorizontal: 12 }} />
+
+          <View style={styles.topBarActions}>
+             <TouchableOpacity onPress={() => setIsLightTheme(!isLightTheme)} style={[styles.iconButton, { backgroundColor: isLightTheme ? theme.border : 'rgba(255,255,255,0.05)' }]}>
+                <Ionicons name={isLightTheme ? "moon-outline" : "sunny-outline"} size={20} color={theme.text} />
+             </TouchableOpacity>
+             <TouchableOpacity onPress={() => setShowNotifications(true)} style={[styles.iconButton, { backgroundColor: isLightTheme ? theme.border : 'rgba(255,255,255,0.05)' }]}>
+                <Ionicons name="notifications-outline" size={20} color={theme.text} />
+                {notifications.length > 0 && <View style={[styles.badge, { backgroundColor: theme.primary }]} />}
+             </TouchableOpacity>
           </View>
+        </BlurView>
 
-          <TouchableOpacity
-            style={[styles.iconBtn, { backgroundColor: "#455A64" }]}
-            onPress={() => setShowHeaderFilters(!showHeaderFilters)}
-          >
-            <Ionicons name="filter" size={18} color="#fff" />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.iconBtn, { backgroundColor: "#c62828" }]}
-            onPress={() => {
-              setSearchText("");
-              setRefNoFilter("");
-              setStatusFilter("");
-              setVerificationFilter("");
-              setCityFilter("");
-              setFromDate(null);
-              setToDate(null);
-              setHeaderFilters({});
-            }}
-          >
-            <Ionicons name="refresh" size={18} color="#fff" />
-          </TouchableOpacity>
-        </View>
-      </View>
-      </ImageBackground>
-
-      {/* Table Section - Takes remaining space */}
-      <View style={{ flex: 1, width: "100%", paddingHorizontal: 8, marginTop: 0 }}>
-        <View style={[styles.tableCard, { backgroundColor: isLightTheme ? "rgba(255, 255, 255, 0.4)" : "transparent" }]}>
-        {!isLightTheme && <BlurView style={StyleSheet.absoluteFill} tint="dark" intensity={70} />}
-        <ScrollView horizontal showsHorizontalScrollIndicator={true} contentContainerStyle={{ flexGrow: 1 }}>
-          <View style={{ width: Object.values(columnWidths).reduce((a, b) => a + b, 0), flex: 1 }}>
-            <View style={styles.tableHeader}>
-              {Object.keys(columnWidths).map((key) => (
-                <Text
-                  key={key}
-                  style={[
-                    styles.cell,
-                    styles.headerCell,
-                    { width: columnWidths[key] },
-                    key === "revert" ? { textAlign: "center" } : null,
-                    !isLightTheme && { color: "#fff" }
-                  ]}
-                >
-                  {key === "number" ? "#" : key}
-                </Text>
-              ))}
-            </View>
-            {showHeaderFilters && (
-              <View style={[styles.tableHeader, { backgroundColor: "rgba(255,255,255,0.4)", borderTopWidth: 0 }]}>
-                {Object.keys(columnWidths).map((key) => {
-                  if (["number", "select", "revert"].includes(key)) {
-                    return <View key={key} style={{ width: columnWidths[key] }} />;
-                  }
-                  return (
-                    <TextInput
-                      key={key}
-                      style={{
-                        width: columnWidths[key],
-                        backgroundColor: "rgba(255,255,255,0.8)",
-                        color: "#333",
-                        borderWidth: 1,
-                        borderColor: "rgba(0,0,0,0.1)",
-                        fontSize: 11,
-                        paddingHorizontal: 5,
-                        height: 30,
-                        borderRadius: 4,
-                        marginRight: 2,
-                      }}
-                      placeholder="..."
-                      placeholderTextColor="#999"
-                      value={headerFilters[key] || ""}
-                      onChangeText={(text) => setHeaderFilters((prev) => ({ ...prev, [key]: text }))}
-                    />
-                  );
-                })}
+        <ScrollView contentContainerStyle={{ padding: 24, paddingBottom: 100 }}>
+            <View style={styles.pageHeader}>
+              <View>
+                <Text style={[styles.pageTitle, { color: theme.text, textShadowColor: theme.primary, textShadowRadius: 20, textShadowOffset: {width: 0, height: 0} }]}>SPACE_COMMAND</Text>
+                <View style={styles.pageSubtitleContainer}>
+                  <BlinkingDot color={theme.success} />
+                  <Text style={styles.pageSubtitle}>PIPELINE_OPS // ENCRYPTED_STREAM_ACTIVE</Text>
+                </View>
               </View>
+              <View style={{flexDirection: 'row', gap: 24}}>
+                <View style={{alignItems: 'flex-end', borderRightWidth: 1, borderRightColor: theme.border, paddingRight: 24}}>
+                  <Text style={styles.headerStatLabel}>UPLINK_STABILITY</Text>
+                  <Text style={[styles.headerStatValue, {color: theme.text, textShadowColor: theme.primary, textShadowRadius: 10}]}>99.98<Text style={{fontSize: 18, opacity: 0.4}}>%</Text></Text>
+                </View>
+                <View style={{alignItems: 'flex-end'}}>
+                  <Text style={styles.headerStatLabel}>SYNC_LATENCY</Text>
+                  <Text style={[styles.headerStatValue, {color: theme.success, textShadowColor: theme.success, textShadowRadius: 10}]}>04<Text style={{fontSize: 18, opacity: 0.4}}>ms</Text></Text>
+                </View>
+              </View>
+              <TouchableOpacity 
+                  style={[styles.dynamicsButton, { borderColor: theme.border }, insightsOpen && { backgroundColor: theme.primary + '20', borderColor: theme.primary + '50' }]}
+                  onPress={() => setInsightsOpen(!insightsOpen)}
+              >
+                  <Ionicons name="analytics-outline" size={16} color={insightsOpen ? theme.primary : theme.textSecondary} />
+                  <Text style={[styles.dynamicsButtonText, { color: insightsOpen ? theme.primary : theme.textSecondary }]}>
+                      {insightsOpen ? 'HIDE_DYNAMICS' : 'VIEW_DYNAMICS'}
+                  </Text>
+                  <Ionicons name={insightsOpen ? "chevron-up" : "chevron-down"} size={14} color={insightsOpen ? theme.primary : theme.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Insights Chart */}
+            {insightsOpen && chartData && (
+              <BlurView intensity={30} tint={isLightTheme ? 'light' : 'dark'} style={[styles.chartCard, { borderColor: theme.border, shadowColor: theme.primary, shadowOpacity: 0.2, shadowRadius: 30 }]}>
+                <CyberCorner theme={theme} color={theme.primary} />
+                {chartData.legend && (
+                <View style={{flexDirection: 'row', justifyContent: 'center', gap: 24, marginBottom: 20}}>
+                    <View style={{flexDirection: 'row', alignItems: 'center', gap: 8}}>
+                        <View style={{width: 12, height: 12, borderRadius: 6, backgroundColor: theme.success, shadowColor: theme.success, shadowRadius: 8, shadowOpacity: 0.8}} />
+                        <Text style={{color: theme.textSecondary, fontSize: 10, fontWeight: 'bold', textTransform: 'uppercase'}}>{chartData.legend[0]}</Text>
+                    </View>
+                    <View style={{flexDirection: 'row', alignItems: 'center', gap: 8}}>
+                        <View style={{width: 12, height: 12, borderRadius: 6, backgroundColor: theme.warning, shadowColor: theme.warning, shadowRadius: 8, shadowOpacity: 0.8}} />
+                        <Text style={{color: theme.textSecondary, fontSize: 10, fontWeight: 'bold', textTransform: 'uppercase'}}>{chartData.legend[1]}</Text>
+                    </View>
+                </View>
+                )}
+                <LineChart
+                  data={chartData}
+                  width={SCREEN_WIDTH - (IS_DESKTOP ? 240 : MINI_SIDEBAR_WIDTH) - 80}
+                  height={220}
+                  yAxisInterval={1}
+                  chartConfig={{
+                    backgroundColor: theme.primary,
+                    backgroundGradientFrom: theme.cardBg,
+                    backgroundGradientTo: theme.background[1],
+                    decimalPlaces: 0,
+                    color: (opacity = 1) => theme.textSecondary,
+                    labelColor: (opacity = 1) => theme.textSecondary,
+                    propsForDots: { r: "4", strokeWidth: "2", stroke: theme.primary },
+                  }}
+                  style={{ marginLeft: -30 }}
+                />
+              </BlurView>
             )}
-            <FlatList
-              style={{ flex: 1 }}
-              data={fullyFilteredCases}
-              renderItem={renderCase}
-              initialNumToRender={1000}
-              maxToRenderPerBatch={400}
-              windowSize={70}
-              keyExtractor={(item) => item.id}
-              removeClippedSubviews={false}
-              showsVerticalScrollIndicator={true}
-              contentContainerStyle={{ paddingBottom: 10 }}
-            />
-          </View>
+            
+            {/* 3️⃣ METRIC CARDS */}
+            <View style={styles.metricsGrid}>
+                <StatCard label="TOTAL CASES" value={assignedTL} icon="layers-outline" color={theme.primary} />
+                <StatCard label="ASSIGNED" value={assignedFE} icon="person-outline" color={theme.warning} />
+                <StatCard label="REVERTED" value={reverted} icon="arrow-undo-outline" color={theme.error} />
+                <StatCard label="AUDIT" value={audited} icon="eye-outline" color={theme.info} />
+                <StatCard label="COMPLETED" value={completed} icon="checkmark-circle-outline" color={theme.success} />
+            </View>
+
+            {/* 5️⃣ DATA TABLE SECTION */}
+            <View style={[styles.sectionCard, { backgroundColor: theme.cardBg, borderColor: theme.border, marginTop: 24, padding: 0, overflow: 'hidden', shadowColor: theme.primary, shadowOpacity: 0.1, shadowRadius: 20 }]}>
+                <View style={[styles.sectionHeader, { padding: 16, borderBottomWidth: 1, borderBottomColor: theme.border }]}>
+                    <Text style={[styles.sectionTitle, { color: theme.text }]}>All Cases</Text>
+                    
+                    <View style={{flexDirection: 'row', alignItems: 'center', gap: 10}}>
+                        <Text style={{color: theme.textSecondary, fontSize: 12}}>Assign Mode</Text>
+                        <Switch 
+                            value={assignMode} 
+                            onValueChange={setAssignMode}
+                            trackColor={{ false: "#767577", true: theme.primary }}
+                        />
+                    <TouchableOpacity 
+                        style={[styles.filterBtnSmall, { borderColor: theme.border }]}
+                        onPress={() => setShowHeaderFilters(!showHeaderFilters)}
+                    >
+                        <Ionicons name={showHeaderFilters ? "funnel" : "funnel-outline"} size={12} color={theme.textSecondary} style={{ marginRight: 4 }} />
+                        <Text style={{ color: theme.textSecondary, fontSize: 12 }}>{showHeaderFilters ? "Hide Column Filters" : "Show Column Filters"}</Text>
+                    </TouchableOpacity>
+                    </View>
+                </View>
+
+                {/* Search & Filters Toolbar */}
+                <View style={styles.tableToolbar}>
+                    <View style={[styles.pickerContainer, { backgroundColor: isLightTheme ? "#F8FAFC" : "#1E293B", borderColor: theme.border }]}>
+                        <Picker key={isLightTheme ? 'light-city' : 'dark-city'} selectedValue={cityFilter} onValueChange={setCityFilter} style={[styles.picker, { color: theme.text }]} dropdownIconColor={theme.text}>
+                            <Picker.Item label="City: All" value="" color="#000" style={{fontSize: 12}} />
+                            {uniqueCities.map(city => (
+                                <Picker.Item key={city} label={city} value={city} color="#000" style={{fontSize: 12}} />
+                            ))}
+                        </Picker>
+                    </View>
+                    <View style={[styles.pickerContainer, { backgroundColor: isLightTheme ? "#F8FAFC" : "#1E293B", borderColor: theme.border }]}>
+                        <Picker key={isLightTheme ? 'light-status' : 'dark-status'} selectedValue={statusFilter} onValueChange={setStatusFilter} style={[styles.picker, { color: theme.text }]} dropdownIconColor={theme.text}>
+                            <Picker.Item label="Status: All" value="" color="#000" style={{fontSize: 12}} />
+                            <Picker.Item label="Assigned" value="assigned" color="#000" style={{fontSize: 12}} />
+                            <Picker.Item label="Audit" value="audit" color="#000" style={{fontSize: 12}} />
+                            <Picker.Item label="Reverted" value="reverted" color="#000" style={{fontSize: 12}} />
+                            <Picker.Item label="Fired" value="fired" color="#000" style={{fontSize: 12}} />
+                        </Picker>
+                    </View>
+                    
+                    {/* Date Initiated Filter */}
+                    <View style={[styles.pickerContainer, { backgroundColor: isLightTheme ? "#F8FAFC" : "#1E293B", borderColor: theme.border, minWidth: 170, justifyContent: 'center' }]}>
+                        {Platform.OS === 'web' ? (
+                            <View style={{ paddingHorizontal: 10, width: '100%', flexDirection: 'row', alignItems: 'center' }}>
+                                <Text style={{color: theme.textSecondary, fontSize: 12, marginRight: 4}}>Init:</Text>
+                                {createElement('input', {
+                                    type: 'date',
+                                    value: dateInitiatedFilter || '',
+                                    onChange: (e) => {
+                                        setDateInitiatedFilter(e.target.value);
+                                    },
+                                    style: {
+                                        border: 'none',
+                                        backgroundColor: 'transparent',
+                                        color: theme.text,
+                                        fontFamily: 'inherit',
+                                        fontSize: 12,
+                                        flex: 1,
+                                        outline: 'none',
+                                        minWidth: 0
+                                    }
+                                })}
+                            </View>
+                        ) : (
+                            <TouchableOpacity onPress={() => setShowDatePicker(true)} style={{ paddingHorizontal: 10, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <Text style={{ color: theme.text, fontSize: 12 }}>
+                                    {dateInitiatedFilter || "Init Date"}
+                                </Text>
+                                {dateInitiatedFilter ? (
+                                    <TouchableOpacity onPress={() => setDateInitiatedFilter("")} style={{ marginLeft: 5 }}>
+                                        <Ionicons name="close-circle" size={16} color={theme.textSecondary} />
+                                    </TouchableOpacity>
+                                ) : (
+                                    <Ionicons name="calendar-outline" size={16} color={theme.textSecondary} />
+                                )}
+                            </TouchableOpacity>
+                        )}
+                    </View>
+
+                    {/* Upload Date Filter (Ingested At) */}
+                    <View style={[styles.pickerContainer, { backgroundColor: isLightTheme ? "#F8FAFC" : "#1E293B", borderColor: theme.border, minWidth: 170, justifyContent: 'center' }]}>
+                        {Platform.OS === 'web' ? (
+                            <View style={{ paddingHorizontal: 10, width: '100%', flexDirection: 'row', alignItems: 'center' }}>
+                                <Text style={{color: theme.textSecondary, fontSize: 12, marginRight: 4}}>Upload:</Text>
+                                {createElement('input', {
+                                    type: 'date',
+                                    value: uploadDateFilter || '',
+                                    onChange: (e) => {
+                                        setUploadDateFilter(e.target.value);
+                                    },
+                                    style: {
+                                        border: 'none',
+                                        backgroundColor: 'transparent',
+                                        color: theme.text,
+                                        fontFamily: 'inherit',
+                                        fontSize: 12,
+                                        flex: 1,
+                                        outline: 'none',
+                                        minWidth: 0
+                                    }
+                                })}
+                            </View>
+                        ) : (
+                            <TouchableOpacity onPress={() => setShowUploadDatePicker(true)} style={{ paddingHorizontal: 10, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <Text style={{ color: theme.text, fontSize: 12 }}>
+                                    {uploadDateFilter || "Upload Date"}
+                                </Text>
+                                {uploadDateFilter ? (
+                                    <TouchableOpacity onPress={() => setUploadDateFilter("")} style={{ marginLeft: 5 }}>
+                                        <Ionicons name="close-circle" size={16} color={theme.textSecondary} />
+                                    </TouchableOpacity>
+                                ) : (
+                                    <Ionicons name="cloud-upload-outline" size={16} color={theme.textSecondary} />
+                                )}
+                            </TouchableOpacity>
+                        )}
+                    </View>
+                </View>
+                <ActiveFiltersBar />
+
+                <ScrollView horizontal showsHorizontalScrollIndicator={true}>
+                    <View style={{ width: Object.values(visibleCols).reduce((a, b) => a + b, 0) }}>
+                        <View style={[styles.tableHeader, { borderBottomColor: theme.border, backgroundColor: isLightTheme ? "#F1F5F9" : "#0F172A" }]}>
+                        {Object.keys(visibleCols).map((key) => (
+                            key === 'select' && cityFilter ? (
+                                <TouchableOpacity key={key} onPress={handleSelectAll} style={{ width: visibleCols[key], alignItems: 'center' }}>
+                                    <Ionicons name={selectedCases.length > 0 && fullyFilteredCases.every(c => selectedCases.includes(c.id)) ? "checkbox" : "square-outline"} size={18} color={theme.primary} />
+                                </TouchableOpacity>
+                            ) :
+                            <Text key={key} style={[styles.headerCell, { width: visibleCols[key], color: theme.textSecondary }]}>{key === "number" ? "#" : key}</Text>
+                        ))}
+                        </View>
+                        {showHeaderFilters && <FilterRow />}
+                        <ScrollView style={{ maxHeight: 600, minHeight: 100 }} nestedScrollEnabled={true}>
+                          {fullyFilteredCases.length > 0 ? (
+                            fullyFilteredCases.map((item, index) => (
+                                <View key={item.id}>
+                                {renderCase({ item, index })}
+                                </View>
+                            ))
+                          ) : (
+                            <View style={{ padding: 40, alignItems: 'center', justifyContent: 'center' }}>
+                                <Ionicons name="filter-circle-outline" size={48} color={theme.textSecondary} style={{ opacity: 0.5 }} />
+                                <Text style={{ color: theme.textSecondary, marginTop: 10, fontSize: 14 }}>No cases match current filters.</Text>
+                                <TouchableOpacity onPress={clearAllFilters} style={{ marginTop: 10, padding: 8, backgroundColor: theme.primary + '20', borderRadius: 8 }}>
+                                    <Text style={{ color: theme.primary, fontWeight: 'bold', fontSize: 12 }}>Reset Filters</Text>
+                                </TouchableOpacity>
+                            </View>
+                          )}
+                        </ScrollView>
+                    </View>
+                </ScrollView>
+            </View>
+
+            {showDatePicker && Platform.OS !== 'web' && (
+                <DateTimePicker
+                    value={(() => {
+                        if (!dateInitiatedFilter) return new Date();
+                        const [y, m, d] = dateInitiatedFilter.split('-').map(Number);
+                        return new Date(y, m - 1, d);
+                    })()}
+                    mode="date"
+                    display="default"
+                    onChange={handleDateChange}
+                />
+            )}
+
+            {showUploadDatePicker && Platform.OS !== 'web' && (
+                <DateTimePicker
+                    value={(() => {
+                        if (!uploadDateFilter) return new Date();
+                        const [y, m, d] = uploadDateFilter.split('-').map(Number);
+                        return new Date(y, m - 1, d);
+                    })()}
+                    mode="date"
+                    display="default"
+                    onChange={handleUploadDateChange}
+                />
+            )}
+
+            {/* Footer */}
+            <BlurView intensity={50} tint={isLightTheme ? 'light' : 'dark'} style={[styles.footer, { borderTopColor: theme.border }]}>
+              <View style={styles.footerSection}>
+                <Text style={styles.footerLabel}>NEON_KERNEL_V6.0_STABLE</Text>
+              </View>
+              <View style={{height: 16, width: 1, backgroundColor: theme.border}} />
+              <View style={styles.footerSection}>
+                <View style={[styles.footerIndicator, {backgroundColor: theme.success, shadowColor: theme.success}]} />
+                <Text style={[styles.footerText, {color: theme.success}]}>GATEWAY_STABLE</Text>
+              </View>
+              <View style={{flex: 1}} />
+              <View style={styles.footerSection}>
+                <Text style={[styles.footerText, {color: theme.primary}]}>{new Date().toLocaleDateString()} // {new Date().toLocaleTimeString()} UTC</Text>
+              </View>
+            </BlurView>
         </ScrollView>
-        </View>
+      </View>
       </View>
 
       {/* In-App Alert for Audit Submission */}
@@ -1052,6 +1654,47 @@ export default function AdminPanelScreen({ navigation }) {
           </LinearGradient>
         </View>
       )}
+
+      {/* Notifications Modal */}
+      <Modal
+        visible={showNotifications}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowNotifications(false)}
+      >
+        <TouchableOpacity 
+            style={styles.modalOverlay} 
+            activeOpacity={1} 
+            onPress={() => setShowNotifications(false)}
+        >
+            <BlurView intensity={90} tint={isLightTheme ? 'light' : 'dark'} style={[styles.notificationDropdown, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+                <View style={[styles.notificationHeader, { borderBottomColor: theme.border }]}>
+                    <Text style={[styles.notificationTitle, { color: theme.text }]}>Notifications</Text>
+                    <TouchableOpacity onPress={() => setNotifications([])}>
+                        <Text style={{ color: theme.primary, fontSize: 12 }}>Clear All</Text>
+                    </TouchableOpacity>
+                </View>
+                <ScrollView style={{ maxHeight: 300 }}>
+                    {notifications.length === 0 ? (
+                        <Text style={{ padding: 20, textAlign: 'center', color: theme.textSecondary }}>No new notifications</Text>
+                    ) : (
+                        notifications.map((notif, index) => (
+                            <View key={index} style={[styles.notificationItem, { borderBottomColor: theme.border }]}>
+                                <View style={[styles.notificationIcon, { backgroundColor: theme.primary + '20' }]}>
+                                    <Ionicons name="notifications" size={16} color={theme.primary} />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={[styles.notificationItemTitle, { color: theme.text }]}>{notif.title}</Text>
+                                    <Text style={[styles.notificationItemMessage, { color: theme.textSecondary }]}>{notif.message}</Text>
+                                    <Text style={[styles.notificationItemTime, { color: theme.textSecondary }]}>{notif.time}</Text>
+                                </View>
+                            </View>
+                        ))
+                    )}
+                </ScrollView>
+            </BlurView>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Assign Member Modal */}
       <Modal
@@ -1110,24 +1753,40 @@ export default function AdminPanelScreen({ navigation }) {
           </LinearGradient>
         </View>
       </Modal>
-    </View>
+
+      {/* SPACE_ADMIN AI MODAL */}
+      <Modal
+        visible={voiceModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setVoiceModalVisible(false)}
+      >
+        <View style={styles.voiceOverlay}>
+            <BlurView intensity={100} tint="dark" style={styles.voiceCard}>
+                <View style={styles.voiceHeader}>
+                    <Ionicons name="construct" size={32} color={theme.warning} />
+                    <Text style={[styles.voiceTitle, { color: theme.warning }]}>UNDER DEVELOPMENT</Text>
+                </View>
+                <Text style={[styles.voiceStatus, { color: theme.text }]}>Space Admin AI is currently being upgraded.</Text>
+                <View style={{ alignItems: 'center', marginVertical: 20 }}>
+                    <Ionicons name="planet" size={80} color={theme.textSecondary} style={{ opacity: 0.2 }} />
+                    <Text style={{ color: theme.textSecondary, marginTop: 15, textAlign: 'center' }}>Voice command modules are offline for maintenance.</Text>
+                </View>
+                <TouchableOpacity onPress={() => setVoiceModalVisible(false)} style={[styles.voiceClose, { marginTop: 0 }]}>
+                    <Ionicons name="close-circle-outline" size={40} color={theme.text} />
+                </TouchableOpacity>
+            </BlurView>
+        </View>
+      </Modal>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
+  container: { flex: 1 },
   maintenanceScreen: { flex: 1, backgroundColor: "#000", justifyContent: "center", alignItems: "center" },
   maintenanceAlertBox: { padding: 20, backgroundColor: "#333", borderRadius: 10, alignItems: "center" },
   maintenanceAlertTitle: { color: "#ff4444", fontSize: 20, fontWeight: "bold", marginBottom: 10 },
-  maintenanceAlertText: { color: "#fff", fontSize: 16 },
-  menuOverlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 100, flexDirection: "row" },
-  menu: { width: MENU_WIDTH, backgroundColor: "#fff", height: "100%", shadowColor: "#000", shadowOpacity: 0.5, shadowRadius: 10, elevation: 10 },
-  menuHeader: { padding: 20, paddingTop: 50, flexDirection: "row", alignItems: "center" },
-  menuUserAvatar: { width: 50, height: 50, borderRadius: 25, backgroundColor: "rgba(255,255,255,0.2)", justifyContent: "center", alignItems: "center", marginRight: 15 },
-  menuUserInitials: { color: "#fff", fontSize: 20, fontWeight: "bold" },
-  menuUserName: { color: "#fff", fontSize: 18, fontWeight: "bold" },
-  menuUserEmail: { color: "rgba(255,255,255,0.8)", fontSize: 12 },
-  menuItem: { flexDirection: "row", alignItems: "center", paddingVertical: 15, paddingHorizontal: 20, borderBottomWidth: 1, borderBottomColor: "#f0f0f0" },
-  menuText: { fontSize: 16, color: "#333" },
   webModalOverlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center", zIndex: 200 },
   webModalContent: { width: 400, backgroundColor: "#fff", borderRadius: 10, padding: 20, shadowColor: "#000", shadowOpacity: 0.25, shadowRadius: 4, elevation: 5 },
   webModalTitle: { fontSize: 20, fontWeight: "bold", marginBottom: 10 },
@@ -1135,62 +1794,162 @@ const styles = StyleSheet.create({
   webModalButtons: { flexDirection: "row", justifyContent: "flex-end", gap: 10 },
   webModalButton: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 5 },
   webModalButtonText: { color: "#fff", fontWeight: "bold" },
-  headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 15 },
   iconButton: { padding: 8 },
-  logoContainer: { flexDirection: "row", alignItems: "center" },
-  logoShine: {
-    shadowColor: "#ffd700",
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 15,
-    elevation: 10,
-    backgroundColor: 'rgba(255, 215, 0, 0.15)',
-    borderRadius: 15,
-    padding: 5,
+
+  glow1: { position: 'absolute', top: '-20%', left: '-10%', width: 1000, height: 1000, borderRadius: 500, backgroundColor: 'rgba(139, 92, 246, 0.15)', opacity: 0.6 },
+  glow2: { position: 'absolute', bottom: '-10%', right: '-10%', width: 800, height: 800, borderRadius: 400, backgroundColor: 'rgba(59, 130, 246, 0.15)', opacity: 0.6 },
+  glow3: { position: 'absolute', top: '40%', left: '30%', width: 600, height: 600, borderRadius: 300, backgroundColor: 'rgba(236, 72, 153, 0.08)', opacity: 0.4 },
+  cyberCorner: { position: 'absolute', width: 15, height: 15, pointerEvents: 'none' },
+  cyberCornerTopLeft: { top: 0, left: 0, borderTopWidth: 2, borderLeftWidth: 2 },
+  cyberCornerBottomRight: { bottom: 0, right: 0, borderBottomWidth: 2, borderRightWidth: 2 },
+  
+  // Sidebar
+  sidebar: { width: MINI_SIDEBAR_WIDTH, height: '100%', borderRightWidth: 1, alignItems: 'center', paddingVertical: 32 },
+  sidebarHeader: { marginBottom: 48 },
+  sidebarLogoImage: { width: 40, height: 40, resizeMode: 'contain' },
+  sidebarLogo: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', shadowColor: '#8B5CF6', shadowRadius: 20, shadowOpacity: 0.4 },
+  sidebarItem: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 12, marginBottom: 16, position: 'relative' },
+  sidebarItemExpanded: {
+    width: 220,
+    justifyContent: 'flex-start',
+    paddingHorizontal: 12,
   },
-  logo: { width: 30, height: 30, marginRight: 10 },
-  title: { fontSize: 20, fontWeight: "bold", color: "#fff" },
-  counterRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 15, backgroundColor: "rgba(0,0,0,0.2)", borderRadius: 10, padding: 10 },
-  counterBox: { alignItems: "center", flex: 1, borderLeftWidth: 2, paddingLeft: 5 },
-  counterValue: { fontSize: 18, fontWeight: "bold" },
-  counterLabel: { fontSize: 10, marginTop: 2 },
+  sidebarItemText: { display: 'none' }, // Icon only
+  sidebarItemTextExpanded: {
+    display: 'flex',
+    marginLeft: 15,
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  activeIndicator: { position: 'absolute', right: 0, width: 4, height: 24, borderTopLeftRadius: 4, borderBottomLeftRadius: 4 },
+  sidebarFooter: { marginTop: 'auto', gap: 24 },
+  sidebarIcon: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  sidebarAvatar: { width: 40, height: 40, borderRadius: 12, borderWidth: 2, borderColor: 'rgba(139, 92, 246, 0.3)' },
+  
+  sidebarMobile: {
+    position: 'absolute', left: 0, top: 0, bottom: 0, width: MENU_WIDTH, zIndex: 100,
+    borderRightWidth: 1, paddingVertical: 20,
+    shadowColor: "#000", shadowOpacity: 0.2, shadowRadius: 10, elevation: 10
+  },
+  menuHeader: { paddingHorizontal: 24, marginBottom: 20, flexDirection: "row", alignItems: "center" },
+  menuItem: { flexDirection: "row", alignItems: "center", paddingVertical: 14, paddingHorizontal: 24, borderRadius: 8, marginHorizontal: 8 },
+  menuText: { fontSize: 15, fontWeight: "500" },
+
+  // Page Header
+  pageHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 40 },
+  pageTitle: { fontSize: 40, fontWeight: '900', fontStyle: 'italic', letterSpacing: -2 },
+  pageSubtitleContainer: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 8 },
+  pageSubtitle: { color: '#94A3B8', fontSize: 10, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', letterSpacing: 6, textTransform: 'uppercase' },
+  headerStatLabel: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 3, opacity: 0.4, marginBottom: 6 },
+  headerStatValue: { fontSize: 32, fontWeight: '900', fontStyle: 'italic', letterSpacing: -1 },
+
+  // Chart
+  chartCard: { padding: 40, borderRadius: 40, borderWidth: 1, height: 420, overflow: 'hidden', marginBottom: 40 },
+
+  contentOverlay: {
+    position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, zIndex: 999,
+    backgroundColor: 'transparent'
+  },
+
+  // Top Bar
+  topBar: { height: 64, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 24, borderBottomWidth: 1 },
+  topBarSearch: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, height: 40, borderRadius: 16, width: 320 },
+  topActionButton: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 10, borderRadius: 16, gap: 8 },
+  topActionButtonText: { fontSize: 10, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 2 },
+  topBarActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  badge: { position: 'absolute', top: 8, right: 8, width: 6, height: 6, borderRadius: 3, borderWidth: 1, borderColor: '#020617' },
+
+  // Metrics
+  statCardTouchable: { flex: 1, minWidth: 180 },
+  metricsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 16, marginBottom: 24 },
+  statCard: {
+    borderRadius: 32,
+    padding: 24,
+    borderWidth: 1,
+    flex: 1,
+    minWidth: 180,
+    shadowOpacity: 0.1,
+    shadowRadius: 35,
+    elevation: 8,
+  },
+  statCardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 },
+  statIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 18,
+    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  statValue: { fontSize: 24, fontWeight: '800' },
+  statLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1.5 },
+  
+  // Table Section
+  sectionCard: { borderRadius: 48, borderWidth: 1, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  sectionTitle: { fontSize: 16, fontWeight: '700' },
+  filterBtnSmall: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, borderWidth: 1 },
+  tableToolbar: { flexDirection: 'row', padding: 16, gap: 12, flexWrap: 'wrap' },
   betaToolbar: { marginBottom: 10, padding: 10, backgroundColor: "rgba(100,0,200,0.2)", borderRadius: 8 },
   betaLabel: { color: "#c471ed", fontSize: 10, fontWeight: "bold", marginBottom: 5 },
   betaButton: { flexDirection: "row", alignItems: "center", backgroundColor: "rgba(255,255,255,0.1)", padding: 8, borderRadius: 5, marginRight: 10 },
   betaButtonText: { color: "#fff", fontSize: 12, marginLeft: 5 },
   uploadAssignRow: { flexDirection: "row", justifyContent: "flex-start", marginBottom: 10, gap: 10 },
   searchFilter: { flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 10, flexWrap: "wrap" },
-  searchContainer: { flexDirection: "row", alignItems: "center", borderRadius: 5, paddingHorizontal: 8, height: 35, flex: 1, minWidth: 100 },
-  searchInput: { flex: 1, fontSize: 12, height: "100%" },
-  pickerContainer: { borderRadius: 5, height: 35, justifyContent: "center", overflow: "hidden", minWidth: 100 },
-  picker: { height: 35, width: 110, backgroundColor: "transparent", borderWidth: 0 },
-  iconBtn: { padding: 8, borderRadius: 5, justifyContent: "center", alignItems: "center" },
-  tableCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-    borderRadius: 12,
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 5,
-    shadowOffset: { width: 0, height: 2 },
-    flex: 1,
-    overflow: 'hidden',
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-    ...(Platform.OS === 'web' ? { backdropFilter: 'blur(10px)' } : {}),
+  searchContainer: { flexDirection: "row", alignItems: "center", borderRadius: 8, paddingHorizontal: 12, height: 36, flex: 1, minWidth: 120, borderWidth: 1 },
+  tableHeader: { flexDirection: "row", borderBottomWidth: 1, paddingVertical: 12, paddingHorizontal: 8 },
+  filterRow: { flexDirection: "row", borderBottomWidth: 1, paddingVertical: 8, paddingHorizontal: 8 },
+  compactFilterInput: { fontSize: 11, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, borderWidth: 1, height: 28 },
+  cell: { paddingHorizontal: 12, fontSize: 13, fontWeight: "400" },
+  headerCell: { fontWeight: "600", textTransform: 'uppercase', fontSize: 11, letterSpacing: 0.5 },
+  caseRow: { flexDirection: "row", borderBottomWidth: 1, paddingVertical: 8, alignItems: "center", paddingHorizontal: 8 },
+  iconActionBtn: { borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginHorizontal: 2 },
+  
+  assigneeCell: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 4,
   },
-  tableHeader: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: "rgba(0,0,0,0.05)", paddingVertical: 12, backgroundColor: "rgba(255,255,255,0.3)" },
-  cell: { paddingHorizontal: 8, fontSize: 12, color: "#333" },
-  headerCell: { fontWeight: "bold", color: "#444", textTransform: 'uppercase', fontSize: 11 },
-  caseRow: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: "rgba(0,0,0,0.05)", paddingVertical: 12, alignItems: "center", backgroundColor: 'transparent' },
-  caseRowOdd: { backgroundColor: "rgba(0,0,0,0.03)" },
-  caseRowOddDark: { backgroundColor: "rgba(255,255,255,0.05)" },
+  assigneeAvatar: { width: 24, height: 24, borderRadius: 12, marginRight: 6 },
+  assigneeAvatarPlaceholder: {
+    width: 24, height: 24, borderRadius: 12, marginRight: 6,
+    justifyContent: 'center', alignItems: 'center',
+  },
+  assigneeAvatarText: { fontSize: 10, fontWeight: 'bold' },
+
+  statusPill: { borderRadius: 20, paddingVertical: 4, paddingHorizontal: 10, borderWidth: 1 },
+  statusText: { fontSize: 10, fontWeight: '700', textAlign: 'center', textTransform: 'uppercase' },
+
+  // Footer
+  footer: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 48, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 40, borderTopWidth: 1 },
+  footerSection: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  footerLabel: { fontSize: 10, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 6, opacity: 0.4, fontStyle: 'italic' },
+  footerIndicator: { width: 10, height: 10, borderRadius: 5, shadowRadius: 15, shadowOpacity: 1 },
+  footerText: { fontSize: 10, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 3 },
+
+  // Misc
+  searchInput: { flex: 1, fontSize: 13, height: "100%" },
   toastContainer: { position: "absolute", bottom: 20, left: 20, right: 20, alignItems: "center" },
   toastContent: { flexDirection: "row", alignItems: "center", padding: 15, borderRadius: 10, shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 5, elevation: 5, width: "100%", maxWidth: 400 },
   toastTitle: { color: "#fff", fontWeight: "bold", fontSize: 16 },
   toastText: { color: "#fff", fontSize: 14 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center' },
+  notificationDropdown: {
+      position: 'absolute', top: 70, right: 20, width: 320, borderRadius: 16, borderWidth: 1, overflow: 'hidden', elevation: 10, shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 10
+  },
+  notificationHeader: {
+      flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1
+  },
+  notificationTitle: { fontWeight: 'bold', fontSize: 16 },
+  notificationItem: {
+      flexDirection: 'row', padding: 16, borderBottomWidth: 1, alignItems: 'flex-start', gap: 12
+  },
+  notificationIcon: {
+      width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center'
+  },
+  notificationItemTitle: { fontWeight: '600', fontSize: 14, marginBottom: 2 },
+  notificationItemMessage: { fontSize: 12, marginBottom: 4 },
+  notificationItemTime: { fontSize: 10, opacity: 0.6 },
   assignModalContent: { width: '85%', maxWidth: 400, maxHeight: '70%', borderRadius: 15, padding: 20, elevation: 10 },
   modalTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff', textAlign: 'center', marginBottom: 20 },
   memberList: { flex: 1, width: '100%' },
@@ -1202,8 +1961,6 @@ const styles = StyleSheet.create({
   cancelButton: { backgroundColor: '#666', marginRight: 10 },
   confirmAssignButton: { backgroundColor: '#007AFF' },
   modalButtonText: { color: '#fff', fontWeight: 'bold' },
-  actionButton: { flexDirection: "row", alignItems: "center", paddingVertical: 8, paddingHorizontal: 12, borderRadius: 5 },
-  filterButtonText: { color: "#fff", fontWeight: "bold", fontSize: 12 },
   modalSearchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1216,4 +1973,36 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.2)'
   },
   modalSearchInput: { flex: 1, color: '#fff', fontSize: 14 },
+  pickerContainer: { borderRadius: 8, height: 36, justifyContent: "center", overflow: "hidden", minWidth: 120, borderWidth: 1 },
+  picker: { height: 36, width: 130, backgroundColor: "transparent", borderWidth: 0 },
+  statChange: {
+    fontSize: 9, fontWeight: '900', paddingHorizontal: 8, paddingVertical: 2,
+    borderRadius: 8, borderWidth: 1,
+  },
+  dynamicsButton: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 16, gap: 8, borderWidth: 1 },
+  dynamicsButtonText: {
+    fontSize: 10, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 2
+  },
+  sidebarTitle: { fontSize: 20, fontWeight: '800', marginLeft: 10 },
+  realtimeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+  realtimeArrow: {
+    fontSize: 16,
+    marginRight: 2,
+  },
+  realtimeValue: {
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  // Voice AI Styles
+  voiceOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center' },
+  voiceCard: { width: '90%', maxWidth: 400, padding: 30, borderRadius: 24, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  voiceHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 20 },
+  voiceTitle: { fontSize: 20, fontWeight: '900', letterSpacing: 2 },
+  voiceStatus: { color: '#fff', fontSize: 16, marginBottom: 20, textAlign: 'center', fontWeight: '600' },
+  voiceInput: { width: '100%', backgroundColor: 'rgba(255,255,255,0.1)', color: '#fff', padding: 15, borderRadius: 12, fontSize: 16, textAlign: 'center' },
+  voiceClose: { marginTop: 20, padding: 10 },
 });

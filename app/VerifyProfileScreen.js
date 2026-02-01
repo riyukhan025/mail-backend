@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import { useEffect, useState } from "react";
 import { FlatList, Image, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
@@ -41,38 +42,55 @@ export default function VerifyProfileScreen({ navigation }) {
   );
 
   const renderItem = ({ item }) => (
-    <View style={styles.card}>
+    <BlurView intensity={20} tint="dark" style={styles.card}>
       <View style={styles.row}>
-        {item.photoURL ? (
-          <Image source={{ uri: item.photoURL }} style={styles.avatar} />
-        ) : (
-          <Ionicons name="person-circle" size={50} color="#ccc" />
-        )}
+        <View style={styles.avatarContainer}>
+            {item.photoURL ? (
+            <Image source={{ uri: item.photoURL }} style={styles.avatar} />
+            ) : (
+            <View style={styles.avatarPlaceholder}>
+                <Text style={styles.avatarText}>{(item.name || "U").charAt(0).toUpperCase()}</Text>
+            </View>
+            )}
+            {item.isVerified && (
+                <View style={styles.verifiedBadge}>
+                    <Ionicons name="checkmark" size={10} color="#fff" />
+                </View>
+            )}
+        </View>
         <View style={styles.info}>
           <Text style={styles.name}>{item.name || "No Name"}</Text>
           <Text style={styles.email}>{item.email}</Text>
-          <Text style={styles.role}>{item.role || "Member"}</Text>
-          {item.createdAt && (
-            <Text style={styles.dateText}>Joined: {new Date(item.createdAt).toLocaleDateString()}</Text>
-          )}
+          <View style={styles.roleContainer}>
+            <Text style={styles.role}>{item.role || "Member"}</Text>
+            {item.uniqueId && <Text style={styles.uniqueId}> • {item.uniqueId}</Text>}
+          </View>
         </View>
       </View>
-      <TouchableOpacity
-        style={[styles.button, { backgroundColor: item.isVerified ? "#28a745" : "#ffc107" }]}
-        onPress={() => toggleVerify(item)}
-      >
-        <Text style={styles.buttonText}>{item.isVerified ? "Verified" : "Verify User"}</Text>
-      </TouchableOpacity>
-    </View>
+      
+      <View style={styles.divider} />
+
+      <View style={styles.footerRow}>
+          <Text style={styles.dateText}>Joined: {item.createdAt ? new Date(item.createdAt).toLocaleDateString() : "N/A"}</Text>
+          <TouchableOpacity
+            style={[styles.actionButton, { borderColor: item.isVerified ? "#00f260" : "#f09819", backgroundColor: item.isVerified ? "rgba(0, 242, 96, 0.1)" : "rgba(240, 152, 25, 0.1)" }]}
+            onPress={() => toggleVerify(item)}
+          >
+            <Text style={[styles.actionButtonText, { color: item.isVerified ? "#00f260" : "#f09819" }]}>
+                {item.isVerified ? "VERIFIED" : "VERIFY NOW"}
+            </Text>
+          </TouchableOpacity>
+      </View>
+    </BlurView>
   );
 
   return (
-    <LinearGradient colors={["#4e0360", "#1a1a1a"]} style={styles.container}>
+    <LinearGradient colors={["#0F2027", "#203A43", "#2C5364"]} style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Verify Profiles</Text>
+        <Text style={[styles.headerTitle, { textShadowColor: '#00c6ff', textShadowRadius: 15 }]}>Verify Profiles</Text>
       </View>
 
       <View style={styles.searchContainer}>
@@ -108,19 +126,21 @@ const styles = StyleSheet.create({
     paddingTop: 50,
     paddingHorizontal: 20,
     paddingBottom: 20,
-    backgroundColor: "rgba(0,0,0,0.3)",
+    backgroundColor: "rgba(0,0,0,0.2)",
   },
   backButton: { marginRight: 15 },
-  headerTitle: { fontSize: 20, fontWeight: "bold", color: "#fff" },
+  headerTitle: { fontSize: 22, fontWeight: "bold", color: "#fff", letterSpacing: 1 },
   searchContainer: { paddingHorizontal: 20, marginBottom: 10 },
   searchBar: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.1)",
-    borderRadius: 8,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderRadius: 25,
     paddingHorizontal: 10,
     paddingVertical: 8,
     marginBottom: 5,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)",
   },
   searchInput: {
     flex: 1,
@@ -130,19 +150,35 @@ const styles = StyleSheet.create({
   },
   countText: { color: "#ccc", fontSize: 12, textAlign: "right" },
   list: { paddingHorizontal: 20, paddingBottom: 20 },
-  card: { backgroundColor: "rgba(255,255,255,0.1)", padding: 15, borderRadius: 10, marginBottom: 15 },
-  row: { flexDirection: "row", alignItems: "center", marginBottom: 15 },
-  avatar: { width: 50, height: 50, borderRadius: 25, backgroundColor: "#eee" },
-  info: { marginLeft: 15, flex: 1 },
-  name: { fontSize: 18, fontWeight: "bold", color: "#fff" },
-  email: { color: "#ccc", fontSize: 14 },
-  role: { color: "#aaa", fontSize: 12, textTransform: "uppercase", marginTop: 2 },
-  dateText: { color: "#888", fontSize: 10, marginTop: 2 },
-  button: {
-    padding: 10,
-    borderRadius: 5,
-    alignItems: "center",
+  card: { 
+    borderRadius: 16, 
+    marginBottom: 12, 
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: "rgba(0, 198, 255, 0.3)",
+    padding: 16
   },
-  buttonText: { color: "#fff", fontWeight: "bold" },
+  row: { flexDirection: "row", alignItems: "center" },
+  avatarContainer: { position: 'relative' },
+  avatar: { width: 50, height: 50, borderRadius: 25, borderWidth: 1, borderColor: "rgba(255,255,255,0.2)" },
+  avatarPlaceholder: { width: 50, height: 50, borderRadius: 25, backgroundColor: "rgba(255,255,255,0.1)", justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: "rgba(255,255,255,0.2)" },
+  avatarText: { color: "#fff", fontSize: 20, fontWeight: "bold" },
+  verifiedBadge: { position: 'absolute', bottom: 0, right: 0, backgroundColor: '#00f260', width: 16, height: 16, borderRadius: 8, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#000' },
+  info: { marginLeft: 15, flex: 1 },
+  name: { fontSize: 16, fontWeight: "bold", color: "#fff", letterSpacing: 0.5 },
+  email: { color: "rgba(255,255,255,0.6)", fontSize: 12, marginBottom: 4 },
+  roleContainer: { flexDirection: 'row', alignItems: 'center' },
+  role: { color: "#00c6ff", fontSize: 11, fontWeight: "bold", textTransform: "uppercase" },
+  uniqueId: { color: "#aaa", fontSize: 11 },
+  divider: { height: 1, backgroundColor: "rgba(255,255,255,0.05)", marginVertical: 12 },
+  footerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  dateText: { color: "#666", fontSize: 11 },
+  actionButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  actionButtonText: { fontSize: 10, fontWeight: "bold", letterSpacing: 1 },
   emptyText: { color: "#ccc", textAlign: "center", marginTop: 50 },
 });

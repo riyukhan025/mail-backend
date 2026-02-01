@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   Dimensions,
+  Image,
   FlatList,
   Platform,
   ScrollView,

@@ -27,36 +27,53 @@ export default function MemberViewScreen({ navigation }) {
 
   const renderItem = ({ item }) => (
     <TouchableOpacity
-      style={styles.card}
+      style={styles.cardContainer}
+      activeOpacity={0.9}
       onPress={() => navigation.navigate("MemberDetailScreen", { memberId: item.id })}
     >
-      <View style={styles.avatarContainer}>
-        {item.photoURL ? (
-            <Image source={{ uri: item.photoURL }} style={styles.avatarImage} />
-        ) : (
-            <View style={styles.avatarPlaceholder}>
-                <Text style={styles.avatarText}>{(item.name || "U").charAt(0).toUpperCase()}</Text>
+      <LinearGradient
+        colors={["rgba(255,255,255,0.08)", "rgba(255,255,255,0.02)"]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.card}
+      >
+        <View style={styles.avatarContainer}>
+            <View style={styles.avatarGlow}>
+                {item.photoURL ? (
+                    <Image source={{ uri: item.photoURL }} style={styles.avatarImage} />
+                ) : (
+                    <View style={styles.avatarPlaceholder}>
+                        <Text style={styles.avatarText}>{(item.name || "U").charAt(0).toUpperCase()}</Text>
+                    </View>
+                )}
             </View>
-        )}
-      </View>
-      <View style={styles.info}>
-        <Text style={styles.name}>{item.name || "Unknown"}</Text>
-        <Text style={styles.email}>{item.email}</Text>
-        <View style={styles.roleBadge}>
-            <Text style={styles.roleText}>{item.role || "Member"}</Text>
         </View>
-      </View>
-      <Ionicons name="chevron-forward" size={20} color="#ccc" />
+        <View style={styles.info}>
+            <Text style={styles.name}>{item.name || "Unknown"}</Text>
+            <Text style={styles.email}>{item.email}</Text>
+            <View style={styles.tagsRow}>
+                <View style={[styles.roleBadge, { borderColor: item.role === 'admin' ? '#ffd700' : '#00e5ff' }]}>
+                    <Text style={[styles.roleText, { color: item.role === 'admin' ? '#ffd700' : '#00e5ff' }]}>{(item.role || "MEMBER").toUpperCase()}</Text>
+                </View>
+                {item.uniqueId && (
+                    <View style={styles.idBadge}>
+                        <Text style={styles.idText}>ID: {item.uniqueId}</Text>
+                    </View>
+                )}
+            </View>
+        </View>
+        <Ionicons name="chevron-forward-circle-outline" size={24} color="rgba(255,255,255,0.3)" />
+      </LinearGradient>
     </TouchableOpacity>
   );
 
   return (
-    <LinearGradient colors={["#4e0360", "#1a1a1a"]} style={styles.container}>
+    <LinearGradient colors={["#0f0c29", "#302b63", "#24243e"]} style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.title}>Members Directory</Text>
+        <Text style={styles.title}>Squad Directory</Text>
       </View>
 
       <View style={styles.searchContainer}>
@@ -97,59 +114,86 @@ const styles = StyleSheet.create({
     paddingTop: 50,
     paddingHorizontal: 20,
     paddingBottom: 20,
-    backgroundColor: "rgba(0,0,0,0.3)",
+    backgroundColor: "rgba(0,0,0,0.2)",
   },
   backButton: { marginRight: 15 },
-  title: { fontSize: 20, fontWeight: "bold", color: "#fff" },
+  title: { fontSize: 22, fontWeight: "bold", color: "#fff", letterSpacing: 1 },
   list: { padding: 15 },
   searchContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.1)",
+    backgroundColor: "rgba(255,255,255,0.08)",
     marginHorizontal: 15,
     marginTop: 10,
     paddingHorizontal: 15,
-    borderRadius: 10,
+    borderRadius: 25,
     height: 50,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)",
   },
   searchInput: { flex: 1, color: "#fff", fontSize: 16 },
   statsRow: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 20, marginTop: 10, marginBottom: 5 },
   statsText: { color: '#aaa', fontSize: 12 },
+  cardContainer: {
+    marginBottom: 12,
+    borderRadius: 16,
+    overflow: 'hidden',
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    elevation: 5,
+  },
   card: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.08)",
     padding: 15,
-    borderRadius: 12,
-    marginBottom: 10,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.05)",
+    borderColor: "rgba(255,255,255,0.1)",
   },
   avatarContainer: {
     marginRight: 15,
   },
-  avatarImage: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    borderWidth: 1,
-    borderColor: "#fff",
-  },
-  avatarPlaceholder: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: "#6a1b9a",
-    justifyContent: "center",
-    alignItems: "center",
+  avatarGlow: {
+    padding: 2,
+    borderRadius: 30,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.2)",
   },
+  avatarImage: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+  },
+  avatarPlaceholder: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: "rgba(255,255,255,0.1)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
   avatarText: { color: "#fff", fontSize: 20, fontWeight: "bold" },
   info: { flex: 1 },
-  name: { fontSize: 16, fontWeight: "bold", color: "#fff", marginBottom: 2 },
-  email: { color: "#ccc", fontSize: 12, marginBottom: 4 },
-  roleBadge: { backgroundColor: "rgba(255,255,255,0.1)", alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 },
-  roleText: { color: "#ffd700", fontSize: 10, fontWeight: "bold", textTransform: "uppercase" },
+  name: { fontSize: 17, fontWeight: "bold", color: "#fff", marginBottom: 2, letterSpacing: 0.5 },
+  email: { color: "rgba(255,255,255,0.6)", fontSize: 12, marginBottom: 6 },
+  tagsRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  roleBadge: { 
+    backgroundColor: "rgba(0,0,0,0.2)", 
+    paddingHorizontal: 8, 
+    paddingVertical: 3, 
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  roleText: { fontSize: 10, fontWeight: "bold", letterSpacing: 1 },
+  idBadge: {
+    backgroundColor: "rgba(255,255,255,0.05)",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)"
+  },
+  idText: { color: "#ccc", fontSize: 10, fontWeight: "600" },
   emptyText: { color: "#ccc", textAlign: "center", marginTop: 50 },
 });

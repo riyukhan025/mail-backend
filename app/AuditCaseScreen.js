@@ -1,8 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { encode as btoa } from "base-64";
 import Constants from "expo-constants";
-import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
+import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import * as MailComposer from "expo-mail-composer";
 import JSZip from "jszip";
@@ -54,6 +54,8 @@ export default function AuditCaseScreen({ navigation, route }) {
   const [caseData, setCaseData] = useState(initialCaseData || {});
   const [isUploadingManual, setIsUploadingManual] = useState(false);
   const [selectedPhoto, setSelectedPhoto] = useState(null);
+  const isCES = (caseData.client || caseData.company || "").toUpperCase().includes("CES");
+  const isManualCase = manualMode || caseData.manualUpload || caseData.manualPdfGenerated;
   
   useEffect(() => {
     const caseRef = firebase.database().ref(`cases/${caseId}`);
@@ -69,7 +71,10 @@ export default function AuditCaseScreen({ navigation, route }) {
   const [rectifyModalVisible, setRectifyModalVisible] = useState(false);
   const [revertModalVisible, setRevertModalVisible] = useState(false);
   const [emailModalVisible, setEmailModalVisible] = useState(false);
+  const [manualUploadModalVisible, setManualUploadModalVisible] = useState(false);
+  const [manualPhotos, setManualPhotos] = useState([]);
   const [showManualTools, setShowManualTools] = useState(false);
+  const [cesTypeModalVisible, setCesTypeModalVisible] = useState(false);
   const [enableManualAudit, setEnableManualAudit] = useState(false);
   
   const [isFinalizing, setIsFinalizing] = useState(false);
@@ -418,12 +423,38 @@ export default function AuditCaseScreen({ navigation, route }) {
         if (caseData.filledForm?.url) {
             try {
                 const formBytes = await fetch(caseData.filledForm.url).then(r => r.arrayBuffer());
-                const formPdf = await PDFDocument.load(formBytes);
-                const pages = await pdfDoc.copyPages(formPdf, formPdf.getPageIndices());
-                pages.forEach(p => pdfDoc.addPage(p));
+                
+                // Check for PDF signature to determine handling
+                const header = new Uint8Array(formBytes.slice(0, 5));
+                const headerStr = String.fromCharCode(...header);
+
+                if (headerStr.startsWith('%PDF')) {
+                    const formPdf = await PDFDocument.load(formBytes);
+                    const pages = await pdfDoc.copyPages(formPdf, formPdf.getPageIndices());
+                    pages.forEach(p => pdfDoc.addPage(p));
+                } else {
+                    // Assume Image (JPG/PNG) - e.g. CES Form
+                    let image;
+                    try {
+                        image = await pdfDoc.embedJpg(formBytes);
+                    } catch (e) {
+                        image = await pdfDoc.embedPng(formBytes);
+                    }
+                    
+                    const page = pdfDoc.addPage();
+                    const { width, height } = page.getSize();
+                    const dims = image.scaleToFit(width - 40, height - 40);
+                    
+                    page.drawImage(image, {
+                        x: (width - dims.width) / 2,
+                        y: (height - dims.height) / 2,
+                        width: dims.width,
+                        height: dims.height,
+                    });
+                }
             } catch (e) {
                 console.log("Error loading form pdf", e);
-                Alert.alert("Warning", "Could not load filled form PDF. Proceeding with photos only.");
+                Alert.alert("Warning", "Could not load filled form. Proceeding with photos only.");
             }
         }
 
@@ -449,6 +480,8 @@ export default function AuditCaseScreen({ navigation, route }) {
                         for (let i = 0; i < retries; i++) {
                             try {
                                 const r = await fetch(u);
+                                if (!r.ok) throw new Error(`Status ${r.status}`);
+                                return await r.arrayBuffer();
                             } catch (e) {
                                 console.warn(`[PDF-FETCH] Attempt ${i + 1} failed for ${u}: ${e.message}`);
                                 if (i === retries - 1) throw e;
@@ -831,57 +864,138 @@ Spacesolutions Team
     }
   };
 
-  const handleManualUpload = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: ["image/*", "application/pdf"],
-        copyToCacheDirectory: true,
-      });
+  const openManualUploadModal = () => {
+      setManualPhotos([]);
+      setManualUploadModalVisible(true);
+  };
 
-      if (result.canceled) return;
+  const pickManualPhotos = async () => {
+      try {
+          const mediaTypes = ImagePicker.MediaType 
+              ? ImagePicker.MediaType.Images 
+              : ImagePicker.MediaTypeOptions.Images;
 
-      const file = result.assets ? result.assets[0] : result;
-      setIsUploadingManual(true);
-
-      const formData = new FormData();
-      formData.append("file", {
-        uri: file.uri,
-        type: file.mimeType || "application/pdf",
-        name: file.name || "manual_upload.pdf",
-      });
-      formData.append("upload_preset", UPLOAD_PRESET);
-      const safeRef = (caseData.matrixRefNo || caseData.RefNo || caseId).replace(/[^a-zA-Z0-9-_]/g, '_');
-      formData.append("folder", `cases/${safeRef}`);
-      
-      const isPdf = file.mimeType === "application/pdf" || (file.name && file.name.endsWith(".pdf"));
-      const resourceType = isPdf ? "raw" : "image";
-      formData.append("resource_type", resourceType);
-
-      const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/${resourceType}/upload`;
-
-      const response = await fetch(uploadUrl, {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = await response.json();
-      if (data.secure_url) {
-        await firebase.database().ref(`cases/${caseId}`).update({
-          photosFolderLink: data.secure_url,
-          status: "audit",
-          manualUpload: true,
-          completedAt: Date.now()
-        });
-        Alert.alert("Success", "File uploaded. You can now approve and send.");
-      } else {
-        throw new Error(data.error?.message || "Upload failed");
+          const result = await ImagePicker.launchImageLibraryAsync({
+              mediaTypes: mediaTypes,
+              allowsMultipleSelection: true,
+              quality: 0.8,
+              base64: Platform.OS === 'web',
+          });
+          if (!result.canceled) {
+              setManualPhotos(result.assets || [result]);
+          }
+      } catch (err) {
+          console.error("Pick Photos Error:", err);
+          Alert.alert("Error", "Failed to pick photos: " + err.message);
       }
-    } catch (error) {
-      console.error("Manual Upload Error:", error);
-      Alert.alert("Error", "Failed to upload: " + error.message);
-    } finally {
-      setIsUploadingManual(false);
-    }
+  };
+
+  const executeManualUpload = async () => {
+      if (manualPhotos.length === 0) {
+          Alert.alert("Error", "Please select photos.");
+          return;
+      }
+      
+      setIsUploadingManual(true);
+      try {
+          const uploadedPhotos = [];
+          const safeRef = (caseData.matrixRefNo || caseData.RefNo || caseId).replace(/[^a-zA-Z0-9-_]/g, '_');
+
+          for (let i = 0; i < manualPhotos.length; i++) {
+              const photo = manualPhotos[i];
+              const formData = new FormData();
+              
+              if (Platform.OS === 'web') {
+                  if (photo.base64) {
+                      formData.append("file", `data:${photo.mimeType || 'image/jpeg'};base64,${photo.base64}`);
+                  } else {
+                      const res = await fetch(photo.uri);
+                      const blob = await res.blob();
+                      formData.append("file", blob);
+                  }
+              } else {
+                  formData.append("file", {
+                      uri: photo.uri,
+                      type: "image/jpeg",
+                      name: `manual_${Date.now()}_${i}.jpg`,
+                  });
+              }
+
+              formData.append("upload_preset", UPLOAD_PRESET);
+              formData.append("folder", `cases/${safeRef}`);
+
+              const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`;
+              const response = await fetch(uploadUrl, { method: "POST", body: formData });
+              const data = await response.json();
+              if (data.error) throw new Error(data.error.message);
+              
+              if (data.secure_url) {
+                  uploadedPhotos.push({
+                      uri: data.secure_url,
+                      category: 'manual',
+                      timestamp: new Date().toLocaleString()
+                  });
+              }
+          }
+
+          const updates = {
+              status: "audit",
+              manualUpload: true,
+              completedAt: Date.now(),
+              photosFolder: { manual: uploadedPhotos } // Store in 'manual' category
+          };
+
+          await firebase.database().ref(`cases/${caseId}`).update(updates);
+          setManualUploadModalVisible(false);
+          Alert.alert("Success", "Manual upload completed. Photos are now available for audit.");
+      } catch (error) {
+          console.error("Manual Upload Error:", error);
+          Alert.alert("Error", "Failed to upload: " + error.message);
+      } finally {
+          setIsUploadingManual(false);
+      }
+  };
+
+  const navigateToForm = (cesTypeVal) => {
+      const rawCompany = caseData?.company || "";
+      const rawClient = caseData?.client || "";
+      const clientName = (rawCompany + " " + rawClient).toUpperCase();
+
+      
+          let targetScreen = "FormScreen";
+          const params = { 
+              caseId, 
+              company: caseData.company || caseData.client, 
+              editMode: true, 
+              existingData: { ...caseData } 
+          };
+
+          if (clientName.includes("MATRIX")) {
+              targetScreen = "MatrixFormScreen";
+          } else if (clientName.includes("DHI")) {
+              targetScreen = "DHIFormScreen";
+          }
+
+          if (cesTypeVal) {
+              params.existingData.cesType = cesTypeVal;
+              if (cesTypeVal === "No") {
+                  params.existingData.formCompleted = false; // Force NA logic
+              }
+          }
+          
+          navigation.navigate(targetScreen, params);
+  };
+
+  const handleFillForm = () => {
+      const rawCompany = caseData?.company || "";
+      const rawClient = caseData?.client || "";
+      const clientName = (rawCompany + " " + rawClient).toUpperCase();
+
+      if (clientName.includes("CES")) {
+          setCesTypeModalVisible(true);
+      } else {
+          navigateToForm(null);
+      }
   };
 
   return (
@@ -931,22 +1045,24 @@ Spacesolutions Team
           {showManualTools && (
               <View style={{backgroundColor: '#f0f0f0', padding: 10, borderRadius: 8, marginBottom: 10}}>
                   <Text style={{fontWeight: 'bold', marginBottom: 5, color: '#333'}}>Developer Tools</Text>
-                  <TouchableOpacity 
-                    style={[styles.downloadButton, { backgroundColor: "#673AB7" }]}
-                    onPress={handleManualPdfGeneration}
-                    disabled={isFinalizing}
-                  >
-                    {isFinalizing ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="document-attach" size={20} color="#fff" />}
-                    <Text style={styles.downloadButtonText}>Generate Full PDF (Manual)</Text>
-                  </TouchableOpacity>
+                  {!isCES && (
+                    <TouchableOpacity 
+                        style={[styles.downloadButton, { backgroundColor: "#673AB7" }]}
+                        onPress={handleManualPdfGeneration}
+                        disabled={isFinalizing}
+                    >
+                        {isFinalizing ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="document-attach" size={20} color="#fff" />}
+                        <Text style={styles.downloadButtonText}>Generate Full PDF (Manual)</Text>
+                    </TouchableOpacity>
+                  )}
               </View>
           )}
 
-          {/* --- NEW: Maintenance / Raw Photos View --- */}
-          {(caseData.maintenanceSubmission || (!caseData.photosFolderLink && caseData.photosFolder)) && (
+          {/* --- NEW: Maintenance / Raw Photos View / CES View --- */}
+          {(caseData.maintenanceSubmission || (!caseData.photosFolderLink && caseData.photosFolder) || (isCES && caseData.photosFolder)) && (
              <View style={styles.maintenanceBox}>
-                 <Text style={styles.maintenanceHeader}>⚠️ Maintenance Submission</Text>
-                 <Text style={styles.maintenanceText}>Raw photos uploaded. Download zip to audit.</Text>
+                 <Text style={styles.maintenanceHeader}>⚠️ {isCES ? "CES Audit Assets" : "Maintenance Submission"}</Text>
+                 <Text style={styles.maintenanceText}>Raw photos available. Download zip to audit.</Text>
                  
                  {Object.entries(caseData.photosFolder || {}).map(([cat, photos]) => (
                      <View key={cat} style={{marginTop: 10}}>
@@ -995,7 +1111,7 @@ Spacesolutions Team
               </TouchableOpacity>
             )}
 
-            {(caseData.photosFolderLink && caseData.filledForm?.url) && (
+            {(caseData.photosFolderLink && caseData.filledForm?.url && !isCES) && (
               <TouchableOpacity 
                 style={[styles.downloadButton, { backgroundColor: "#6200ea", flex: 1 }]}
                 onPress={handleFinalizeReport}
@@ -1004,6 +1120,17 @@ Spacesolutions Team
                 {isFinalizing ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="git-merge-outline" size={20} color="#fff" />}
                 <Text style={styles.downloadButtonText}>{isFinalizing ? "Merging..." : "Combined PDF"}</Text>
               </TouchableOpacity>
+            )}
+
+            {(!caseData.photosFolderLink && caseData.photosFolder && !isCES) && (
+                <TouchableOpacity 
+                    style={[styles.downloadButton, { backgroundColor: "#673AB7", flex: 1 }]}
+                    onPress={handleManualPdfGeneration}
+                    disabled={isFinalizing}
+                >
+                    {isFinalizing ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="document-attach" size={20} color="#fff" />}
+                    <Text style={styles.downloadButtonText}>Generate Report</Text>
+                </TouchableOpacity>
             )}
           </View>
 
@@ -1017,15 +1144,25 @@ Spacesolutions Team
             </TouchableOpacity>
           </View>
 
-          {(manualMode || !caseData.photosFolderLink) && (
-            <TouchableOpacity 
-              style={[styles.downloadButton, { backgroundColor: "#ff9800", marginTop: 15 }]}
-              onPress={handleManualUpload}
-              disabled={isUploadingManual}
-            >
-              {isUploadingManual ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="add-circle-outline" size={24} color="#fff" />}
-              <Text style={styles.downloadButtonText}>{isUploadingManual ? "Uploading..." : "Manual Upload (Offline Case)"}</Text>
-            </TouchableOpacity>
+          {isManualCase && (
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 15 }}>
+                <TouchableOpacity 
+                    style={[styles.downloadButton, { backgroundColor: "#9c27b0", flex: 1 }]}
+                    onPress={handleFillForm}
+                >
+                    <Ionicons name="document-text-outline" size={24} color="#fff" />
+                    <Text style={styles.downloadButtonText}>Fill / Edit Form</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                    style={[styles.downloadButton, { backgroundColor: "#ff9800", flex: 1 }]}
+                    onPress={openManualUploadModal}
+                    disabled={isUploadingManual}
+                >
+                    {isUploadingManual ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="add-circle-outline" size={24} color="#fff" />}
+                    <Text style={styles.downloadButtonText}>{isUploadingManual ? "Uploading..." : "Manual Upload"}</Text>
+                </TouchableOpacity>
+            </View>
           )}
 
           <TouchableOpacity 
@@ -1196,6 +1333,61 @@ Spacesolutions Team
                 <Text style={styles.confirmButtonText}>Send Email</Text>
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Manual Upload Modal */}
+      <Modal visible={manualUploadModalVisible} transparent animationType="slide" onRequestClose={() => setManualUploadModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Manual Upload</Text>
+            <Text style={styles.modalSubtitle}>Upload assets for offline case</Text>
+
+            <TouchableOpacity style={[styles.rectifyOptionButton, { backgroundColor: "#009688" }]} onPress={pickManualPhotos}>
+                <Ionicons name={manualPhotos.length > 0 ? "checkmark-circle" : "images-outline"} size={20} color="#fff" style={{marginRight: 10}} />
+                <Text style={styles.rectifyOptionText}>{manualPhotos.length > 0 ? `${manualPhotos.length} Photos Selected` : "Select Photos"}</Text>
+            </TouchableOpacity>
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity style={styles.cancelButton} onPress={() => setManualUploadModalVisible(false)}>
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.confirmButton} onPress={executeManualUpload} disabled={isUploadingManual}>
+                {isUploadingManual ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.confirmButtonText}>Upload & Submit</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* CES Type Selection Modal */}
+      <Modal visible={cesTypeModalVisible} transparent animationType="fade" onRequestClose={() => setCesTypeModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>CES Verification Type</Text>
+            <Text style={styles.modalSubtitle}>Select verification type:</Text>
+            
+            <TouchableOpacity 
+              style={[styles.rectifyOptionButton, { backgroundColor: "#28a745" }]}
+              onPress={() => { setCesTypeModalVisible(false); navigateToForm("Yes"); }}
+            >
+              <Text style={styles.rectifyOptionText}>Yes (Normal)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={[styles.rectifyOptionButton, { backgroundColor: "#dc3545" }]}
+              onPress={() => { setCesTypeModalVisible(false); navigateToForm("No"); }}
+            >
+              <Text style={styles.rectifyOptionText}>No (Locked/NA)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={[styles.rectifyOptionButton, { backgroundColor: "#616161", marginTop: 10 }]}
+              onPress={() => setCesTypeModalVisible(false)}
+            >
+              <Text style={styles.rectifyOptionText}>Cancel</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
