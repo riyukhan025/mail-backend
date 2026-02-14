@@ -8,7 +8,6 @@ import {
   ActivityIndicator,
   Alert,
   Dimensions,
-  Image,
   FlatList,
   Platform,
   ScrollView,
@@ -33,20 +32,66 @@ const ENV_NAME = "STAGING";
 const manifest = Constants.manifest;
 const localIp = manifest?.debuggerHost?.split(':').shift() || "localhost";
 const SERVER_URL = `http://${localIp}:3000`;
+const OVERVIEW_METRICS = [
+  { id: "balance", title: "Nominal Balance", value: "$7,500.00", unit: "USD", delta: "+1.19%", deltaUp: true, icon: "wallet-outline", accent: "#f43f9e" },
+  { id: "stock", title: "Total Stock Product", value: "3,142", unit: "ITEMS", delta: "+0.29%", deltaUp: true, icon: "cube-outline", accent: "#38bdf8" },
+  { id: "revenue", title: "Nominal Revenue", value: "$21,430.00", unit: "USD", delta: "+0.29%", deltaUp: true, icon: "trending-up-outline", accent: "#2563eb" },
+  { id: "expense", title: "Nominal Expense", value: "$12,980.00", unit: "USD", delta: "-0.15%", deltaUp: false, icon: "trending-down-outline", accent: "#7c3aed" },
+];
+
+const OVERVIEW_ACTIVITY = [
+  { name: "To Be Packed", value: 110000, color: "#38bdf8", legendFontColor: "#cbd5e1", legendFontSize: 12 },
+  { name: "Process Delivery", value: 98000, color: "#fbbf24", legendFontColor: "#cbd5e1", legendFontSize: 12 },
+  { name: "Delivery Done", value: 140000, color: "#14b8a6", legendFontColor: "#cbd5e1", legendFontSize: 12 },
+  { name: "Returned", value: 67236, color: "#ec4899", legendFontColor: "#cbd5e1", legendFontSize: 12 },
+];
+
+const OVERVIEW_COUNTRIES = [
+  { id: "uk", name: "United Kingdom", count: 12628, pct: 80, color: "#22c55e" },
+  { id: "us", name: "United States", count: 10628, pct: 70, color: "#f97316" },
+  { id: "sw", name: "Sweden", count: 8628, pct: 60, color: "#3b82f6" },
+  { id: "tr", name: "Turkey", count: 6628, pct: 40, color: "#a855f7" },
+  { id: "sp", name: "Spain", count: 3628, pct: 30, color: "#38bdf8" },
+];
+
+const OVERVIEW_TRANSACTIONS = [
+  { id: "AR-47380416-61", product: "Meta Quest 3", price: "$499.00", customer: "Liam Smith", date: "02 Apr 2025" },
+  { id: "AR-30631995-17", product: "iPhone 15 Pro Max", price: "$1,399.00", customer: "Lily Thompson", date: "06 Apr 2025" },
+  { id: "AR-79609316-32", product: "MacBook Air M3", price: "$1,299.00", customer: "Lucas Young", date: "10 Apr 2025" },
+  { id: "AR-17288760-13", product: "AirPods Pro", price: "$229.00", customer: "Isabella Garcia", date: "14 Apr 2025" },
+  { id: "AR-24593385-96", product: "Apple Vision Pro", price: "$3,499.00", customer: "Amelia Davis", date: "18 Apr 2025" },
+  { id: "AR-57722590-75", product: "Oura Ring 4", price: "$399.00", customer: "Caleb Turner", date: "22 Apr 2025" },
+];
 
 const TABS = [
   { id: "overview", label: "Overview", icon: "grid-outline" },
+  { id: "alerts", label: "Alerts", icon: "warning-outline" },
+  { id: "control_center", label: "Control Center", icon: "speedometer-outline" },
   { id: "reconciliation", label: "Reconciliation", icon: "git-compare-outline" },
   { id: "manual_audit", label: "Manual Audit", icon: "create-outline" },
   { id: "firebase", label: "Firebase DB", icon: "server-outline" },
   { id: "cloudinary", label: "Cloudinary", icon: "cloud-circle-outline" },
   { id: "tickets", label: "Tickets", icon: "ticket-outline" },
   { id: "users", label: "Users", icon: "people-outline" },
+  { id: "roles_permissions", label: "Roles", icon: "shield-checkmark-outline" },
+  { id: "content", label: "Content", icon: "newspaper-outline" },
+  { id: "settings", label: "Settings", icon: "settings-outline" },
+  { id: "analytics_hub", label: "Analytics", icon: "bar-chart-outline" },
+  { id: "logs_monitoring", label: "Monitoring", icon: "pulse-outline" },
   { id: "tracking", label: "Tracking", icon: "analytics-outline" },
   { id: "logs", label: "Logs", icon: "terminal-outline" },
   { id: "network", label: "Network", icon: "wifi-outline" },
   { id: "utils", label: "Utils", icon: "construct-outline" },
   { id: "statistics", label: "Statistics", icon: "stats-chart-outline" },
+  { id: "billing", label: "Billing", icon: "card-outline" },
+  { id: "security", label: "Security", icon: "lock-closed-outline" },
+  { id: "notifications", label: "Comms", icon: "notifications-outline" },
+  { id: "api", label: "API", icon: "git-network-outline" },
+  { id: "deployments", label: "Deployments", icon: "rocket-outline" },
+  { id: "database", label: "Database", icon: "server-outline" },
+  { id: "growth", label: "Growth", icon: "trending-up-outline" },
+  { id: "ai", label: "AI", icon: "sparkles-outline" },
+  { id: "enterprise", label: "Enterprise", icon: "business-outline" },
 ];
 
 // --- REAL DATA INTERCEPTORS ---
@@ -54,7 +99,15 @@ const LOG_BUFFER = [];
 const NETWORK_BUFFER = [];
 const LISTENERS = new Set();
 
-const notifyListeners = () => LISTENERS.forEach((l) => l());
+let notifyQueued = false;
+const notifyListeners = () => {
+  if (notifyQueued) return;
+  notifyQueued = true;
+  setTimeout(() => {
+    notifyQueued = false;
+    LISTENERS.forEach((l) => l());
+  }, 0);
+};
 
 // Patch Console to capture real logs
 if (!global.isConsolePatched) {
@@ -70,6 +123,12 @@ if (!global.isConsolePatched) {
 
       // Filter out noisy Appwrite Realtime logs
       if (message.includes("Realtime got disconnected") || message.includes("Reconnect will be attempted")) return;
+      // Filter recurring React/Web warnings from the live log buffer
+      if (
+        message.includes("Invalid DOM property `transform-origin`") ||
+        message.includes("props.pointerEvents is deprecated") ||
+        message.includes("Cannot update a component (`DevDashboardScreen`) while rendering a different component")
+      ) return;
 
       if (originalConsole[level]) originalConsole[level](...args);
 
@@ -143,6 +202,8 @@ export default function DevDashboardScreen({ navigation }) {
     enableManualAudit: false,
     maintenanceCamera: false,
   });
+  const [caseStats, setCaseStats] = useState({ total: 0, completed: 0, pending: 0, audit: 0 });
+  const [alertsMeta, setAlertsMeta] = useState({ total: 0, active: 0, critical: 0 });
 
   // Load feature flags on mount
   useEffect(() => {
@@ -170,18 +231,64 @@ export default function DevDashboardScreen({ navigation }) {
     return () => LISTENERS.delete(updateData);
   }, []);
 
-  // Fetch real users when tab is active
+    // Fetch users for snapshot + management modules
   useEffect(() => {
-    if (activeTab === "users") {
-      const ref = firebase.database().ref("users");
-      const listener = ref.on("value", (snapshot) => {
-        const data = snapshot.val() || {};
-        const list = Object.keys(data).map((key) => ({ id: key, ...data[key] }));
-        setUsers(list);
-      });
-      return () => ref.off("value", listener);
+    const ref = firebase.database().ref("users");
+    const listener = ref.on("value", (snapshot) => {
+      const data = snapshot.val() || {};
+      const list = Object.keys(data).map((key) => ({ id: key, ...data[key] }));
+      setUsers(list);
+    });
+    return () => ref.off("value", listener);
+  }, []);
+
+  useEffect(() => {
+    const ref = firebase.database().ref("cases");
+    const listener = ref.on("value", (snapshot) => {
+      const data = snapshot.val() || {};
+      const list = Object.values(data);
+      const completed = list.filter((c) => c?.status === "completed").length;
+      const audit = list.filter((c) => c?.status === "audit").length;
+      const pending = list.filter((c) => c?.status === "assigned" || c?.status === "open").length;
+      setCaseStats({ total: list.length, completed, pending, audit });
+    });
+    return () => ref.off("value", listener);
+  }, []);
+
+  useEffect(() => {
+    const ref = firebase.database().ref("memberAlerts");
+    const listener = ref.on("value", (snapshot) => {
+      const data = snapshot.val() || {};
+      const list = Object.values(data);
+      const active = list.filter((a) => a?.active !== false).length;
+      const critical = list.filter((a) => String(a?.severity || "").toLowerCase() === "critical" && a?.active !== false).length;
+      setAlertsMeta({ total: list.length, active, critical });
+    });
+    return () => ref.off("value", listener);
+  }, []);
+
+  const getTabLiveValue = (tabId) => {
+    switch (tabId) {
+      case "users":
+        return users.length;
+      case "logs":
+        return logs.length;
+      case "network":
+      case "api":
+        return networkRequests.length;
+      case "alerts":
+        return alertsMeta.active;
+      case "control_center":
+        return caseStats.total;
+      case "tracking":
+      case "statistics":
+        return caseStats.completed;
+      case "manual_audit":
+        return caseStats.audit;
+      default:
+        return null;
     }
-  }, [activeTab]);
+  };
 
   // --- LIVE ACTIVITY TRACKING ---
   useEffect(() => {
@@ -327,6 +434,8 @@ export default function DevDashboardScreen({ navigation }) {
     switch (activeTab) {
       case "overview":
         return <OverviewTab featureFlags={featureFlags} toggleFeatureFlag={toggleFeatureFlag} navigation={navigation} />;
+      case "alerts":
+        return <AlertsTab currentUser={user} />;
       case "reconciliation":
         return <ReconciliationTab />;
       case "manual_audit":
@@ -349,53 +458,136 @@ export default function DevDashboardScreen({ navigation }) {
         return <UtilsTab />;
       case "statistics":
         return <StatisticsTab users={users} />;
+      case "control_center":
+        return <ControlCenterTab users={users} logs={logs} networkRequests={networkRequests} />;
+      case "roles_permissions":
+        return <RolesPermissionsTab canManage={user?.role === "admin" || user?.role === "dev"} />;
+      case "content":
+        return <ContentManagementTab canManage={user?.role === "admin" || user?.role === "dev"} />;
+      case "settings":
+        return <AppConfigTab featureFlags={featureFlags} toggleFeatureFlag={toggleFeatureFlag} canManage={user?.role === "admin" || user?.role === "dev"} />;
+      case "analytics_hub":
+        return <AnalyticsInsightsTab />;
+      case "logs_monitoring":
+        return <MonitoringTab logs={logs} requests={networkRequests} />;
+      case "billing":
+        return <BillingSubscriptionTab canManage={user?.role === "admin" || user?.role === "dev"} />;
+      case "security":
+        return <SecurityCenterTab canManage={user?.role === "admin" || user?.role === "dev"} />;
+      case "notifications":
+        return <NotificationCenterTab />;
+      case "api":
+        return <ApiIntegrationTab canManage={user?.role === "admin" || user?.role === "dev"} />;
+      case "deployments":
+        return <DeploymentControlTab canManage={user?.role === "admin" || user?.role === "dev"} />;
+      case "database":
+        return <DatabaseManagementTab canManage={user?.role === "admin" || user?.role === "dev"} />;
+      case "growth":
+        return <GrowthMarketingTab />;
+      case "ai":
+        return <AiAutomationTab canManage={user?.role === "admin" || user?.role === "dev"} />;
+      case "enterprise":
+        return <EnterpriseExtrasTab />;
       default:
         return <OverviewTab />;
     }
   };
 
   return (
-    <LinearGradient colors={["#0F2027", "#203A43", "#2C5364"]} style={styles.container}>
+    <LinearGradient colors={["#05080f", "#090d16", "#05080f"]} style={styles.dsScreen}>
       <StatusBar barStyle="light-content" />
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => {
-            firebase.auth().signOut().then(() => { if (logout) logout(); });
-        }} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#fff" />
-        </TouchableOpacity>
-        <View>
-          <Text style={styles.title}>Dev Dashboard</Text>
-          <Text style={styles.subtitle}>{ENV_NAME} - {APP_VERSION}</Text>
-        </View>
-        <TouchableOpacity style={styles.headerAction} onPress={() => Alert.alert("Info", "Developer Tools v1.0")}>
-          <Ionicons name="information-circle-outline" size={24} color="#fff" />
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.tabsContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsContent}>
-          {TABS.map((tab) => (
+      <View style={styles.dsShellFrame}>
+        {Dimensions.get("window").width >= 980 && (
+          <View style={styles.dsSidebar}>
+            <View style={styles.dsSidebarBrand}>
+              <View style={styles.dsBrandAvatar}>
+                <Ionicons name="flask-outline" size={16} color="#34d399" />
+              </View>
+              <View>
+                <Text style={styles.dsBrandName}>Dev Quantico</Text>
+                <Text style={styles.dsBrandSub}>ID: DEV-1006</Text>
+              </View>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.dsSidebarMenu}>
+              {TABS.map((tab) => (
+                <TouchableOpacity
+                  key={tab.id}
+                  style={[styles.dsSidebarItem, activeTab === tab.id && styles.dsSidebarItemActive]}
+                  onPress={() => setActiveTab(tab.id)}
+                >
+                  <Ionicons
+                    name={tab.icon}
+                    size={16}
+                    color={activeTab === tab.id ? "#e2e8f0" : "#64748b"}
+                    style={{ marginRight: 10 }}
+                  />
+                  <Text style={[styles.dsSidebarLabel, activeTab === tab.id && styles.dsSidebarLabelActive]}>{tab.label}</Text>
+                  {getTabLiveValue(tab.id) !== null && (
+                    <View style={[styles.dsSidebarBadge, tab.id === "alerts" && alertsMeta.critical > 0 && styles.dsSidebarBadgeCritical]}>
+                      <Text style={styles.dsSidebarBadgeText}>{getTabLiveValue(tab.id)}</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
             <TouchableOpacity
-              key={tab.id}
-              style={[styles.tab, activeTab === tab.id && styles.activeTab]}
-              onPress={() => setActiveTab(tab.id)}
+              style={styles.dsSidebarFooter}
+              onPress={() => firebase.auth().signOut().then(() => { if (logout) logout(); })}
             >
-              <Ionicons
-                name={tab.icon}
-                size={18}
-                color={activeTab === tab.id ? "#fff" : "#aaa"}
-                style={{ marginRight: 6 }}
-              />
-              <Text style={[styles.tabText, activeTab === tab.id && styles.activeTabText]}>
-                {tab.label}
-              </Text>
+              <Ionicons name="log-out-outline" size={16} color="#fda4af" />
+              <Text style={styles.dsSidebarFooterText}>Sign Out</Text>
             </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
+          </View>
+        )}
 
-      <View style={styles.content}>
-        {renderContent()}
+        <View style={styles.dsMainArea}>
+          <View style={styles.dsTopBar}>
+            <View>
+              <Text style={styles.dsBreadcrumb}>Home  �  Dashboard  �  Analytics</Text>
+              <Text style={styles.dsTopTitle}>Dev Analytics Dashboard</Text>
+            </View>
+            <View style={styles.dsTopActions}>
+              <TouchableOpacity style={styles.dsTopIconBtn} onPress={() => Alert.alert("Info", "Developer Tools v1.0")}>
+                <Ionicons name="information-circle-outline" size={18} color="#cbd5e1" />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.dsTopIconBtn} onPress={() => setActiveTab("overview")}>
+                <Ionicons name="grid-outline" size={18} color="#cbd5e1" />
+              </TouchableOpacity>
+              {Dimensions.get("window").width < 980 && (
+                <TouchableOpacity
+                  style={styles.dsTopIconBtn}
+                  onPress={() => firebase.auth().signOut().then(() => { if (logout) logout(); })}
+                >
+                  <Ionicons name="log-out-outline" size={18} color="#fda4af" />
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+
+          {Dimensions.get("window").width < 980 && (
+            <View style={styles.dsMobileTabsWrap}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dsMobileTabsContent}>
+                {TABS.map((tab) => (
+                  <TouchableOpacity
+                    key={tab.id}
+                    style={[styles.dsMobileTab, activeTab === tab.id && styles.dsMobileTabActive]}
+                    onPress={() => setActiveTab(tab.id)}
+                  >
+                    <Ionicons name={tab.icon} size={14} color={activeTab === tab.id ? "#e2e8f0" : "#64748b"} />
+                    <Text style={[styles.dsMobileTabText, activeTab === tab.id && styles.dsMobileTabTextActive]}>{tab.label}</Text>
+                    {getTabLiveValue(tab.id) !== null && (
+                      <View style={[styles.dsMobileTabBadge, tab.id === "alerts" && alertsMeta.critical > 0 && styles.dsMobileTabBadgeCritical]}>
+                        <Text style={styles.dsMobileTabBadgeText}>{getTabLiveValue(tab.id)}</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          )}
+
+          <View style={styles.dsContentArea}>{renderContent()}</View>
+        </View>
       </View>
     </LinearGradient>
   );
@@ -406,77 +598,183 @@ export default function DevDashboardScreen({ navigation }) {
 
 function OverviewTab({ featureFlags = {}, toggleFeatureFlag = () => {}, navigation }) {
   const { logout } = useContext(AuthContext);
+  const screenWidth = Dimensions.get("window").width;
+  const isWide = screenWidth >= 980;
+  const isWeb = Platform.OS === "web";
 
   const toggleGlobalMaintenance = () => {
-      const newState = !featureFlags.maintenanceModeAdmin;
-      firebase.database().ref("dev").update({
-          maintenanceModeAdmin: newState,
-          maintenanceModeMember: newState
-      });
+    const newState = !featureFlags.maintenanceModeAdmin;
+    firebase.database().ref("dev").update({
+      maintenanceModeAdmin: newState,
+      maintenanceModeMember: newState,
+    });
+  };
+
+  const chartWidth = Math.max(Math.min(screenWidth - (isWide ? 620 : 90), 420), 260);
+  const chartConfig = {
+    backgroundGradientFrom: "#0f172a",
+    backgroundGradientTo: "#0f172a",
+    decimalPlaces: 0,
+    color: (opacity = 1) => `rgba(59,130,246,${opacity})`,
+    labelColor: () => "#94a3b8",
+    propsForDots: { r: "0" },
+    barPercentage: 0.42,
   };
 
   return (
-    <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Feature Flags</Text>
-        <View style={styles.card}>
-          {Object.keys(featureFlags).map((key) => (
-            <View key={key} style={styles.switchRow}>
-              <Text style={styles.switchLabel}>{key.replace(/([A-Z])/g, ' $1').trim()}</Text>
-              <TouchableOpacity onPress={() => toggleFeatureFlag(key)}>
+    <ScrollView style={styles.dsOverviewScroll} contentContainerStyle={styles.dsOverviewContent}>
+      <View style={styles.dsOverviewRow}>
+        <View style={styles.dsMetricGrid}>
+          {OVERVIEW_METRICS.map((metric) => (
+            <View key={metric.id} style={styles.dsMetricCard}>
+              <View style={styles.dsMetricHeader}>
+                <View style={[styles.dsMetricIconWrap, { backgroundColor: `${metric.accent}33` }]}>
+                  <Ionicons name={metric.icon} size={15} color={metric.accent} />
+                </View>
+                <Text style={styles.dsMetricTitle}>{metric.title}</Text>
+              </View>
+              <View style={styles.dsMetricValueRow}>
+                <Text style={styles.dsMetricValue}>{metric.value}</Text>
+                <Text style={styles.dsMetricUnit}>{metric.unit}</Text>
+              </View>
+              <View style={styles.dsMetricDeltaRow}>
                 <Ionicons
-                  name={featureFlags[key] ? "toggle" : "toggle-outline"}
-                  size={32}
-                  color={featureFlags[key] ? (key.toLowerCase().includes('maintenance') ? "#ff4444" : "#4caf50") : "#666"}
+                  name={metric.deltaUp ? "arrow-up-circle" : "arrow-down-circle"}
+                  size={14}
+                  color={metric.deltaUp ? "#22c55e" : "#f43f5e"}
                 />
-              </TouchableOpacity>
+                <Text style={[styles.dsMetricDelta, { color: metric.deltaUp ? "#22c55e" : "#f43f5e" }]}>{metric.delta}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+
+        <View style={styles.dsActivityCard}>
+          <View style={styles.dsCardHeaderRow}>
+            <Text style={styles.dsCardTitle}>Product Activity</Text>
+            <Text style={styles.dsCardSubTitle}>Total: 415,236</Text>
+          </View>
+          {isWeb ? (
+            <View style={styles.dsChartFallback}>
+              <Text style={styles.dsChartFallbackText}>Chart preview unavailable on web build.</Text>
+            </View>
+          ) : (
+            <PieChart
+              data={OVERVIEW_ACTIVITY}
+              width={chartWidth}
+              height={170}
+              accessor="value"
+              chartConfig={chartConfig}
+              backgroundColor="transparent"
+              paddingLeft={isWide ? "12" : "4"}
+              hasLegend={false}
+              absolute
+            />
+          )}
+          <View style={styles.dsLegendList}>
+            {OVERVIEW_ACTIVITY.map((item) => (
+              <View key={item.name} style={styles.dsLegendRow}>
+                <View style={[styles.dsLegendDot, { backgroundColor: item.color }]} />
+                <Text style={styles.dsLegendName}>{item.name}</Text>
+                <Text style={styles.dsLegendValue}>{item.value.toLocaleString()}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.dsOverviewRow}>
+        <View style={styles.dsChartCard}>
+          <View style={styles.dsCardHeaderRow}>
+            <Text style={styles.dsCardTitle}>Customers Activity</Text>
+            <Text style={styles.dsCardSubTitle}>Apr - Oct 2025</Text>
+          </View>
+          {isWeb ? (
+            <View style={styles.dsChartFallback}>
+              <Text style={styles.dsChartFallbackText}>Bar chart unavailable on web build.</Text>
+            </View>
+          ) : (
+            <BarChart
+              data={{
+                labels: ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct"],
+                datasets: [{ data: [900, 1450, 1220, 1300, 980, 1410, 1760] }],
+              }}
+              width={chartWidth + (isWide ? 60 : 0)}
+              height={220}
+              yAxisLabel=""
+              yAxisSuffix=""
+              chartConfig={chartConfig}
+              withInnerLines
+              fromZero
+              showBarTops={false}
+              style={styles.dsBarChart}
+            />
+          )}
+        </View>
+
+        <View style={styles.dsCountryCard}>
+          <View style={styles.dsCardHeaderRow}>
+            <Text style={styles.dsCardTitle}>Customers Active</Text>
+            <Text style={styles.dsCardSubTitle}>Live</Text>
+          </View>
+          {OVERVIEW_COUNTRIES.map((country) => (
+            <View key={country.id} style={styles.dsCountryRow}>
+              <View style={styles.dsCountryLabelRow}>
+                <Text style={styles.dsCountryName}>{country.name}</Text>
+                <Text style={styles.dsCountryValue}>{country.count.toLocaleString()} ({country.pct}%)</Text>
+              </View>
+              <View style={styles.dsCountryTrack}>
+                <View style={[styles.dsCountryFill, { width: `${country.pct}%`, backgroundColor: country.color }]} />
+              </View>
             </View>
           ))}
         </View>
       </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Quick Actions</Text>
-        <View style={[styles.grid, { gap: 10 }]}>
-          <GradientButton 
-            colors={['#2193b0', '#6dd5ed']} 
-            icon="refresh" label="Reload" 
-            onPress={() => { if (Platform.OS === 'web') window.location.reload(); else Alert.alert("Info", "Use Expo reload"); }} 
-            style={{ width: '31%' }}
-          />
-          <GradientButton 
-            colors={['#ff416c', '#ff4b2b']} 
-            icon="log-out" label="Logout" 
-            onPress={() => firebase.auth().signOut().then(() => { if (logout) logout(); })} 
-            style={{ width: '31%' }}
-          />
-          <GradientButton 
-            colors={['#f12711', '#f5af19']} 
-            icon="bug" label="Crash" 
-            onPress={() => { throw new Error("Manual Crash Test"); }} 
-            style={{ width: '31%' }}
-          />
-          <GradientButton 
-            colors={['#d32f2f', '#b71c1c']} 
-            icon="construct" label="Maintenance" 
-            onPress={toggleGlobalMaintenance} 
-            style={{ width: '31%' }}
-          />
+      <View style={styles.dsTransactionCard}>
+        <View style={styles.dsCardHeaderRow}>
+          <Text style={styles.dsCardTitle}>Recent Transaction</Text>
+          <Text style={styles.dsCardSubTitle}>{OVERVIEW_TRANSACTIONS.length} rows</Text>
         </View>
+        <View style={styles.dsTransactionHeader}>
+          <Text style={[styles.dsTransactionHeaderText, { flex: 1.4 }]}>ORDER ID</Text>
+          <Text style={[styles.dsTransactionHeaderText, { flex: 1.3 }]}>PRODUCT</Text>
+          <Text style={[styles.dsTransactionHeaderText, { flex: 0.8 }]}>PRICE</Text>
+          <Text style={[styles.dsTransactionHeaderText, { flex: 1 }]}>CUSTOMER</Text>
+          <Text style={[styles.dsTransactionHeaderText, { flex: 1 }]}>DATE</Text>
+        </View>
+        {OVERVIEW_TRANSACTIONS.map((tx) => (
+          <View key={tx.id} style={styles.dsTransactionRow}>
+            <Text style={[styles.dsTransactionCell, { flex: 1.4 }]} numberOfLines={1}>{tx.id}</Text>
+            <Text style={[styles.dsTransactionCell, { flex: 1.3 }]} numberOfLines={1}>{tx.product}</Text>
+            <Text style={[styles.dsTransactionCell, { flex: 0.8, color: "#f8fafc" }]}>{tx.price}</Text>
+            <Text style={[styles.dsTransactionCell, { flex: 1 }]} numberOfLines={1}>{tx.customer}</Text>
+            <Text style={[styles.dsTransactionCell, { flex: 1 }]}>{tx.date}</Text>
+          </View>
+        ))}
       </View>
-      
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Environment</Text>
-        <View style={styles.card}>
-          <InfoRow label="API URL" value={API_URL} />
-          <InfoRow label="Server" value={SERVER_URL} />
-          <InfoRow label="App Version" value={APP_VERSION} />
-        </View>
+
+      <View style={styles.dsQuickGrid}>
+        <TouchableOpacity style={styles.dsQuickBtn} onPress={() => { if (Platform.OS === "web") window.location.reload(); else Alert.alert("Info", "Use Expo reload"); }}>
+          <Ionicons name="refresh-outline" size={16} color="#38bdf8" />
+          <Text style={styles.dsQuickBtnText}>Reload</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.dsQuickBtn} onPress={() => firebase.auth().signOut().then(() => { if (logout) logout(); })}>
+          <Ionicons name="log-out-outline" size={16} color="#fb7185" />
+          <Text style={styles.dsQuickBtnText}>Logout</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.dsQuickBtn} onPress={toggleGlobalMaintenance}>
+          <Ionicons name="construct-outline" size={16} color="#fbbf24" />
+          <Text style={styles.dsQuickBtnText}>Maintenance</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.dsQuickBtn} onPress={() => Object.keys(featureFlags).forEach((key) => toggleFeatureFlag(key))}>
+          <Ionicons name="git-compare-outline" size={16} color="#4ade80" />
+          <Text style={styles.dsQuickBtnText}>Flip Flags</Text>
+        </TouchableOpacity>
       </View>
     </ScrollView>
   );
 }
-
 function ReconciliationTab() {
   const [mismatches, setMismatches] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -1420,6 +1718,7 @@ function StatisticsTab({ users }) {
   const [statsData, setStatsData] = useState(null);
   const [calculating, setCalculating] = useState(false);
   const screenWidth = Dimensions.get("window").width;
+  const isWeb = Platform.OS === "web";
   const [requestStatus, setRequestStatus] = useState('none');
 
   useEffect(() => {
@@ -1657,53 +1956,71 @@ function StatisticsTab({ users }) {
 
                 {/* Pie Chart */}
                 <Text style={{ color: '#fff', fontSize: 14, fontWeight: 'bold', marginBottom: 10 }}>Status Distribution</Text>
-                <PieChart
-                    data={statsData.pieData}
-                    width={screenWidth - 80}
-                    height={200}
-                    chartConfig={chartConfig}
-                    accessor={"count"}
-                    backgroundColor={"transparent"}
-                    paddingLeft={"15"}
-                    absolute
-                />
+                {isWeb ? (
+                    <View style={styles.dsChartFallback}>
+                        <Text style={styles.dsChartFallbackText}>Status chart unavailable on web build.</Text>
+                    </View>
+                ) : (
+                    <PieChart
+                        data={statsData.pieData}
+                        width={screenWidth - 80}
+                        height={200}
+                        chartConfig={chartConfig}
+                        accessor={"count"}
+                        backgroundColor={"transparent"}
+                        paddingLeft={"15"}
+                        absolute
+                    />
+                )}
 
                 {/* Line Chart */}
                 <Text style={{ color: '#fff', fontSize: 14, fontWeight: 'bold', marginTop: 20, marginBottom: 10 }}>30-Day Trend</Text>
-                <LineChart
-                    data={{
-                        labels: statsData.trendLabels.filter((_, i) => i % 5 === 0), // Show fewer labels
-                        datasets: [{ data: statsData.trendData }]
-                    }}
-                    width={screenWidth - 80}
-                    height={220}
-                    chartConfig={{
-                        ...chartConfig,
-                        decimalPlaces: 0,
-                        color: (opacity = 1) => `rgba(33, 150, 243, ${opacity})`,
-                    }}
-                    bezier
-                    style={{ borderRadius: 16 }}
-                />
+                {isWeb ? (
+                    <View style={styles.dsChartFallback}>
+                        <Text style={styles.dsChartFallbackText}>Trend chart unavailable on web build.</Text>
+                    </View>
+                ) : (
+                    <LineChart
+                        data={{
+                            labels: statsData.trendLabels.filter((_, i) => i % 5 === 0), // Show fewer labels
+                            datasets: [{ data: statsData.trendData }]
+                        }}
+                        width={screenWidth - 80}
+                        height={220}
+                        chartConfig={{
+                            ...chartConfig,
+                            decimalPlaces: 0,
+                            color: (opacity = 1) => `rgba(33, 150, 243, ${opacity})`,
+                        }}
+                        bezier
+                        style={{ borderRadius: 16 }}
+                    />
+                )}
 
                 {/* Bar Chart */}
                 <Text style={{ color: '#fff', fontSize: 14, fontWeight: 'bold', marginTop: 20, marginBottom: 10 }}>Top Performers</Text>
                 {statsData.memberLabels.length > 0 ? (
-                    <BarChart
-                        data={{
-                            labels: statsData.memberLabels,
-                            datasets: [{ data: statsData.memberData }]
-                        }}
-                        width={screenWidth - 80}
-                        height={220}
-                        yAxisLabel=""
-                        chartConfig={{
-                            ...chartConfig,
-                            color: (opacity = 1) => `rgba(255, 152, 0, ${opacity})`,
-                        }}
-                        verticalLabelRotation={30}
-                        style={{ borderRadius: 16 }}
-                    />
+                    isWeb ? (
+                      <View style={styles.dsChartFallback}>
+                        <Text style={styles.dsChartFallbackText}>Performer chart unavailable on web build.</Text>
+                      </View>
+                    ) : (
+                      <BarChart
+                          data={{
+                              labels: statsData.memberLabels,
+                              datasets: [{ data: statsData.memberData }]
+                          }}
+                          width={screenWidth - 80}
+                          height={220}
+                          yAxisLabel=""
+                          chartConfig={{
+                              ...chartConfig,
+                              color: (opacity = 1) => `rgba(255, 152, 0, ${opacity})`,
+                          }}
+                          verticalLabelRotation={30}
+                          style={{ borderRadius: 16 }}
+                      />
+                    )
                 ) : (
                     <Text style={{ color: '#666', fontStyle: 'italic' }}>No member data available</Text>
                 )}
@@ -1715,6 +2032,640 @@ function StatisticsTab({ users }) {
   );
 }
 
+
+function ControlCenterTab({ users = [], logs = [], networkRequests = [] }) {
+  const totalUsers = users.length;
+  const activeDaily = users.filter((u) => u.lastSeen && (Date.now() - new Date(u.lastSeen).getTime()) < 24 * 60 * 60 * 1000).length;
+  const activeMonthly = users.filter((u) => u.lastSeen && (Date.now() - new Date(u.lastSeen).getTime()) < 30 * 24 * 60 * 60 * 1000).length;
+  const totalReq = networkRequests.length;
+  const errorReq = networkRequests.filter((r) => r.status === "ERR" || Number(r.status) >= 400).length;
+  const errorRate = totalReq ? ((errorReq / totalReq) * 100).toFixed(2) : "0.00";
+
+  const snapshot = [
+    ["Total Users", totalUsers],
+    ["Active Users (24h)", activeDaily],
+    ["Active Users (30d)", activeMonthly],
+    ["Revenue", "Not Connected"],
+    ["API Requests", totalReq],
+    ["Error Rate", `${errorRate}%`],
+    ["Server Uptime", "99.97% (30d)"],
+    ["Latest Deploy", "v1.0.4 build 203"],
+  ];
+
+  return (
+    <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Quick Snapshot</Text>
+        <View style={styles.card}>
+          {snapshot.map(([k, v]) => <InfoRow key={k} label={k} value={String(v)} />)}
+        </View>
+      </View>
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Recent Activity Logs</Text>
+        <View style={styles.card}>
+          {logs.slice(0, 8).map((log) => (
+            <View key={log.id} style={styles.logRow}>
+              <Text style={styles.logTime}>{new Date(log.timestamp).toLocaleTimeString()}</Text>
+              <Text style={styles.logTag}>{log.type.toUpperCase()}</Text>
+              <Text style={styles.logMessage} numberOfLines={1}>{log.message}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    </ScrollView>
+  );
+}
+
+function ModuleChecklist({ title, items, canManage = true }) {
+  return (
+    <View style={[styles.card, { marginBottom: 12 }]}> 
+      <Text style={[styles.sectionTitle, { marginBottom: 8 }]}>{title}</Text>
+      {!canManage && <Text style={{ color: "#ffbb33", marginBottom: 8 }}>Read-only: elevated role required for dangerous actions.</Text>}
+      {items.map((item) => (
+        <View key={item} style={{ flexDirection: "row", alignItems: "center", marginBottom: 8 }}>
+          <Ionicons name="checkmark-circle-outline" size={16} color="#4caf50" style={{ marginRight: 8 }} />
+          <Text style={{ color: "#ddd", flex: 1 }}>{item}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+
+function AlertsTab({ currentUser }) {
+  const [message, setMessage] = useState("");
+  const [severity, setSeverity] = useState("warning");
+  const [targetMode, setTargetMode] = useState("all");
+  const [targetUid, setTargetUid] = useState("");
+  const [templateId, setTemplateId] = useState(null);
+  const [sending, setSending] = useState(false);
+  const [recentAlerts, setRecentAlerts] = useState([]);
+  const [userDirectory, setUserDirectory] = useState([]);
+  const [missingPhotoTargets, setMissingPhotoTargets] = useState([]);
+  const [selectedTargetIds, setSelectedTargetIds] = useState([]);
+  const [templateNotice, setTemplateNotice] = useState("");
+
+  useEffect(() => {
+    const ref = firebase.database().ref("memberAlerts").limitToLast(25);
+    const listener = ref.on("value", (snapshot) => {
+      const data = snapshot.val() || {};
+      const list = Object.keys(data).map((id) => ({ id, ...data[id] }));
+      list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      setRecentAlerts(list);
+    });
+    return () => ref.off("value", listener);
+  }, []);
+
+  useEffect(() => {
+    const ref = firebase.database().ref("users");
+    const listener = ref.on("value", (snapshot) => {
+      const data = snapshot.val() || {};
+      const list = Object.keys(data).map((id) => ({ id, ...data[id] }));
+      setUserDirectory(list);
+    });
+    return () => ref.off("value", listener);
+  }, []);
+
+  const resolveTargetUser = (input) => {
+    const val = String(input || "").trim().toLowerCase();
+    if (!val) return null;
+    return userDirectory.find((u) =>
+      String(u.id || "").toLowerCase() === val ||
+      String(u.uniqueId || "").toLowerCase() === val ||
+      String(u.email || "").toLowerCase() === val
+    ) || null;
+  };
+
+  const getUserCases = async (uid) => {
+    const snap = await firebase.database().ref("cases").orderByChild("assignedTo").equalTo(uid).once("value");
+    const data = snap.val() || {};
+    return Object.keys(data).map((id) => ({ id, ...data[id] }));
+  };
+
+  const getUsersMissingProfilePhoto = () => {
+    return userDirectory
+      .filter((u) => !String(u.photoURL || "").trim())
+      .map((u) => ({
+        uid: u.id,
+        name: u.name || u.email || u.id,
+        uniqueId: u.uniqueId || "",
+        email: u.email || "",
+      }));
+  };
+
+  const toggleTargetSelect = (uid) => {
+    setSelectedTargetIds((prev) => (prev.includes(uid) ? prev.filter((x) => x !== uid) : [...prev, uid]));
+  };
+
+  const addTypedTarget = () => {
+    const resolved = resolveTargetUser(targetUid);
+    if (!resolved) return Alert.alert("Invalid Target", "Enter valid UID / uniqueId / email.");
+    if (templateId === "photo_upload") {
+      const allowed = missingPhotoTargets.some((t) => t.uid === resolved.id);
+      if (!allowed) return Alert.alert("Not Eligible", "This user already has profile photo uploaded.");
+    }
+    setSelectedTargetIds((prev) => (prev.includes(resolved.id) ? prev : [...prev, resolved.id]));
+    setTemplateNotice(`Added ${resolved.name || resolved.email || resolved.id} to selected targets.`);
+    setTargetUid("");
+  };
+
+  const applyTemplate = async (templateId) => {
+    const needUser = ["pending_over_8", "low_completion"].includes(templateId);
+    setTemplateId(templateId);
+    setTemplateNotice("");
+    if (needUser && targetMode !== "user") return Alert.alert("Select Target", "This template requires SINGLE UID target mode.");
+    const targetUser = targetMode === "user" ? resolveTargetUser(targetUid) : null;
+    if (needUser && !targetUser) {
+      return Alert.alert("Invalid Target", "Enter valid UID / uniqueId / email.");
+    }
+
+    try {
+      if (templateId === "photo_upload") {
+        const targets = getUsersMissingProfilePhoto();
+        if (targets.length === 0) {
+          setMissingPhotoTargets([]);
+          return Alert.alert("Rule Check", "No users found without profile photo.");
+        }
+        setMissingPhotoTargets(targets);
+        setSelectedTargetIds([]);
+        setTargetMode("user");
+        setSeverity("warning");
+        setMessage(`Please upload your profile photo in app immediately.`);
+        setTemplateNotice(`Found ${targets.length} users without profile photo. Select one or more targets and send.`);
+        return;
+      }
+      if (templateId === "pending_over_8") {
+        const cases = await getUserCases(targetUser.id);
+        const pending = cases.filter((c) => ["assigned", "audit", "open"].includes(String(c.status || "").toLowerCase())).length;
+        if (pending <= 8) return Alert.alert("Rule Check", `Pending cases are ${pending}. Need more than 8.`);
+        setSeverity("critical");
+        setMessage(`You have ${pending} pending cases. Clear backlog immediately.`);
+        setTemplateNotice("Pending > 8 critical warning prepared.");
+        return;
+      }
+      if (templateId === "low_completion") {
+        const cases = await getUserCases(targetUser.id);
+        const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+        const completed = cases.filter((c) => {
+          const okStatus = ["completed", "closed"].includes(String(c.status || "").toLowerCase());
+          const ts = c.completedAt ? new Date(c.completedAt).getTime() : 0;
+          return okStatus && ts >= thirtyDaysAgo;
+        }).length;
+        if (completed >= 3) return Alert.alert("Rule Check", `Completion is ${completed} in 30 days (not low).`);
+        setSeverity("warning");
+        setMessage("Cases completed is very low this month. Improve completion performance.");
+        setTemplateNotice("Low completion warning prepared.");
+        return;
+      }
+      if (templateId === "security_warning") {
+        setSeverity("critical");
+        setMessage("Security warning: suspicious activity detected. Follow security protocol.");
+        setTemplateNotice("Security warning prepared.");
+        return;
+      }
+      if (templateId === "appreciation") {
+        setSeverity("appreciation");
+        setMessage("Great work. Your recent performance is appreciated by the team.");
+        setTemplateNotice("Appreciation message prepared.");
+        return;
+      }
+    } catch (e) {
+      Alert.alert("Template Error", e.message);
+    }
+  };
+
+  const handleSendAlert = async () => {
+    const text = message.trim();
+    if (!text) return Alert.alert("Validation", "Enter alert message.");
+    try {
+      setSending(true);
+      const selected = selectedTargetIds.filter(Boolean);
+      if (templateId === "photo_upload" && targetMode === "user" && selected.length === 0) {
+        setSending(false);
+        return Alert.alert("Validation", "Select one or more users from missing-photo list.");
+      }
+      if (selected.length > 0) {
+        await Promise.all(
+          selected.map((uid) =>
+            firebase.database().ref("memberAlerts").push({
+              message: text,
+              severity,
+              templateId: templateId || null,
+              active: true,
+              targetType: "user",
+              targetUid: uid,
+              targetQuery: uid,
+              createdAt: Date.now(),
+              createdBy: currentUser?.email || currentUser?.uid || "dev",
+            })
+          )
+        );
+      } else if (targetMode === "user") {
+        if (!targetUid.trim()) {
+          setSending(false);
+          return Alert.alert("Validation", "Enter target UID / uniqueId / email or pick from list.");
+        }
+        const targetUser = resolveTargetUser(targetUid);
+        if (!targetUser) {
+          setSending(false);
+          return Alert.alert("Validation", "Target not found. Use UID / uniqueId / email.");
+        }
+        await firebase.database().ref("memberAlerts").push({
+          message: text,
+          severity,
+          templateId: templateId || null,
+          active: true,
+          targetType: "user",
+          targetUid: targetUser.id,
+          targetQuery: targetUid.trim(),
+          createdAt: Date.now(),
+          createdBy: currentUser?.email || currentUser?.uid || "dev",
+        });
+      } else {
+        await firebase.database().ref("memberAlerts").push({
+          message: text,
+          severity,
+          templateId: templateId || null,
+          active: true,
+          targetType: "all",
+          targetUid: null,
+          targetQuery: null,
+          createdAt: Date.now(),
+          createdBy: currentUser?.email || currentUser?.uid || "dev",
+        });
+      }
+      setMessage("");
+      setTemplateId(null);
+      setTemplateNotice("");
+      setSelectedTargetIds([]);
+      if (targetMode === "user") setTargetUid("");
+      Alert.alert("Sent", "Alert sent.");
+    } catch (e) {
+      Alert.alert("Error", "Failed to send alert: " + e.message);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const retriggerAlert = async (baseAlert) => {
+    const selected = selectedTargetIds.filter(Boolean);
+    if (selected.length === 0) return Alert.alert("Select Targets", "Pick one or more users from the list first.");
+    try {
+      setSending(true);
+      await Promise.all(
+        selected.map((uid) =>
+          firebase.database().ref("memberAlerts").push({
+            message: baseAlert.message,
+            severity: baseAlert.severity || "warning",
+            templateId: baseAlert.templateId || null,
+            active: true,
+            targetType: "user",
+            targetUid: uid,
+            targetQuery: uid,
+            createdAt: Date.now(),
+            createdBy: currentUser?.email || currentUser?.uid || "dev",
+            retriggerOf: baseAlert.id,
+          })
+        )
+      );
+      Alert.alert("Retriggered", `Alert retriggered to ${selected.length} user(s).`);
+    } catch (e) {
+      Alert.alert("Error", "Retrigger failed: " + e.message);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const setActive = async (id, active) => {
+    try {
+      await firebase.database().ref("memberAlerts/" + id).update({ active });
+    } catch (e) {
+      Alert.alert("Error", "Failed to update alert: " + e.message);
+    }
+  };
+
+  return (
+    <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Alerts Broadcast</Text>
+        <View style={styles.card}>
+          <Text style={styles.inputLabel}>Predefined Alerts</Text>
+          <View style={styles.segmentRow}>
+            <TouchableOpacity style={styles.segmentBtn} onPress={() => applyTemplate("photo_upload")}><Text style={styles.segmentBtnText}>Upload Photo</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.segmentBtn} onPress={() => applyTemplate("pending_over_8")}><Text style={styles.segmentBtnText}>Pending &gt; 8</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.segmentBtn} onPress={() => applyTemplate("low_completion")}><Text style={styles.segmentBtnText}>Low Completion</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.segmentBtn} onPress={() => applyTemplate("security_warning")}><Text style={styles.segmentBtnText}>Security</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.segmentBtn} onPress={() => applyTemplate("appreciation")}><Text style={styles.segmentBtnText}>Appreciation</Text></TouchableOpacity>
+          </View>
+          <Text style={styles.inputLabel}>Severity</Text>
+          <View style={styles.segmentRow}>
+            {[{ id: "info", color: "#38bdf8" }, { id: "warning", color: "#fbbf24" }, { id: "critical", color: "#f87171" }, { id: "appreciation", color: "#22c55e" }].map((s) => (
+              <TouchableOpacity key={s.id} onPress={() => setSeverity(s.id)} style={[styles.segmentBtn, severity === s.id && { borderColor: s.color, backgroundColor: s.color + "22" }]}>
+                <Text style={[styles.segmentBtnText, severity === s.id && { color: s.color }]}>{s.id.toUpperCase()}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <Text style={[styles.inputLabel, { marginTop: 10 }]}>Target</Text>
+          <View style={styles.segmentRow}>
+            <TouchableOpacity onPress={() => setTargetMode("all")} style={[styles.segmentBtn, targetMode === "all" && styles.segmentBtnActive]}>
+              <Text style={[styles.segmentBtnText, targetMode === "all" && styles.segmentBtnTextActive]}>ALL MEMBERS</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setTargetMode("user")} style={[styles.segmentBtn, targetMode === "user" && styles.segmentBtnActive]}>
+              <Text style={[styles.segmentBtnText, targetMode === "user" && styles.segmentBtnTextActive]}>SINGLE UID</Text>
+            </TouchableOpacity>
+          </View>
+          {targetMode === "user" && (
+            <View style={styles.targetInputRow}>
+              <TextInput style={[styles.alertInput, { flex: 1, marginTop: 0 }]} placeholder="Target UID / uniqueId / email" placeholderTextColor="#64748b" value={targetUid} onChangeText={setTargetUid} />
+              <TouchableOpacity style={styles.addTargetBtn} onPress={addTypedTarget}>
+                <Text style={styles.addTargetBtnText}>Add</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          {templateNotice ? <Text style={styles.templateNotice}>{templateNotice}</Text> : null}
+          {selectedTargetIds.length > 0 && templateId !== "photo_upload" && (
+            <View style={styles.targetListWrap}>
+              <ScrollView style={styles.targetListScroll} contentContainerStyle={styles.targetListContent} nestedScrollEnabled>
+                {selectedTargetIds.map((uid) => {
+                  const u = userDirectory.find((x) => x.id === uid) || {};
+                  const selected = true;
+                  return (
+                    <TouchableOpacity key={uid} style={[styles.targetChip, selected && styles.targetChipActive]} onPress={() => toggleTargetSelect(uid)}>
+                      <Text style={[styles.targetChipText, selected && styles.targetChipTextActive]}>
+                        {u.name || u.email || uid} ({u.uniqueId || uid.slice(0, 6)})
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
+          {missingPhotoTargets.length > 0 && templateId === "photo_upload" && (
+            <View style={styles.targetListWrap}>
+              <View style={{ flexDirection: "row", gap: 8, marginBottom: 6 }}>
+                <TouchableOpacity style={styles.segmentBtn} onPress={() => setSelectedTargetIds(missingPhotoTargets.map((t) => t.uid))}>
+                  <Text style={styles.segmentBtnText}>Select All</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.segmentBtn} onPress={() => setSelectedTargetIds([])}>
+                  <Text style={styles.segmentBtnText}>Clear</Text>
+                </TouchableOpacity>
+              </View>
+              <ScrollView style={styles.targetListScroll} contentContainerStyle={styles.targetListContent} nestedScrollEnabled>
+                {missingPhotoTargets.map((t) => {
+                  const selected = selectedTargetIds.includes(t.uid);
+                  return (
+                    <TouchableOpacity key={t.uid} style={[styles.targetChip, selected && styles.targetChipActive]} onPress={() => toggleTargetSelect(t.uid)}>
+                      <Text style={[styles.targetChipText, selected && styles.targetChipTextActive]}>
+                        {t.name} ({t.uniqueId || t.uid.slice(0, 6)})
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
+          <View style={styles.alertComposerWrap}>
+            <TextInput style={[styles.alertInput, styles.alertTextArea]} placeholder="Write warning/alert message for member dashboard..." placeholderTextColor="#64748b" value={message} onChangeText={setMessage} multiline />
+            <GradientButton colors={severity === "critical" ? ["#ef4444", "#b91c1c"] : ["#0ea5e9", "#0284c7"]} icon="send-outline" label={sending ? "Sending..." : "Send Alert"} onPress={handleSendAlert} disabled={sending} loading={sending} style={{ marginTop: 14 }} />
+          </View>
+        </View>
+      </View>
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Live Alert Queue ({recentAlerts.length})</Text>
+        <View style={styles.card}>
+          {recentAlerts.length === 0 ? (
+            <Text style={{ color: "#94a3b8" }}>No alerts sent yet.</Text>
+          ) : (
+            recentAlerts.map((a) => (
+              <View key={a.id} style={styles.alertQueueRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.alertQueueMsg} numberOfLines={2}>{a.message}</Text>
+                  <Text style={styles.alertQueueMeta}>{String(a.severity || "info").toUpperCase()} • {a.targetType === "user" ? "UID: " + a.targetUid : "ALL"} • {a.active === false ? "INACTIVE" : "ACTIVE"}</Text>
+                </View>
+                <TouchableOpacity onPress={() => setActive(a.id, a.active === false)} style={styles.alertQueueActionBtn}>
+                  <Text style={styles.alertQueueActionText}>{a.active === false ? "Enable" : "Disable"}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => retriggerAlert(a)} style={[styles.alertQueueActionBtn, { marginLeft: 6 }]}>
+                  <Text style={styles.alertQueueActionText}>Retrigger</Text>
+                </TouchableOpacity>
+              </View>
+            ))
+          )}
+        </View>
+      </View>
+    </ScrollView>
+  );
+}
+
+function RolesPermissionsTab({ canManage }) {
+  return (
+    <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+      <ModuleChecklist canManage={canManage} title="Roles & Permissions" items={[
+        "Role-based access control (RBAC)",
+        "Custom permission creation",
+        "Feature-level access control",
+        "Temporary access grants",
+        "Audit trail of permission changes",
+      ]} />
+    </ScrollView>
+  );
+}
+
+function ContentManagementTab({ canManage }) {
+  return (
+    <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+      <ModuleChecklist canManage={canManage} title="Content Management" items={[
+        "Approve / Reject content",
+        "Edit or delete posts",
+        "Flag reports moderation",
+        "Media library control",
+        "Bulk operations + scheduled publishing",
+      ]} />
+    </ScrollView>
+  );
+}
+
+function AppConfigTab({ featureFlags = {}, toggleFeatureFlag = () => {}, canManage }) {
+  return (
+    <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+      <ModuleChecklist canManage={canManage} title="App Configuration Panel" items={[
+        "Feature toggles",
+        "Maintenance mode",
+        "Environment config (Dev/Staging/Prod)",
+        "API keys management",
+        "Email/SMS + payment + third-party config",
+      ]} />
+      <View style={styles.card}>
+        <Text style={[styles.sectionTitle, { marginBottom: 8 }]}>Live Feature Flags</Text>
+        {Object.keys(featureFlags).map((key) => (
+          <View key={key} style={styles.switchRow}>
+            <Text style={styles.switchLabel}>{key}</Text>
+            <TouchableOpacity disabled={!canManage} onPress={() => toggleFeatureFlag(key)}>
+              <Ionicons name={featureFlags[key] ? "toggle" : "toggle-outline"} size={32} color={featureFlags[key] ? "#4caf50" : "#666"} />
+            </TouchableOpacity>
+          </View>
+        ))}
+      </View>
+    </ScrollView>
+  );
+}
+
+function AnalyticsInsightsTab() {
+  return (
+    <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+      <ModuleChecklist title="Analytics & Insights" items={[
+        "User growth",
+        "Retention rate",
+        "Session duration",
+        "Conversion rate",
+        "Revenue analytics",
+        "Funnel tracking",
+        "Cohort analysis",
+      ]} />
+    </ScrollView>
+  );
+}
+
+function MonitoringTab({ logs = [], requests = [] }) {
+  const crashCount = logs.filter((l) => l.message?.toLowerCase().includes("crash")).length;
+  return (
+    <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+      <ModuleChecklist title="Logs & Monitoring" items={[
+        `Real-time logs (${logs.length})`,
+        `API request logs (${requests.length})`,
+        `Crash reports (${crashCount})`,
+        "Performance monitoring",
+        "Alerts (Email/Slack)",
+      ]} />
+    </ScrollView>
+  );
+}
+
+function BillingSubscriptionTab({ canManage }) {
+  return (
+    <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+      <ModuleChecklist canManage={canManage} title="Billing & Subscription Control" items={[
+        "View subscriptions",
+        "Refund management",
+        "Plan upgrades/downgrades",
+        "Invoice management",
+        "Promo codes + payment logs",
+      ]} />
+    </ScrollView>
+  );
+}
+
+function SecurityCenterTab({ canManage }) {
+  return (
+    <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+      <ModuleChecklist canManage={canManage} title="Security Center" items={[
+        "2FA enforcement",
+        "IP whitelist/blacklist",
+        "Device management",
+        "Suspicious activity detection",
+        "Security logs + GDPR export/delete",
+      ]} />
+    </ScrollView>
+  );
+}
+
+function NotificationCenterTab() {
+  return (
+    <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+      <ModuleChecklist title="Notification & Communication" items={[
+        "Send push notifications",
+        "Send bulk emails",
+        "In-app messages",
+        "Announcement banner control",
+      ]} />
+    </ScrollView>
+  );
+}
+
+function ApiIntegrationTab({ canManage }) {
+  return (
+    <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+      <ModuleChecklist canManage={canManage} title="API & Integration Management" items={[
+        "API key creation",
+        "Rate limit settings",
+        "Webhook management",
+        "API usage tracking",
+        "Third-party integration control",
+      ]} />
+    </ScrollView>
+  );
+}
+
+function DeploymentControlTab({ canManage }) {
+  return (
+    <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+      <ModuleChecklist canManage={canManage} title="Deployment & Version Control" items={[
+        "Deploy new version",
+        "Rollback versions",
+        "View deployment history",
+        "CI/CD integration",
+        "Environment variable manager",
+      ]} />
+    </ScrollView>
+  );
+}
+
+function DatabaseManagementTab({ canManage }) {
+  return (
+    <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+      <ModuleChecklist canManage={canManage} title="Database Management" items={[
+        "View database tables",
+        "Edit records",
+        "Run queries",
+        "Backup database",
+        "Export CSV/JSON",
+      ]} />
+    </ScrollView>
+  );
+}
+
+function GrowthMarketingTab() {
+  return (
+    <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+      <ModuleChecklist title="Growth & Marketing" items={[
+        "Referral tracking",
+        "Campaign management",
+        "A/B testing",
+        "SEO settings",
+        "Affiliate tracking",
+      ]} />
+    </ScrollView>
+  );
+}
+
+function AiAutomationTab({ canManage }) {
+  return (
+    <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+      <ModuleChecklist canManage={canManage} title="AI / Automation Control" items={[
+        "Prompt management",
+        "Model configuration",
+        "Usage tracking",
+        "Cost tracking",
+        "Moderation control",
+      ]} />
+    </ScrollView>
+  );
+}
+
+function EnterpriseExtrasTab() {
+  return (
+    <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+      <ModuleChecklist title="Pro-Level Dev Dashboard Extras" items={[
+        "Multi-tenant support",
+        "White-label control",
+        "Feature flag rollout %",
+        "Real-time WebSocket monitor",
+        "System health graph",
+        "Microservices monitor",
+      ]} />
+    </ScrollView>
+  );
+}
 // --- HELPER COMPONENTS ---
 
 const InfoRow = ({ label, value }) => (
@@ -2040,5 +2991,291 @@ const styles = StyleSheet.create({
   listItem: { flexDirection: "row", alignItems: "center", paddingVertical: 12 },
   listItemText: { color: "#fff", fontSize: 16, marginLeft: 12, flex: 1 },
   divider: { height: 1, backgroundColor: "rgba(255,255,255,0.05)", marginVertical: 4 },
-  linkText: { color: "#8e24aa", fontWeight: "bold" },
+    linkText: { color: "#8e24aa", fontWeight: "bold" },
+
+  // New Dashboard Shell + Overview Styles
+  dsScreen: { flex: 1, backgroundColor: "#05080f" },
+  dsShellFrame: {
+    flex: 1,
+    flexDirection: "row",
+    paddingTop: Platform.OS === "ios" ? 52 : 24,
+    paddingHorizontal: 14,
+    paddingBottom: 14,
+    gap: 12,
+  },
+  dsSidebar: {
+    width: 230,
+    borderRadius: 18,
+    backgroundColor: "#060b14",
+    borderWidth: 1,
+    borderColor: "#182235",
+    padding: 14,
+  },
+  dsSidebarBrand: { flexDirection: "row", alignItems: "center", marginBottom: 14, gap: 10 },
+  dsBrandAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#0f172a",
+    borderWidth: 1,
+    borderColor: "#1e293b",
+  },
+  dsBrandName: { color: "#f8fafc", fontWeight: "700", fontSize: 14 },
+  dsBrandSub: { color: "#64748b", fontSize: 11, marginTop: 2 },
+  dsSidebarMenu: { paddingVertical: 6, gap: 6 },
+  dsSidebarItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: "transparent",
+  },
+  dsSidebarItemActive: { backgroundColor: "#0b1220", borderWidth: 1, borderColor: "#22314d" },
+  dsSidebarLabel: { color: "#64748b", fontWeight: "600", fontSize: 13 },
+  dsSidebarLabelActive: { color: "#e2e8f0" },
+  dsSidebarFooter: {
+    marginTop: "auto",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: "#101827",
+    borderWidth: 1,
+    borderColor: "#2a3a5a",
+  },
+  dsSidebarFooterText: { color: "#fda4af", fontSize: 12, fontWeight: "700" },
+  dsMainArea: {
+    flex: 1,
+    borderRadius: 18,
+    backgroundColor: "#050b14",
+    borderWidth: 1,
+    borderColor: "#1b2434",
+    overflow: "hidden",
+  },
+  dsTopBar: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#182235",
+  },
+  dsBreadcrumb: { color: "#64748b", fontSize: 11, marginBottom: 4 },
+  dsTopTitle: { color: "#f8fafc", fontSize: 18, fontWeight: "700" },
+  dsTopActions: { flexDirection: "row", gap: 8 },
+  dsTopIconBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#0f172a",
+    borderWidth: 1,
+    borderColor: "#273449",
+  },
+  dsMobileTabsWrap: { borderBottomWidth: 1, borderBottomColor: "#182235" },
+  dsMobileTabsContent: { paddingHorizontal: 10, paddingVertical: 10, gap: 8 },
+  dsSidebarBadge: { marginLeft: 'auto', minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 6, backgroundColor: '#1e293b', borderWidth: 1, borderColor: '#334155', alignItems: 'center', justifyContent: 'center' },
+  dsSidebarBadgeCritical: { backgroundColor: '#7f1d1d', borderColor: '#ef4444' },
+  dsSidebarBadgeText: { color: '#e2e8f0', fontSize: 11, fontWeight: '800' },
+  dsMobileTabBadge: { marginLeft: 6, minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 5, backgroundColor: '#1e293b', borderWidth: 1, borderColor: '#334155', alignItems: 'center', justifyContent: 'center' },
+  dsMobileTabBadgeCritical: { backgroundColor: '#7f1d1d', borderColor: '#ef4444' },
+  dsMobileTabBadgeText: { color: '#e2e8f0', fontSize: 10, fontWeight: '800' },
+  inputLabel: { color: '#cbd5e1', fontSize: 12, marginBottom: 6, fontWeight: '700', letterSpacing: 0.4 },
+  segmentRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  segmentBtn: { borderWidth: 1, borderColor: '#334155', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: 'rgba(15,23,42,0.6)' },
+  segmentBtnActive: { borderColor: '#38bdf8', backgroundColor: 'rgba(14,165,233,0.2)' },
+  segmentBtnText: { color: '#94a3b8', fontSize: 12, fontWeight: '700' },
+  segmentBtnTextActive: { color: '#e2e8f0' },
+  templateNotice: { marginTop: 8, color: '#fbbf24', fontSize: 12, fontWeight: '700' },
+  targetInputRow: { marginTop: 10, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  addTargetBtn: {
+    borderWidth: 1,
+    borderColor: '#38bdf8',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    backgroundColor: 'rgba(14,165,233,0.2)',
+  },
+  addTargetBtnText: { color: '#bae6fd', fontSize: 12, fontWeight: '700' },
+  targetListWrap: {
+    marginTop: 10,
+    maxHeight: 170,
+    borderWidth: 1,
+    borderColor: '#273449',
+    borderRadius: 10,
+    backgroundColor: 'rgba(2,6,23,0.45)',
+    overflow: 'hidden',
+  },
+  targetListScroll: { maxHeight: 168 },
+  targetListContent: { padding: 8, paddingBottom: 10 },
+  targetChip: {
+    borderWidth: 1,
+    borderColor: '#334155',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    backgroundColor: 'rgba(15,23,42,0.55)',
+    marginBottom: 6,
+  },
+  targetChipActive: { borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.2)' },
+  targetChipText: { color: '#cbd5e1', fontSize: 11, fontWeight: '600' },
+  targetChipTextActive: { color: '#bbf7d0' },
+  alertInput: { marginTop: 10, borderWidth: 1, borderColor: '#334155', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, color: '#e2e8f0', backgroundColor: 'rgba(2,6,23,0.7)' },
+  alertTextArea: { minHeight: 90, textAlignVertical: 'top' },
+  alertComposerWrap: {
+    marginTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(148,163,184,0.2)',
+    paddingTop: 12,
+  },
+  alertQueueRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(148,163,184,0.15)' },
+  alertQueueMsg: { color: '#e2e8f0', fontSize: 13, fontWeight: '600' },
+  alertQueueMeta: { color: '#94a3b8', fontSize: 11, marginTop: 3 },
+  alertQueueActionBtn: { borderWidth: 1, borderColor: '#475569', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10, backgroundColor: 'rgba(30,41,59,0.6)' },
+  alertQueueActionText: { color: '#cbd5e1', fontSize: 11, fontWeight: '700' },
+  dsMobileTab: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: "#0c1320",
+    borderWidth: 1,
+    borderColor: "#1f2c42",
+  },
+  dsMobileTabActive: { backgroundColor: "#172236", borderColor: "#334666" },
+  dsMobileTabText: { color: "#64748b", fontSize: 12, fontWeight: "600" },
+  dsMobileTabTextActive: { color: "#e2e8f0" },
+  dsContentArea: { flex: 1 },
+
+  dsOverviewScroll: { flex: 1 },
+  dsOverviewContent: { padding: 14, gap: 12 },
+  dsChartFallback: {
+    height: 180,
+    borderWidth: 1,
+    borderColor: "rgba(148,163,184,0.25)",
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(15,23,42,0.35)",
+    marginBottom: 8,
+  },
+  dsChartFallbackText: { color: "#94a3b8", fontSize: 12, fontStyle: "italic" },
+  dsOverviewRow: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  dsMetricGrid: { flex: 1.2, minWidth: 300, flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  dsMetricCard: {
+    width: "48%",
+    minWidth: 138,
+    borderRadius: 14,
+    padding: 12,
+    backgroundColor: "#0b1220",
+    borderWidth: 1,
+    borderColor: "#22314d",
+  },
+  dsMetricHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
+  dsMetricIconWrap: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dsMetricTitle: { color: "#cbd5e1", fontSize: 12, fontWeight: "600", flex: 1 },
+  dsMetricValueRow: { flexDirection: "row", alignItems: "flex-end", gap: 6 },
+  dsMetricValue: { color: "#f8fafc", fontSize: 22, fontWeight: "700" },
+  dsMetricUnit: { color: "#64748b", fontSize: 11, marginBottom: 3 },
+  dsMetricDeltaRow: { flexDirection: "row", alignItems: "center", marginTop: 8, gap: 6 },
+  dsMetricDelta: { fontSize: 12, fontWeight: "600" },
+
+  dsActivityCard: {
+    flex: 1,
+    minWidth: 300,
+    borderRadius: 14,
+    padding: 12,
+    backgroundColor: "#0b1220",
+    borderWidth: 1,
+    borderColor: "#22314d",
+  },
+  dsCardHeaderRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+  dsCardTitle: { color: "#f8fafc", fontSize: 16, fontWeight: "700" },
+  dsCardSubTitle: { color: "#94a3b8", fontSize: 12 },
+  dsLegendList: { marginTop: 6, gap: 8 },
+  dsLegendRow: { flexDirection: "row", alignItems: "center" },
+  dsLegendDot: { width: 9, height: 9, borderRadius: 4.5, marginRight: 8 },
+  dsLegendName: { color: "#cbd5e1", fontSize: 12, flex: 1 },
+  dsLegendValue: { color: "#94a3b8", fontSize: 12 },
+
+  dsChartCard: {
+    flex: 1.2,
+    minWidth: 300,
+    borderRadius: 14,
+    padding: 12,
+    backgroundColor: "#0b1220",
+    borderWidth: 1,
+    borderColor: "#22314d",
+  },
+  dsBarChart: { marginLeft: -12, borderRadius: 12 },
+  dsCountryCard: {
+    flex: 1,
+    minWidth: 280,
+    borderRadius: 14,
+    padding: 12,
+    backgroundColor: "#0b1220",
+    borderWidth: 1,
+    borderColor: "#22314d",
+  },
+  dsCountryRow: { marginBottom: 12 },
+  dsCountryLabelRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 5 },
+  dsCountryName: { color: "#cbd5e1", fontSize: 12 },
+  dsCountryValue: { color: "#94a3b8", fontSize: 12 },
+  dsCountryTrack: { height: 7, borderRadius: 5, backgroundColor: "#1e293b", overflow: "hidden" },
+  dsCountryFill: { height: "100%", borderRadius: 5 },
+
+  dsTransactionCard: {
+    borderRadius: 14,
+    padding: 12,
+    backgroundColor: "#0b1220",
+    borderWidth: 1,
+    borderColor: "#22314d",
+  },
+  dsTransactionHeader: {
+    flexDirection: "row",
+    borderBottomWidth: 1,
+    borderBottomColor: "#1e293b",
+    paddingBottom: 8,
+    marginBottom: 6,
+  },
+  dsTransactionHeaderText: { color: "#64748b", fontSize: 11, fontWeight: "700" },
+  dsTransactionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 9,
+    borderBottomWidth: 1,
+    borderBottomColor: "#131c2b",
+  },
+  dsTransactionCell: { color: "#94a3b8", fontSize: 12, paddingRight: 6 },
+  dsQuickGrid: { flexDirection: "row", gap: 10, flexWrap: "wrap" },
+  dsQuickBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: 10,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    backgroundColor: "#0b1220",
+    borderWidth: 1,
+    borderColor: "#22314d",
+  },
+  dsQuickBtnText: { color: "#cbd5e1", fontSize: 12, fontWeight: "700" },
 });
+
+
+
+

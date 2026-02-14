@@ -1239,9 +1239,8 @@ const handleCloseCase = async () => {
         <LinearGradient colors={["#0f0c29", "#302b63", "#24243e"]} style={styles.container}>
             <Image
                 source={require("../assets/logo.png")}
-                style={styles.bgLogo}
+                style={[styles.bgLogo, { pointerEvents: "none" }]}
                 resizeMode="contain"
-                pointerEvents="none"
             />
             
             {/* Header */}

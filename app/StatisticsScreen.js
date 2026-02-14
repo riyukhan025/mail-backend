@@ -571,9 +571,8 @@ Generated via Admin App
     <LinearGradient colors={["#200122", "#6f0000"]} style={styles.container}>
       <Image
         source={require("../assets/logo.png")}
-        style={styles.bgLogo}
+        style={[styles.bgLogo, { pointerEvents: "none" }]}
         resizeMode="contain"
-        pointerEvents="none"
       />
       {renderHeader()}
       

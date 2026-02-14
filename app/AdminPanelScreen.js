@@ -3,6 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { Picker } from "@react-native-picker/picker";
 import { BlurView } from "expo-blur";
+import * as DocumentPicker from "expo-document-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Speech from "expo-speech";
 import { createElement, useContext, useEffect, useRef, useState } from "react";
@@ -48,7 +49,7 @@ const THEME = {
     menuBg: "rgba(255, 255, 255, 0.95)"
   },
   dark: {
-    background: ["#020617", "#020617"],
+    background: ["#030712", "#08132b", "#0b1f46"],
     cardBg: "rgba(30, 41, 59, 0.6)",
     text: "#F8FAFC",
     textSecondary: "#94A3B8",
@@ -66,6 +67,7 @@ const THEME = {
 const BackgroundDecorations = ({ theme }) => {
   const orbAnim1 = useRef(new Animated.Value(0)).current;
   const orbAnim2 = useRef(new Animated.Value(0)).current;
+  const driftAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.loop(
@@ -80,13 +82,39 @@ const BackgroundDecorations = ({ theme }) => {
         Animated.timing(orbAnim2, { toValue: 0, duration: 5000, useNativeDriver: true })
       ])
     ).start();
+    Animated.loop(
+      Animated.timing(driftAnim, {
+        toValue: 1,
+        duration: 18000,
+        useNativeDriver: true
+      })
+    ).start();
   }, []);
 
+  const driftX = driftAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 24]
+  });
+
   return (
-    <View style={[StyleSheet.absoluteFill, { zIndex: 0 }]} pointerEvents="none">
+    <View style={[StyleSheet.absoluteFill, { zIndex: 0, pointerEvents: "none" }]}>
       <View style={styles.glow1} />
       <View style={styles.glow2} />
       <View style={styles.glow3} />
+      <Animated.View style={[styles.spaceGrid, { transform: [{ translateX: driftX }] }]} />
+      {Array.from({ length: 44 }).map((_, i) => (
+        <View
+          key={`star-${i}`}
+          style={[
+            styles.starPoint,
+            {
+              top: `${(i * 19) % 100}%`,
+              left: `${(i * 37) % 100}%`,
+              opacity: 0.16 + ((i % 6) * 0.1),
+            },
+          ]}
+        />
+      ))}
       {/* Threads */}
       <View style={{ position: 'absolute', top: '-20%', left: '10%', width: 1, height: 800, backgroundColor: theme.primary + '1A', transform: [{ rotate: '45deg' }] }} />
       <View style={{ position: 'absolute', top: '20%', left: '80%', width: 1, height: 1000, backgroundColor: theme.primary + '1A', transform: [{ rotate: '-30deg' }] }} />
@@ -149,6 +177,7 @@ export default function AdminPanelScreen({ navigation }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [uploadModalVisible, setUploadModalVisible] = useState(false);
   const [pendingUploadData, setPendingUploadData] = useState(null);
+  const [lastUploadBatch, setLastUploadBatch] = useState({ ids: [], count: 0, at: null });
   const [isLightTheme, setIsLightTheme] = useState(false); // Default to dark theme
   const [archivedCount, setArchivedCount] = useState(0);
   const [notifications, setNotifications] = useState([]);
@@ -164,6 +193,10 @@ export default function AdminPanelScreen({ navigation }) {
 
   // Alert System State
   const [auditAlert, setAuditAlert] = useState(null);
+  const [devBroadcastAlert, setDevBroadcastAlert] = useState(null);
+  const [devAlertVisible, setDevAlertVisible] = useState(false);
+  const [showAppreciationBurst, setShowAppreciationBurst] = useState(false);
+  const [currentUserProfile, setCurrentUserProfile] = useState(null);
   const knownCaseStatuses = useRef(new Map());
   const isFirstLoad = useRef(true);
 
@@ -175,6 +208,11 @@ export default function AdminPanelScreen({ navigation }) {
   const [insightsOpen, setInsightsOpen] = useState(false);
   const [chartData, setChartData] = useState(null);
   const theme = isLightTheme ? THEME.light : THEME.dark;
+  const isMobile = !IS_DESKTOP;
+  const isCompactMobile = isMobile && SCREEN_WIDTH < 430;
+  const contentPadding = isMobile ? 12 : 24;
+  const chartWidth = Math.max(isMobile ? SCREEN_WIDTH - 36 : SCREEN_WIDTH - 320, 280);
+  const statCardWidth = isMobile ? Math.max((SCREEN_WIDTH - contentPadding * 2 - 24) / 5, 58) : null;
   
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
   const [activeSidebarItem, setActiveSidebarItem] = useState("Command");
@@ -204,6 +242,65 @@ export default function AdminPanelScreen({ navigation }) {
     });
     return () => devRef.off("value", listener);
   }, []);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+    const ref = firebase.database().ref(`users/${user.uid}`);
+    const listener = ref.on("value", (snapshot) => {
+      setCurrentUserProfile(snapshot.val() || null);
+    });
+    return () => ref.off("value", listener);
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+    const ref = firebase.database().ref("memberAlerts");
+    const listener = ref.on("value", (snapshot) => {
+      const data = snapshot.val() || {};
+      const list = Object.keys(data).map((id) => ({ id, ...data[id] }));
+      const eligible = list
+        .filter((a) => a?.active !== false)
+        .filter((a) => {
+          const targetType = String(a?.targetType || "all").toLowerCase();
+          if (targetType === "all") return true;
+          if (targetType === "user") {
+            const targetUid = String(a?.targetUid || "").trim().toLowerCase();
+            const targetQuery = String(a?.targetQuery || "").trim().toLowerCase();
+            const myUid = String(user.uid || "").toLowerCase();
+            const myEmail = String(user.email || "").toLowerCase();
+            const myUniqueId = String(currentUserProfile?.uniqueId || "").toLowerCase();
+            return targetUid === myUid || targetQuery === myUid || targetQuery === myEmail || (myUniqueId && targetQuery === myUniqueId);
+          }
+          return true;
+        })
+        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+      const next = eligible.find((a) => !(a?.ackBy && a.ackBy[user.uid]));
+      if (next) {
+        setDevBroadcastAlert(next);
+        setDevAlertVisible(true);
+        if (String(next.severity || "").toLowerCase() === "appreciation") {
+          setShowAppreciationBurst(true);
+          setTimeout(() => setShowAppreciationBurst(false), 2200);
+        }
+      }
+    });
+    return () => ref.off("value", listener);
+  }, [user?.uid, user?.email, currentUserProfile?.uniqueId]);
+
+  const acknowledgeDevAlert = async () => {
+    if (!devBroadcastAlert?.id || !user?.uid) {
+      setDevAlertVisible(false);
+      return;
+    }
+    try {
+      await firebase.database().ref("memberAlerts/" + devBroadcastAlert.id + "/ackBy/" + user.uid).set(Date.now());
+    } catch (e) {
+      console.log("Failed to acknowledge dev alert", e);
+    }
+    setDevAlertVisible(false);
+    setDevBroadcastAlert(null);
+  };
 
   // Animation for Menu
   const slideAnim = useRef(new Animated.Value(-MENU_WIDTH)).current;
@@ -712,9 +809,84 @@ export default function AdminPanelScreen({ navigation }) {
     }
   };
 
+  const uploadExcel = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: [
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "application/vnd.ms-excel",
+        ],
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+
+      if (result.canceled) return;
+
+      const file = result.assets?.[0];
+      if (!file?.uri) {
+        throw new Error("No file selected.");
+      }
+
+      const response = await fetch(file.uri);
+      const arrayBuffer = await response.arrayBuffer();
+      const workbook = XLSX.read(arrayBuffer, { type: "array" });
+
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const jsonData = XLSX.utils.sheet_to_json(sheet);
+
+      if (!jsonData.length) {
+        if (Platform.OS === "web") alert("Selected file has no readable rows.");
+        else Alert.alert("Empty File", "Selected file has no readable rows.");
+        return;
+      }
+
+      setPendingUploadData(jsonData);
+      setUploadModalVisible(true);
+    } catch (error) {
+      if (Platform.OS === "web") alert("Upload failed: " + error.message);
+      else Alert.alert("Upload Failed", error.message);
+    }
+  };
+
+  const handleReverseLastUpload = () => {
+    if (!lastUploadBatch?.ids?.length) {
+      if (Platform.OS === "web") alert("No recent upload batch to reverse.");
+      else Alert.alert("Nothing to Reverse", "No recent upload batch found.");
+      return;
+    }
+
+    const doReverse = async () => {
+      try {
+        const updates = {};
+        lastUploadBatch.ids.forEach((id) => {
+          updates[`cases/${id}`] = null;
+        });
+        await firebase.database().ref().update(updates);
+        const removed = lastUploadBatch.count;
+        setLastUploadBatch({ ids: [], count: 0, at: null });
+        if (Platform.OS === "web") alert(`Reversed successfully. Removed ${removed} uploaded cases.`);
+        else Alert.alert("Reversed", `Removed ${removed} uploaded cases.`);
+      } catch (e) {
+        if (Platform.OS === "web") alert("Reverse failed: " + e.message);
+        else Alert.alert("Reverse Failed", e.message);
+      }
+    };
+
+    const msg = `Remove last uploaded batch (${lastUploadBatch.count} cases)? This cannot be undone.`;
+    if (Platform.OS === "web") {
+      if (confirm(msg)) doReverse();
+    } else {
+      Alert.alert("Reverse Upload", msg, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Reverse", style: "destructive", onPress: doReverse },
+      ]);
+    }
+  };
   const processExcelData = async (jsonData, mode) => {
     let addedCount = 0;
     let duplicateCount = 0;
+    const addedIds = [];
 
     for (const row of jsonData) {
       const refNo = row["Reference ID"]?.toString() || "";
@@ -792,8 +964,13 @@ export default function AdminPanelScreen({ navigation }) {
         }
       }
 
-      await firebase.database().ref(`cases`).push(caseData);
+      const newRef = firebase.database().ref(`cases`).push();
+      await newRef.set(caseData);
+      if (newRef.key) addedIds.push(newRef.key);
       addedCount++;
+    }
+    if (addedIds.length > 0) {
+      setLastUploadBatch({ ids: addedIds, count: addedIds.length, at: new Date().toISOString() });
     }
     if (Platform.OS === "web") alert(`Upload Complete\nAdded: ${addedCount}\nSkipped (Exact Duplicates): ${duplicateCount}`);
     else Alert.alert("Upload Complete", `Added: ${addedCount}\nSkipped (Exact Duplicates): ${duplicateCount}`);
@@ -819,10 +996,7 @@ export default function AdminPanelScreen({ navigation }) {
       return () => clearInterval(interval);
     }, []);
 
-    const animatedBorderColor = glowAnim.interpolate({
-      inputRange: [0, 1],
-      outputRange: [color + '40', color + '80']
-    });
+    const isPositive = change ? !String(change).trim().startsWith("-") : true;
 
     return (
       <TouchableOpacity
@@ -831,28 +1005,29 @@ export default function AdminPanelScreen({ navigation }) {
         onPressOut={() => setIsPressed(false)}
         style={[
           styles.statCardTouchable,
+          isMobile ? { width: statCardWidth, minWidth: statCardWidth, flex: 0 } : null,
           isPressed && { transform: [{ scale: 1.05 }] },
-          { shadowColor: animatedBorderColor, shadowOpacity: 0.6, shadowRadius: 20 }
+          { shadowColor: color + "66", shadowOpacity: 0.6, shadowRadius: 20 }
         ]}
       >
-        <BlurView intensity={30} tint={isLightTheme ? 'light' : 'dark'} style={[styles.statCard, { borderColor: animatedBorderColor }]}>
+        <BlurView intensity={30} tint={isLightTheme ? 'light' : 'dark'} style={[styles.statCard, isCompactMobile && styles.statCardMobile, isMobile && styles.statCardLineMobile, { borderColor: color + "55" }]}>
           <CyberCorner theme={theme} color={color} />
-          <View style={styles.statCardHeader}>
-            <Animated.View style={[styles.statIconContainer, { backgroundColor: isLightTheme ? theme.border : 'rgba(15, 23, 42, 0.5)', transform: [{ rotate: glowAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }) }] }]}>
-              <Ionicons name={icon} size={22} color={color} style={{ textShadowColor: color, textShadowRadius: 8 }} />
+          <View style={[styles.statCardHeader, isMobile && styles.statCardHeaderMobile]}>
+            <Animated.View style={[styles.statIconContainer, isMobile && styles.statIconContainerMobile, { backgroundColor: isLightTheme ? theme.border : 'rgba(15, 23, 42, 0.5)', transform: [{ rotate: glowAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }) }] }]}>
+              <Ionicons name={icon} size={isMobile ? 14 : 22} color={color} style={{ textShadowColor: color, textShadowRadius: 8 }} />
             </Animated.View>
-            {change && (
+            {!isMobile && change && (
               <Text style={[styles.statChange, { color: isPositive ? theme.success : theme.error, backgroundColor: (isPositive ? theme.success : theme.error) + '15', borderColor: (isPositive ? theme.success : theme.error) + '30' }]}>{change}</Text>
             )}
           </View>
-          <View style={{ flexDirection: 'row', alignItems: 'baseline', marginBottom: 2 }}>
-            <Text style={[styles.statValue, { color: theme.text, textShadowColor: color, textShadowRadius: 15, textShadowOffset: {width: 0, height: 0} }]}>{value}</Text>
-            <View style={styles.realtimeContainer}>
+          <View style={{ flexDirection: 'row', alignItems: 'baseline', marginBottom: isMobile ? 0 : 2 }}>
+            <Text style={[styles.statValue, isMobile && styles.statValueMobile, { color: theme.text, textShadowColor: color, textShadowRadius: 15, textShadowOffset: {width: 0, height: 0} }]}>{value}</Text>
+            {!isMobile && <View style={styles.realtimeContainer}>
                 <Text style={[styles.realtimeArrow, { color: theme.success }]}>↝</Text>
                 <Text style={[styles.realtimeValue, { color: theme.success }]}>+{realtimeValue}</Text>
-            </View>
+            </View>}
           </View>
-          <Text style={[styles.statLabel, { color: theme.textSecondary }]}>{label}</Text>
+          <Text style={[styles.statLabel, isMobile && styles.statLabelMobile, { color: theme.textSecondary }]} numberOfLines={1}>{label}</Text>
         </BlurView>
       </TouchableOpacity>
     );
@@ -900,7 +1075,7 @@ export default function AdminPanelScreen({ navigation }) {
     const isOdd = index % 2 === 1;
 
     return (
-      <View style={[styles.caseRow, { borderBottomColor: theme.border, borderBottomWidth: 0, backgroundColor: isOdd ? (isLightTheme ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.02)") : "transparent" }]}>
+      <View style={[styles.caseRow, isCompactMobile && styles.caseRowMobile, { borderBottomColor: theme.border, borderBottomWidth: 0, backgroundColor: isOdd ? (isLightTheme ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.02)") : "transparent" }]}>
         {Object.keys(visibleCols).map((key) => {
           let value = "";
           let component = null;
@@ -909,7 +1084,7 @@ export default function AdminPanelScreen({ navigation }) {
               value = index + 1;
               break;
             case "select":
-              value = isSelected ? "☑️" : "⬜️";
+              value = isSelected ? "selected" : "unselected";
               break;
             case "client":
               value = item.client || "-";
@@ -963,14 +1138,14 @@ export default function AdminPanelScreen({ navigation }) {
                         <Text style={[styles.assigneeAvatarText, { color: theme.primary }]}>{(value || '?').charAt(0)}</Text>
                       </View>
                     )}
-                    <Text style={[styles.cell, { flex: 1, paddingHorizontal: 4, color: theme.text }]} numberOfLines={2}>{value}</Text>
+                    <Text style={[styles.cell, isCompactMobile && styles.cellMobile, { flex: 1, paddingHorizontal: 4, color: theme.text }]} numberOfLines={2}>{value}</Text>
                   </View>
                 );
               } else {
                 component = (
                   <View key={key} style={[styles.assigneeCell, { width: visibleCols[key], opacity: 0.6 }]}>
                      <Ionicons name="person-add-outline" size={16} color={theme.textSecondary} style={{ marginRight: 6 }} />
-                     <Text style={[styles.cell, { fontSize: 11, color: theme.textSecondary, fontStyle: 'italic' }]}>Select Member</Text>
+                     <Text style={[styles.cell, isCompactMobile && styles.cellMobile, { fontSize: 11, color: theme.textSecondary, fontStyle: 'italic' }]}>Select Member</Text>
                   </View>
                 );
               }
@@ -1004,7 +1179,21 @@ export default function AdminPanelScreen({ navigation }) {
               break;
           }
 
-          if (key === "revert") {
+          if (key === "select") {
+            component = (
+              <TouchableOpacity
+                key={key}
+                style={{ width: visibleCols[key], alignItems: "center", justifyContent: "center" }}
+                onPress={() => toggleSelectCase(item.id)}
+              >
+                <Ionicons
+                  name={isSelected ? "checkbox" : "square-outline"}
+                  size={20}
+                  color={isSelected ? theme.success : theme.textSecondary}
+                />
+              </TouchableOpacity>
+            );
+          } else if (key === "revert") {
             component = (
               <TouchableOpacity
                 key={key}
@@ -1083,7 +1272,7 @@ export default function AdminPanelScreen({ navigation }) {
     );
   };
 
-  const FilterRow = () => (
+  const renderFilterRow = () => (
     <View style={[styles.filterRow, { borderBottomColor: theme.border, backgroundColor: isLightTheme ? "#F8FAFC" : "#1E293B" }]}>
         {Object.keys(visibleCols).map(key => {
             if (['select', 'number', 'revert', 'manualAudit'].includes(key)) {
@@ -1092,7 +1281,7 @@ export default function AdminPanelScreen({ navigation }) {
             return (
                 <View key={key} style={{ width: visibleCols[key], paddingHorizontal: 4 }}>
                     <TextInput
-                        style={[styles.compactFilterInput, { backgroundColor: theme.background[0], color: theme.text, borderColor: theme.border }]}
+                        style={[styles.compactFilterInput, isCompactMobile && styles.compactFilterInputMobile, { backgroundColor: theme.background[0], color: theme.text, borderColor: theme.border }]}
                         placeholder={`Filter...`}
                         placeholderTextColor={theme.textSecondary}
                         value={headerFilters[key] || ''}
@@ -1104,7 +1293,7 @@ export default function AdminPanelScreen({ navigation }) {
     </View>
   );
 
-  const ActiveFiltersBar = () => {
+  const renderActiveFiltersBar = () => {
     const filters = [];
     if (cityFilter) filters.push({ label: `City: ${cityFilter}`, clear: () => setCityFilter("") });
     if (statusFilter) filters.push({ label: `Status: ${statusFilter}`, clear: () => setStatusFilter("") });
@@ -1151,7 +1340,7 @@ export default function AdminPanelScreen({ navigation }) {
       {IS_DESKTOP && (
         <BlurView intensity={80} tint={isLightTheme ? 'light' : 'dark'} style={[styles.sidebar, { width: isSidebarExpanded ? 240 : MINI_SIDEBAR_WIDTH, borderColor: theme.border, shadowColor: theme.primary, shadowOpacity: 0.15, shadowRadius: 25, zIndex: 20 }]}>
             <View style={[styles.sidebarHeader, !isSidebarExpanded && { alignItems: 'center' }]}>
-                <TouchableOpacity onPress={() => setIsSidebarExpanded(!isSidebarExpanded)} style={{ marginBottom: 24 }}>
+                <TouchableOpacity onPress={() => setIsSidebarExpanded(!isSidebarExpanded)} style={{ marginBottom: isMobile ? 0 : 24 }}>
                     <Ionicons name="menu-outline" size={24} color={theme.textSecondary} />
                 </TouchableOpacity>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -1282,14 +1471,14 @@ export default function AdminPanelScreen({ navigation }) {
         )}
         
         {/* 2️⃣ TOP NAV BAR */}
-        <BlurView intensity={50} tint={isLightTheme ? 'light' : 'dark'} style={[styles.topBar, { borderBottomColor: theme.border }]}>
+        <BlurView intensity={50} tint={isLightTheme ? 'light' : 'dark'} style={[styles.topBar, isMobile && styles.topBarMobile, { borderBottomColor: theme.border }]}>
           {!IS_DESKTOP && (
           <TouchableOpacity onPress={openMenu} style={styles.iconButton}>
             <Ionicons name="menu" size={24} color={theme.text} />
           </TouchableOpacity>
           )}
           
-          <View style={[styles.topBarSearch, { backgroundColor: isLightTheme ? "#F1F5F9" : "#1E293B" }]}>
+          <View style={[styles.topBarSearch, isMobile && styles.topBarSearchMobile, { backgroundColor: isLightTheme ? "#F1F5F9" : "#1E293B" }]}>
              <Ionicons name="search" size={18} color={theme.textSecondary} />
              <TextInput 
                 placeholder="Search..." 
@@ -1301,10 +1490,10 @@ export default function AdminPanelScreen({ navigation }) {
           </View>
 
           {/* Top Actions: Upload & Assign */}
-          <View style={{ flexDirection: 'row', gap: 10, marginHorizontal: 10 }}>
+          <View style={[{ flexDirection: 'row', gap: 10, marginHorizontal: 10 }, isMobile && styles.topActionsRowMobile]}>
              <TouchableOpacity style={[styles.topActionButton, { backgroundColor: theme.primary }]} onPress={uploadExcel}>
                 <Ionicons name="cloud-upload-outline" size={16} color="#fff" />
-                <Text style={styles.topActionButtonText}>BATCH_INGEST</Text>
+                <Text style={[styles.topActionButtonText, isMobile && styles.topActionButtonTextMobile]}>{isMobile ? "UPLOAD" : "BATCH_INGEST"}</Text>
              </TouchableOpacity>
              <TouchableOpacity 
                 style={[styles.topActionButton, { backgroundColor: isLightTheme ? theme.cardBg : 'rgba(255,255,255,0.05)', borderColor: theme.border, borderWidth: 1 }]} 
@@ -1317,7 +1506,7 @@ export default function AdminPanelScreen({ navigation }) {
                 }}
              >
                 <Ionicons name="person-add-outline" size={16} color={theme.text} />
-                <Text style={[styles.topActionButtonText, { color: theme.text }]}>ASSIGN_LINK</Text>
+                <Text style={[styles.topActionButtonText, isMobile && styles.topActionButtonTextMobile, { color: theme.text }]}>{isMobile ? "ASSIGN" : "ASSIGN_LINK"}</Text>
              </TouchableOpacity>
 
              {/* 🎤 SPACE_ADMIN AI MIC BUTTON */}
@@ -1327,11 +1516,50 @@ export default function AdminPanelScreen({ navigation }) {
              >
                 <Ionicons name="mic" size={20} color={voiceModalVisible ? "#fff" : theme.primary} />
              </TouchableOpacity>
+             {isMobile && (
+               <TouchableOpacity
+                 onPress={handleReverseLastUpload}
+                 style={[
+                   styles.iconButton,
+                   {
+                     backgroundColor: lastUploadBatch.count > 0 ? 'rgba(239,68,68,0.18)' : 'rgba(255,255,255,0.05)',
+                     borderColor: '#ef4444',
+                     borderWidth: 1,
+                   },
+                 ]}
+               >
+                 <Ionicons name="arrow-undo-outline" size={19} color={lastUploadBatch.count > 0 ? "#ef4444" : theme.textSecondary} />
+               </TouchableOpacity>
+             )}
+             {isMobile && (
+               <TouchableOpacity onPress={() => setIsLightTheme(!isLightTheme)} style={[styles.iconButton, { backgroundColor: isLightTheme ? theme.border : 'rgba(255,255,255,0.05)' }]}>
+                 <Ionicons name={isLightTheme ? "moon-outline" : "sunny-outline"} size={20} color={theme.text} />
+               </TouchableOpacity>
+             )}
+             {isMobile && (
+               <TouchableOpacity onPress={() => setShowNotifications(true)} style={[styles.iconButton, { backgroundColor: isLightTheme ? theme.border : 'rgba(255,255,255,0.05)' }]}>
+                 <Ionicons name="notifications-outline" size={20} color={theme.text} />
+                 {notifications.length > 0 && <View style={[styles.badge, { backgroundColor: theme.primary }]} />}
+               </TouchableOpacity>
+             )}
           </View>
 
-          <View style={{ height: 24, width: 1, backgroundColor: theme.border, marginHorizontal: 12 }} />
+          {IS_DESKTOP && <View style={{ height: 24, width: 1, backgroundColor: theme.border, marginHorizontal: 12 }} />}
 
-          <View style={styles.topBarActions}>
+          {IS_DESKTOP && <View style={styles.topBarActions}>
+             <TouchableOpacity
+               onPress={handleReverseLastUpload}
+               style={[
+                 styles.iconButton,
+                 {
+                   backgroundColor: lastUploadBatch.count > 0 ? 'rgba(239,68,68,0.18)' : 'rgba(255,255,255,0.05)',
+                   borderColor: '#ef4444',
+                   borderWidth: 1,
+                 },
+               ]}
+             >
+                <Ionicons name="arrow-undo-outline" size={20} color={lastUploadBatch.count > 0 ? "#ef4444" : theme.textSecondary} />
+             </TouchableOpacity>
              <TouchableOpacity onPress={() => setIsLightTheme(!isLightTheme)} style={[styles.iconButton, { backgroundColor: isLightTheme ? theme.border : 'rgba(255,255,255,0.05)' }]}>
                 <Ionicons name={isLightTheme ? "moon-outline" : "sunny-outline"} size={20} color={theme.text} />
              </TouchableOpacity>
@@ -1339,30 +1567,30 @@ export default function AdminPanelScreen({ navigation }) {
                 <Ionicons name="notifications-outline" size={20} color={theme.text} />
                 {notifications.length > 0 && <View style={[styles.badge, { backgroundColor: theme.primary }]} />}
              </TouchableOpacity>
-          </View>
+          </View>}
         </BlurView>
 
-        <ScrollView contentContainerStyle={{ padding: 24, paddingBottom: 100 }}>
-            <View style={styles.pageHeader}>
+        <ScrollView contentContainerStyle={{ padding: contentPadding, paddingBottom: isMobile ? 72 : 100 }}>
+            <View style={[styles.pageHeader, isMobile && styles.pageHeaderMobile]}>
               <View>
-                <Text style={[styles.pageTitle, { color: theme.text, textShadowColor: theme.primary, textShadowRadius: 20, textShadowOffset: {width: 0, height: 0} }]}>SPACE_COMMAND</Text>
+                <Text style={[styles.pageTitle, isMobile && styles.pageTitleMobile, { color: theme.text, textShadowColor: theme.primary, textShadowRadius: 20, textShadowOffset: {width: 0, height: 0} }]}>SPACE_COMMAND</Text>
                 <View style={styles.pageSubtitleContainer}>
                   <BlinkingDot color={theme.success} />
                   <Text style={styles.pageSubtitle}>PIPELINE_OPS // ENCRYPTED_STREAM_ACTIVE</Text>
                 </View>
               </View>
-              <View style={{flexDirection: 'row', gap: 24}}>
-                <View style={{alignItems: 'flex-end', borderRightWidth: 1, borderRightColor: theme.border, paddingRight: 24}}>
+              <View style={[{ flexDirection: 'row', gap: 24 }, isMobile && styles.pageStatsRowMobile]}>
+                <View style={[{ alignItems: 'flex-end', borderRightWidth: 1, borderRightColor: theme.border, paddingRight: 24 }, isMobile && { alignItems: 'flex-start', borderRightWidth: 0, paddingRight: 0 }]}>
                   <Text style={styles.headerStatLabel}>UPLINK_STABILITY</Text>
                   <Text style={[styles.headerStatValue, {color: theme.text, textShadowColor: theme.primary, textShadowRadius: 10}]}>99.98<Text style={{fontSize: 18, opacity: 0.4}}>%</Text></Text>
                 </View>
-                <View style={{alignItems: 'flex-end'}}>
+                <View style={[{ alignItems: 'flex-end' }, isMobile && { alignItems: 'flex-start' }]}>
                   <Text style={styles.headerStatLabel}>SYNC_LATENCY</Text>
                   <Text style={[styles.headerStatValue, {color: theme.success, textShadowColor: theme.success, textShadowRadius: 10}]}>04<Text style={{fontSize: 18, opacity: 0.4}}>ms</Text></Text>
                 </View>
               </View>
               <TouchableOpacity 
-                  style={[styles.dynamicsButton, { borderColor: theme.border }, insightsOpen && { backgroundColor: theme.primary + '20', borderColor: theme.primary + '50' }]}
+                  style={[styles.dynamicsButton, isMobile && styles.dynamicsButtonMobile, { borderColor: theme.border }, insightsOpen && { backgroundColor: theme.primary + '20', borderColor: theme.primary + '50' }]}
                   onPress={() => setInsightsOpen(!insightsOpen)}
               >
                   <Ionicons name="analytics-outline" size={16} color={insightsOpen ? theme.primary : theme.textSecondary} />
@@ -1372,13 +1600,12 @@ export default function AdminPanelScreen({ navigation }) {
                   <Ionicons name={insightsOpen ? "chevron-up" : "chevron-down"} size={14} color={insightsOpen ? theme.primary : theme.textSecondary} />
               </TouchableOpacity>
             </View>
-
             {/* Insights Chart */}
             {insightsOpen && chartData && (
-              <BlurView intensity={30} tint={isLightTheme ? 'light' : 'dark'} style={[styles.chartCard, { borderColor: theme.border, shadowColor: theme.primary, shadowOpacity: 0.2, shadowRadius: 30 }]}>
+              <BlurView intensity={30} tint={isLightTheme ? 'light' : 'dark'} style={[styles.chartCard, isMobile && styles.chartCardMobile, { borderColor: theme.border, shadowColor: theme.primary, shadowOpacity: 0.2, shadowRadius: 30 }]}>
                 <CyberCorner theme={theme} color={theme.primary} />
                 {chartData.legend && (
-                <View style={{flexDirection: 'row', justifyContent: 'center', gap: 24, marginBottom: 20}}>
+                <View style={{flexDirection: 'row', justifyContent: 'center', gap: 24, marginBottom: isMobile ? 0 : 20}}>
                     <View style={{flexDirection: 'row', alignItems: 'center', gap: 8}}>
                         <View style={{width: 12, height: 12, borderRadius: 6, backgroundColor: theme.success, shadowColor: theme.success, shadowRadius: 8, shadowOpacity: 0.8}} />
                         <Text style={{color: theme.textSecondary, fontSize: 10, fontWeight: 'bold', textTransform: 'uppercase'}}>{chartData.legend[0]}</Text>
@@ -1391,7 +1618,7 @@ export default function AdminPanelScreen({ navigation }) {
                 )}
                 <LineChart
                   data={chartData}
-                  width={SCREEN_WIDTH - (IS_DESKTOP ? 240 : MINI_SIDEBAR_WIDTH) - 80}
+                  width={chartWidth}
                   height={220}
                   yAxisInterval={1}
                   chartConfig={{
@@ -1403,26 +1630,26 @@ export default function AdminPanelScreen({ navigation }) {
                     labelColor: (opacity = 1) => theme.textSecondary,
                     propsForDots: { r: "4", strokeWidth: "2", stroke: theme.primary },
                   }}
-                  style={{ marginLeft: -30 }}
+                  style={{ marginLeft: isMobile ? 0 : -30 }}
                 />
               </BlurView>
             )}
             
             {/* 3️⃣ METRIC CARDS */}
-            <View style={styles.metricsGrid}>
-                <StatCard label="TOTAL CASES" value={assignedTL} icon="layers-outline" color={theme.primary} />
-                <StatCard label="ASSIGNED" value={assignedFE} icon="person-outline" color={theme.warning} />
-                <StatCard label="REVERTED" value={reverted} icon="arrow-undo-outline" color={theme.error} />
-                <StatCard label="AUDIT" value={audited} icon="eye-outline" color={theme.info} />
-                <StatCard label="COMPLETED" value={completed} icon="checkmark-circle-outline" color={theme.success} />
+            <View style={[styles.metricsGrid, isMobile && styles.metricsGridSingleLine]}>
+              <StatCard label={isMobile ? "TOTAL" : "TOTAL CASES"} value={assignedTL} icon="layers-outline" color={theme.primary} />
+              <StatCard label={isMobile ? "ASSIGN" : "ASSIGNED"} value={assignedFE} icon="person-outline" color={theme.warning} />
+              <StatCard label={isMobile ? "REVERT" : "REVERTED"} value={reverted} icon="arrow-undo-outline" color={theme.error} />
+              <StatCard label={isMobile ? "AUDIT" : "AUDIT"} value={audited} icon="eye-outline" color={theme.info} />
+              <StatCard label={isMobile ? "DONE" : "COMPLETED"} value={completed} icon="checkmark-circle-outline" color={theme.success} />
             </View>
 
             {/* 5️⃣ DATA TABLE SECTION */}
-            <View style={[styles.sectionCard, { backgroundColor: theme.cardBg, borderColor: theme.border, marginTop: 24, padding: 0, overflow: 'hidden', shadowColor: theme.primary, shadowOpacity: 0.1, shadowRadius: 20 }]}>
-                <View style={[styles.sectionHeader, { padding: 16, borderBottomWidth: 1, borderBottomColor: theme.border }]}>
-                    <Text style={[styles.sectionTitle, { color: theme.text }]}>All Cases</Text>
+            <View style={[styles.sectionCard, isCompactMobile && styles.sectionCardMobile, { backgroundColor: theme.cardBg, borderColor: theme.border, marginTop: isCompactMobile ? 14 : 24, padding: 0, overflow: 'hidden', shadowColor: theme.primary, shadowOpacity: 0.1, shadowRadius: 20 }]}>
+                <View style={[styles.sectionHeader, isCompactMobile && styles.sectionHeaderMobile, { padding: isCompactMobile ? 10 : 16, borderBottomWidth: 1, borderBottomColor: theme.border }]}>
+                    <Text style={[styles.sectionTitle, isCompactMobile && styles.sectionTitleMobile, { color: theme.text }]}>All Cases</Text>
                     
-                    <View style={{flexDirection: 'row', alignItems: 'center', gap: 10}}>
+                    <View style={{flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: isMobile ? 'wrap' : 'nowrap', justifyContent: isMobile ? 'flex-end' : 'flex-start'}}>
                         <Text style={{color: theme.textSecondary, fontSize: 12}}>Assign Mode</Text>
                         <Switch 
                             value={assignMode} 
@@ -1434,14 +1661,18 @@ export default function AdminPanelScreen({ navigation }) {
                         onPress={() => setShowHeaderFilters(!showHeaderFilters)}
                     >
                         <Ionicons name={showHeaderFilters ? "funnel" : "funnel-outline"} size={12} color={theme.textSecondary} style={{ marginRight: 4 }} />
-                        <Text style={{ color: theme.textSecondary, fontSize: 12 }}>{showHeaderFilters ? "Hide Column Filters" : "Show Column Filters"}</Text>
+                        <Text style={{ color: theme.textSecondary, fontSize: 12 }}>{showHeaderFilters ? (isMobile ? "Hide Filters" : "Hide Column Filters") : (isMobile ? "Show Filters" : "Show Column Filters")}</Text>
                     </TouchableOpacity>
                     </View>
                 </View>
 
                 {/* Search & Filters Toolbar */}
-                <View style={styles.tableToolbar}>
-                    <View style={[styles.pickerContainer, { backgroundColor: isLightTheme ? "#F8FAFC" : "#1E293B", borderColor: theme.border }]}>
+                <ScrollView
+                    horizontal={isMobile}
+                    showsHorizontalScrollIndicator={isMobile}
+                    contentContainerStyle={[styles.tableToolbar, isCompactMobile && styles.tableToolbarMobile]}
+                >
+                    <View style={[styles.pickerContainer, isCompactMobile && styles.pickerContainerMobile, { backgroundColor: isLightTheme ? "#F8FAFC" : "#1E293B", borderColor: theme.border }]}>
                         <Picker key={isLightTheme ? 'light-city' : 'dark-city'} selectedValue={cityFilter} onValueChange={setCityFilter} style={[styles.picker, { color: theme.text }]} dropdownIconColor={theme.text}>
                             <Picker.Item label="City: All" value="" color="#000" style={{fontSize: 12}} />
                             {uniqueCities.map(city => (
@@ -1449,7 +1680,7 @@ export default function AdminPanelScreen({ navigation }) {
                             ))}
                         </Picker>
                     </View>
-                    <View style={[styles.pickerContainer, { backgroundColor: isLightTheme ? "#F8FAFC" : "#1E293B", borderColor: theme.border }]}>
+                    <View style={[styles.pickerContainer, isCompactMobile && styles.pickerContainerMobile, { backgroundColor: isLightTheme ? "#F8FAFC" : "#1E293B", borderColor: theme.border }]}>
                         <Picker key={isLightTheme ? 'light-status' : 'dark-status'} selectedValue={statusFilter} onValueChange={setStatusFilter} style={[styles.picker, { color: theme.text }]} dropdownIconColor={theme.text}>
                             <Picker.Item label="Status: All" value="" color="#000" style={{fontSize: 12}} />
                             <Picker.Item label="Assigned" value="assigned" color="#000" style={{fontSize: 12}} />
@@ -1460,7 +1691,7 @@ export default function AdminPanelScreen({ navigation }) {
                     </View>
                     
                     {/* Date Initiated Filter */}
-                    <View style={[styles.pickerContainer, { backgroundColor: isLightTheme ? "#F8FAFC" : "#1E293B", borderColor: theme.border, minWidth: 170, justifyContent: 'center' }]}>
+                    <View style={[styles.pickerContainer, isCompactMobile && styles.pickerContainerMobile, { backgroundColor: isLightTheme ? "#F8FAFC" : "#1E293B", borderColor: theme.border, minWidth: isCompactMobile ? 145 : 170, justifyContent: 'center' }]}>
                         {Platform.OS === 'web' ? (
                             <View style={{ paddingHorizontal: 10, width: '100%', flexDirection: 'row', alignItems: 'center' }}>
                                 <Text style={{color: theme.textSecondary, fontSize: 12, marginRight: 4}}>Init:</Text>
@@ -1499,7 +1730,7 @@ export default function AdminPanelScreen({ navigation }) {
                     </View>
 
                     {/* Upload Date Filter (Ingested At) */}
-                    <View style={[styles.pickerContainer, { backgroundColor: isLightTheme ? "#F8FAFC" : "#1E293B", borderColor: theme.border, minWidth: 170, justifyContent: 'center' }]}>
+                    <View style={[styles.pickerContainer, isCompactMobile && styles.pickerContainerMobile, { backgroundColor: isLightTheme ? "#F8FAFC" : "#1E293B", borderColor: theme.border, minWidth: isCompactMobile ? 145 : 170, justifyContent: 'center' }]}>
                         {Platform.OS === 'web' ? (
                             <View style={{ paddingHorizontal: 10, width: '100%', flexDirection: 'row', alignItems: 'center' }}>
                                 <Text style={{color: theme.textSecondary, fontSize: 12, marginRight: 4}}>Upload:</Text>
@@ -1536,23 +1767,23 @@ export default function AdminPanelScreen({ navigation }) {
                             </TouchableOpacity>
                         )}
                     </View>
-                </View>
-                <ActiveFiltersBar />
+                </ScrollView>
+                {renderActiveFiltersBar()}
 
                 <ScrollView horizontal showsHorizontalScrollIndicator={true}>
                     <View style={{ width: Object.values(visibleCols).reduce((a, b) => a + b, 0) }}>
-                        <View style={[styles.tableHeader, { borderBottomColor: theme.border, backgroundColor: isLightTheme ? "#F1F5F9" : "#0F172A" }]}>
+                        <View style={[styles.tableHeader, isCompactMobile && styles.tableHeaderMobile, { borderBottomColor: theme.border, backgroundColor: isLightTheme ? "#F1F5F9" : "#0F172A" }]}>
                         {Object.keys(visibleCols).map((key) => (
                             key === 'select' && cityFilter ? (
                                 <TouchableOpacity key={key} onPress={handleSelectAll} style={{ width: visibleCols[key], alignItems: 'center' }}>
                                     <Ionicons name={selectedCases.length > 0 && fullyFilteredCases.every(c => selectedCases.includes(c.id)) ? "checkbox" : "square-outline"} size={18} color={theme.primary} />
                                 </TouchableOpacity>
                             ) :
-                            <Text key={key} style={[styles.headerCell, { width: visibleCols[key], color: theme.textSecondary }]}>{key === "number" ? "#" : key}</Text>
+                            <Text key={key} style={[styles.headerCell, isCompactMobile && styles.headerCellMobile, { width: visibleCols[key], color: theme.textSecondary }]}>{key === "number" ? "#" : key}</Text>
                         ))}
                         </View>
-                        {showHeaderFilters && <FilterRow />}
-                        <ScrollView style={{ maxHeight: 600, minHeight: 100 }} nestedScrollEnabled={true}>
+                        {showHeaderFilters && renderFilterRow()}
+                        <ScrollView style={{ maxHeight: isCompactMobile ? 420 : 600, minHeight: 100 }} nestedScrollEnabled={true}>
                           {fullyFilteredCases.length > 0 ? (
                             fullyFilteredCases.map((item, index) => (
                                 <View key={item.id}>
@@ -1635,6 +1866,63 @@ export default function AdminPanelScreen({ navigation }) {
               </Text>
             </View>
           </LinearGradient>
+        </View>
+      )}
+
+      <Modal
+        visible={devAlertVisible && !!devBroadcastAlert}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={acknowledgeDevAlert}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.alertBoxDev, {
+            borderColor:
+              String(devBroadcastAlert?.severity || "").toLowerCase() === "critical"
+                ? "#dc2626"
+                : String(devBroadcastAlert?.severity || "").toLowerCase() === "warning"
+                ? "#f59e0b"
+                : String(devBroadcastAlert?.severity || "").toLowerCase() === "appreciation"
+                ? "#16a34a"
+                : theme.primary
+          }]}>
+            <Ionicons
+              name={
+                String(devBroadcastAlert?.severity || "").toLowerCase() === "critical"
+                  ? "alert-circle"
+                  : String(devBroadcastAlert?.severity || "").toLowerCase() === "appreciation"
+                  ? "trophy"
+                  : "warning"
+              }
+              size={42}
+              color={
+                String(devBroadcastAlert?.severity || "").toLowerCase() === "critical"
+                  ? "#dc2626"
+                  : String(devBroadcastAlert?.severity || "").toLowerCase() === "warning"
+                  ? "#f59e0b"
+                  : String(devBroadcastAlert?.severity || "").toLowerCase() === "appreciation"
+                  ? "#16a34a"
+                  : theme.primary
+              }
+            />
+            <Text style={styles.alertBoxDevTitle}>DEV ALERT</Text>
+            <Text style={styles.alertBoxDevSeverity}>{String(devBroadcastAlert?.severity || "info").toUpperCase()}</Text>
+            <Text style={styles.alertBoxDevMessage}>{devBroadcastAlert?.message}</Text>
+            <TouchableOpacity style={styles.alertBoxDevBtn} onPress={acknowledgeDevAlert}>
+              <Text style={styles.alertBoxDevBtnText}>Acknowledge</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {showAppreciationBurst && (
+        <View style={styles.burstOverlay} pointerEvents="none">
+          <Text style={[styles.burstEmoji, { top: "18%", left: "15%" }]}>🎉</Text>
+          <Text style={[styles.burstEmoji, { top: "22%", left: "68%" }]}>✨</Text>
+          <Text style={[styles.burstEmoji, { top: "40%", left: "30%" }]}>🎊</Text>
+          <Text style={[styles.burstEmoji, { top: "48%", left: "58%" }]}>⭐</Text>
+          <Text style={[styles.burstEmoji, { top: "62%", left: "20%" }]}>🎉</Text>
+          <Text style={[styles.burstEmoji, { top: "64%", left: "72%" }]}>🎊</Text>
         </View>
       )}
 
@@ -1779,9 +2067,22 @@ const styles = StyleSheet.create({
   webModalButtonText: { color: "#fff", fontWeight: "bold" },
   iconButton: { padding: 8 },
 
-  glow1: { position: 'absolute', top: '-20%', left: '-10%', width: 1000, height: 1000, borderRadius: 500, backgroundColor: 'rgba(139, 92, 246, 0.15)', opacity: 0.6 },
-  glow2: { position: 'absolute', bottom: '-10%', right: '-10%', width: 800, height: 800, borderRadius: 400, backgroundColor: 'rgba(59, 130, 246, 0.15)', opacity: 0.6 },
-  glow3: { position: 'absolute', top: '40%', left: '30%', width: 600, height: 600, borderRadius: 300, backgroundColor: 'rgba(236, 72, 153, 0.08)', opacity: 0.4 },
+  glow1: { position: 'absolute', top: '-20%', left: '-10%', width: 1000, height: 1000, borderRadius: 500, backgroundColor: 'rgba(34, 211, 238, 0.08)', opacity: 0.7 },
+  glow2: { position: 'absolute', bottom: '-10%', right: '-10%', width: 800, height: 800, borderRadius: 400, backgroundColor: 'rgba(59, 130, 246, 0.16)', opacity: 0.7 },
+  glow3: { position: 'absolute', top: '30%', left: '28%', width: 600, height: 600, borderRadius: 300, backgroundColor: 'rgba(16, 185, 129, 0.06)', opacity: 0.45 },
+  spaceGrid: {
+    ...StyleSheet.absoluteFillObject,
+    borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderColor: 'rgba(147, 197, 253, 0.07)',
+  },
+  starPoint: {
+    position: 'absolute',
+    width: 2,
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: '#dbeafe',
+  },
   cyberCorner: { position: 'absolute', width: 15, height: 15, pointerEvents: 'none' },
   cyberCornerTopLeft: { top: 0, left: 0, borderTopWidth: 2, borderLeftWidth: 2 },
   cyberCornerBottomRight: { bottom: 0, right: 0, borderBottomWidth: 2, borderRightWidth: 2 },
@@ -1819,15 +2120,19 @@ const styles = StyleSheet.create({
   menuText: { fontSize: 15, fontWeight: "500" },
 
   // Page Header
-  pageHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 40 },
+  pageHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 40, flexWrap: 'wrap', gap: 12 },
+  pageHeaderMobile: { marginBottom: 20, alignItems: 'flex-start' },
+  pageStatsRowMobile: { width: '100%', justifyContent: 'space-between', gap: 8 },
   pageTitle: { fontSize: 40, fontWeight: '900', fontStyle: 'italic', letterSpacing: -2 },
+  pageTitleMobile: { fontSize: 28, letterSpacing: -1 },
   pageSubtitleContainer: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 8 },
   pageSubtitle: { color: '#94A3B8', fontSize: 10, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', letterSpacing: 6, textTransform: 'uppercase' },
   headerStatLabel: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 3, opacity: 0.4, marginBottom: 6 },
   headerStatValue: { fontSize: 32, fontWeight: '900', fontStyle: 'italic', letterSpacing: -1 },
 
   // Chart
-  chartCard: { padding: 40, borderRadius: 40, borderWidth: 1, height: 420, overflow: 'hidden', marginBottom: 40 },
+  chartCard: { padding: 40, borderRadius: 40, borderWidth: 1, minHeight: 320, overflow: 'hidden', marginBottom: 40 },
+  chartCardMobile: { padding: 12, borderRadius: 18, minHeight: 280, marginBottom: 20 },
 
   contentOverlay: {
     position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, zIndex: 999,
@@ -1835,16 +2140,42 @@ const styles = StyleSheet.create({
   },
 
   // Top Bar
-  topBar: { height: 64, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 24, borderBottomWidth: 1 },
-  topBarSearch: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, height: 40, borderRadius: 16, width: 320 },
-  topActionButton: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 10, borderRadius: 16, gap: 8 },
-  topActionButtonText: { fontSize: 10, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 2 },
+  topBar: {
+    minHeight: 64,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    flexWrap: 'wrap',
+    rowGap: 10,
+  },
+  topBarMobile: { paddingHorizontal: 12, marginTop: Platform.OS === 'ios' ? 8 : 6 },
+  topBarSearch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    height: 40,
+    borderRadius: 12,
+    flex: 1,
+    minWidth: 140,
+    maxWidth: 360,
+  },
+  topBarSearchMobile: { width: '100%', maxWidth: '100%' },
+  topActionsRowMobile: { width: '100%', marginHorizontal: 0, justifyContent: 'space-between', flexWrap: 'wrap' },
+  topActionButton: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, gap: 8 },
+  topActionButtonText: { fontSize: 10, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1.3 },
+  topActionButtonTextMobile: { letterSpacing: 0.6, fontSize: 10 },
   topBarActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   badge: { position: 'absolute', top: 8, right: 8, width: 6, height: 6, borderRadius: 3, borderWidth: 1, borderColor: '#020617' },
 
   // Metrics
   statCardTouchable: { flex: 1, minWidth: 180 },
   metricsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 16, marginBottom: 24 },
+  metricsGridMobile: { gap: 10, marginBottom: 14, flexDirection: "row", flexWrap: "nowrap" },
+  metricsGridSingleLine: { gap: 6, marginBottom: 12, flexDirection: "row", flexWrap: "nowrap", justifyContent: "space-between" },
+  metricsRowScroll: { gap: 10, paddingVertical: 4, paddingRight: 4, marginBottom: 14 },
   statCard: {
     borderRadius: 32,
     padding: 24,
@@ -1855,7 +2186,10 @@ const styles = StyleSheet.create({
     shadowRadius: 40,
     elevation: 12,
   },
+  statCardMobile: { borderRadius: 18, padding: 12, minWidth: 0 },
+  statCardLineMobile: { borderRadius: 12, padding: 8 },
   statCardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 },
+  statCardHeaderMobile: { marginBottom: 4 },
   statIconContainer: {
     width: 48,
     height: 48,
@@ -1864,15 +2198,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  statIconContainerMobile: { width: 24, height: 24, borderRadius: 8, borderWidth: 0.6 },
   statValue: { fontSize: 24, fontWeight: '800' },
+  statValueMobile: { fontSize: 12, fontWeight: '800' },
   statLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1.5 },
+  statLabelMobile: { fontSize: 8, letterSpacing: 0.2 },
   
   // Table Section
   sectionCard: { borderRadius: 48, borderWidth: 1, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
+  sectionCardMobile: { borderRadius: 18 },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  sectionHeaderMobile: { marginBottom: 8 },
   sectionTitle: { fontSize: 16, fontWeight: '700' },
+  sectionTitleMobile: { fontSize: 14 },
   filterBtnSmall: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, borderWidth: 1 },
   tableToolbar: { flexDirection: 'row', padding: 16, gap: 12, flexWrap: 'wrap' },
+  tableToolbarMobile: { padding: 10, gap: 8, flexWrap: 'nowrap', alignItems: 'center' },
   betaToolbar: { marginBottom: 10, padding: 10, backgroundColor: "rgba(100,0,200,0.2)", borderRadius: 8 },
   betaLabel: { color: "#c471ed", fontSize: 10, fontWeight: "bold", marginBottom: 5 },
   betaButton: { flexDirection: "row", alignItems: "center", backgroundColor: "rgba(255,255,255,0.1)", padding: 8, borderRadius: 5, marginRight: 10 },
@@ -1881,11 +2222,16 @@ const styles = StyleSheet.create({
   searchFilter: { flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 10, flexWrap: "wrap" },
   searchContainer: { flexDirection: "row", alignItems: "center", borderRadius: 8, paddingHorizontal: 12, height: 36, flex: 1, minWidth: 120, borderWidth: 1 },
   tableHeader: { flexDirection: "row", borderBottomWidth: 1, paddingVertical: 12, paddingHorizontal: 8 },
+  tableHeaderMobile: { paddingVertical: 8, paddingHorizontal: 6 },
   filterRow: { flexDirection: "row", borderBottomWidth: 1, paddingVertical: 8, paddingHorizontal: 8 },
   compactFilterInput: { fontSize: 11, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, borderWidth: 1, height: 28 },
+  compactFilterInputMobile: { fontSize: 10, height: 24, paddingVertical: 2, paddingHorizontal: 6 },
   cell: { paddingHorizontal: 12, fontSize: 13, fontWeight: "400" },
+  cellMobile: { paddingHorizontal: 8, fontSize: 11 },
   headerCell: { fontWeight: "600", textTransform: 'uppercase', fontSize: 11, letterSpacing: 0.5 },
+  headerCellMobile: { fontSize: 9, letterSpacing: 0.2 },
   caseRow: { flexDirection: "row", borderBottomWidth: 1, paddingVertical: 8, alignItems: "center", paddingHorizontal: 8 },
+  caseRowMobile: { paddingVertical: 6, paddingHorizontal: 6 },
   iconActionBtn: { borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginHorizontal: 2 },
   
   assigneeCell: {
@@ -1916,6 +2262,14 @@ const styles = StyleSheet.create({
   toastContent: { flexDirection: "row", alignItems: "center", padding: 15, borderRadius: 10, shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 5, elevation: 5, width: "100%", maxWidth: 400 },
   toastTitle: { color: "#fff", fontWeight: "bold", fontSize: 16 },
   toastText: { color: "#fff", fontSize: 14 },
+  alertBoxDev: { width: "86%", maxWidth: 420, backgroundColor: "#fff", borderRadius: 14, padding: 20, borderWidth: 2, alignItems: "center" },
+  alertBoxDevTitle: { marginTop: 8, fontSize: 20, fontWeight: "bold", color: "#111827" },
+  alertBoxDevSeverity: { fontSize: 12, fontWeight: "700", letterSpacing: 1, color: "#6b7280", marginTop: 4 },
+  alertBoxDevMessage: { marginTop: 10, fontSize: 14, color: "#374151", textAlign: "center", marginBottom: 14 },
+  alertBoxDevBtn: { backgroundColor: "#4e0360", borderRadius: 8, paddingHorizontal: 16, paddingVertical: 10 },
+  alertBoxDevBtnText: { color: "#fff", fontWeight: "700" },
+  burstOverlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 2500 },
+  burstEmoji: { position: "absolute", fontSize: 36 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center' },
   notificationDropdown: {
       position: 'absolute', top: 70, right: 20, width: 320, borderRadius: 16, borderWidth: 1, overflow: 'hidden', elevation: 10, shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 10
@@ -1957,12 +2311,14 @@ const styles = StyleSheet.create({
   },
   modalSearchInput: { flex: 1, color: '#fff', fontSize: 14 },
   pickerContainer: { borderRadius: 8, height: 36, justifyContent: "center", overflow: "hidden", minWidth: 120, borderWidth: 1 },
+  pickerContainerMobile: { minWidth: 138, height: 34, borderRadius: 7 },
   picker: { height: 36, width: 130, backgroundColor: "transparent", borderWidth: 0 },
   statChange: {
     fontSize: 9, fontWeight: '900', paddingHorizontal: 8, paddingVertical: 2,
     borderRadius: 8, borderWidth: 1,
   },
   dynamicsButton: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 16, gap: 8, borderWidth: 1 },
+  dynamicsButtonMobile: { alignSelf: 'flex-start' },
   dynamicsButtonText: {
     fontSize: 10, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 2
   },
@@ -1999,3 +2355,6 @@ const styles = StyleSheet.create({
     elevation: 10,
   },
 });
+
+
+

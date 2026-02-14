@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import { useEffect, useState } from "react";
-import { FlatList, Image, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import firebase from "../firebase";
 
 export default function VerifyProfileScreen({ navigation }) {
@@ -41,7 +41,7 @@ export default function VerifyProfileScreen({ navigation }) {
     (u.email || "").toLowerCase().includes(searchText.toLowerCase())
   );
 
-  const renderItem = ({ item }) => (
+  const renderItem = (item) => (
     <BlurView intensity={20} tint="dark" style={styles.card}>
       <View style={styles.row}>
         <View style={styles.avatarContainer}>
@@ -107,13 +107,13 @@ export default function VerifyProfileScreen({ navigation }) {
         <Text style={styles.countText}>Total: {users.length} | Showing: {filteredUsers.length}</Text>
       </View>
 
-      <FlatList
-        data={filteredUsers}
-        keyExtractor={(item) => item.id}
-        renderItem={renderItem}
-        contentContainerStyle={styles.list}
-        ListEmptyComponent={<Text style={styles.emptyText}>No users found.</Text>}
-      />
+      <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator>
+        {filteredUsers.length === 0 ? (
+          <Text style={styles.emptyText}>No users found.</Text>
+        ) : (
+          filteredUsers.map((item) => <View key={item.id}>{renderItem(item)}</View>)
+        )}
+      </ScrollView>
     </LinearGradient>
   );
 }

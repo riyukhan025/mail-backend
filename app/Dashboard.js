@@ -82,19 +82,20 @@ export default function Dashboard({ navigation }) {
   const isFirstLoad = useRef(true);
 
   const [bribeWarningVisible, setBribeWarningVisible] = useState(false);
+  const [devBroadcastAlert, setDevBroadcastAlert] = useState(null);
+  const [devAlertVisible, setDevAlertVisible] = useState(false);
+  const [currentUserProfile, setCurrentUserProfile] = useState(null);
+  const [showAppreciationBurst, setShowAppreciationBurst] = useState(false);
 
   const t = (key) => TRANSLATIONS[language]?.[key] || TRANSLATIONS['en'][key] || key;
 
   useEffect(() => {
-    const checkDailyWarning = async () => {
-      const today = new Date().toDateString();
-      const lastShown = await AsyncStorage.getItem("last_bribe_warning_date");
-      if (lastShown !== today) {
-        setBribeWarningVisible(true);
-      }
-    };
-    checkDailyWarning();
-  }, []);
+    if (!user?.uid) return;
+    const role = String(user?.role || "member").toLowerCase();
+    if (role === "member") {
+      setBribeWarningVisible(true);
+    }
+  }, [user?.uid, user?.role]);
 
   // Feature Flags
   const [newUI, setNewUI] = useState(false);
@@ -128,6 +129,15 @@ export default function Dashboard({ navigation }) {
     setLoading(false);
   }, [user]);
 
+  useEffect(() => {
+    if (!user?.uid) return;
+    const ref = firebase.database().ref(`users/${user.uid}`);
+    const listener = ref.on("value", (snapshot) => {
+      setCurrentUserProfile(snapshot.val() || null);
+    });
+    return () => ref.off("value", listener);
+  }, [user?.uid]);
+
   // Listen for account status changes (Revoke Access)
   useEffect(() => {
     if (user?.uid) {
@@ -148,6 +158,61 @@ export default function Dashboard({ navigation }) {
       return () => statusRef.off("value", listener);
     }
   }, [user]);
+
+
+  useEffect(() => {
+    if (!user?.uid) return;
+    const ref = firebase.database().ref("memberAlerts");
+    const listener = ref.on("value", (snapshot) => {
+      const data = snapshot.val() || {};
+      const list = Object.keys(data).map((id) => ({ id, ...data[id] }));
+      const eligible = list
+        .filter((a) => a?.active !== false)
+        .filter((a) => {
+          const targetType = String(a?.targetType || "all").toLowerCase();
+          if (targetType === "all") return true;
+          if (targetType === "user") {
+            const targetUid = String(a?.targetUid || "").trim().toLowerCase();
+            const targetQuery = String(a?.targetQuery || "").trim().toLowerCase();
+            const myUid = String(user.uid || "").toLowerCase();
+            const myEmail = String(user.email || "").toLowerCase();
+            const myUniqueId = String(currentUserProfile?.uniqueId || "").toLowerCase();
+            return targetUid === myUid || targetQuery === myUid || targetQuery === myEmail || (myUniqueId && targetQuery === myUniqueId);
+          }
+          return true;
+        })
+        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+      const next = eligible.find((a) => !(a?.ackBy && a.ackBy[user.uid]));
+      if (next) {
+        setDevBroadcastAlert(next);
+        setDevAlertVisible(true);
+        if (String(next.severity || "").toLowerCase() === "appreciation") {
+          setShowAppreciationBurst(true);
+          setTimeout(() => setShowAppreciationBurst(false), 2200);
+        }
+      }
+    });
+    return () => ref.off("value", listener);
+  }, [user?.uid, user?.email, currentUserProfile?.uniqueId]);
+
+  const acknowledgeDevAlert = async () => {
+    if (!devBroadcastAlert?.id || !user?.uid) {
+      setDevAlertVisible(false);
+      return;
+    }
+    try {
+      await firebase.database().ref("memberAlerts/" + devBroadcastAlert.id + "/ackBy/" + user.uid).set(Date.now());
+    } catch (e) {
+      console.log("Failed to acknowledge dev alert", e);
+    }
+    const templateId = String(devBroadcastAlert?.templateId || "").toLowerCase();
+    setDevAlertVisible(false);
+    setDevBroadcastAlert(null);
+    if (templateId === "photo_upload") {
+      navigation.navigate("Updatescreen");
+    }
+  };
 
   const loadCases = (uid) => {
     firebase
@@ -913,7 +978,77 @@ export default function Dashboard({ navigation }) {
         </View>
       </Modal>
 
-      {/* Bribe Warning Modal */}
+      {/* Dev Broadcast Alert */}
+      <Modal
+        visible={devAlertVisible && !!devBroadcastAlert && !bribeWarningVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={acknowledgeDevAlert}
+      >
+        <View style={styles.alertOverlay}>
+          <View style={[
+            styles.alertBox,
+            {
+              borderWidth: 2,
+              borderColor:
+                String(devBroadcastAlert?.severity || "").toLowerCase() === "critical"
+                  ? "#dc2626"
+                  : String(devBroadcastAlert?.severity || "").toLowerCase() === "warning"
+                  ? "#f59e0b"
+                  : String(devBroadcastAlert?.severity || "").toLowerCase() === "appreciation"
+                  ? "#16a34a"
+                  : "#0ea5e9",
+            },
+          ]}>
+            <Ionicons
+              name={
+                String(devBroadcastAlert?.severity || "").toLowerCase() === "critical"
+                  ? "alert-circle"
+                  : String(devBroadcastAlert?.severity || "").toLowerCase() === "appreciation"
+                  ? "trophy"
+                  : "warning"
+              }
+              size={44}
+              color={
+                String(devBroadcastAlert?.severity || "").toLowerCase() === "critical"
+                  ? "#dc2626"
+                  : String(devBroadcastAlert?.severity || "").toLowerCase() === "warning"
+                  ? "#f59e0b"
+                  : String(devBroadcastAlert?.severity || "").toLowerCase() === "appreciation"
+                  ? "#16a34a"
+                  : "#0ea5e9"
+              }
+              style={{ marginBottom: 10 }}
+            />
+            <Text style={styles.devAlertTitle}>ADMIN ALERT</Text>
+            <Text
+              style={[
+                styles.devAlertSeverity,
+                {
+                  color:
+                    String(devBroadcastAlert?.severity || "").toLowerCase() === "critical"
+                      ? "#dc2626"
+                      : String(devBroadcastAlert?.severity || "").toLowerCase() === "warning"
+                      ? "#d97706"
+                      : String(devBroadcastAlert?.severity || "").toLowerCase() === "appreciation"
+                      ? "#16a34a"
+                      : "#0ea5e9",
+                },
+              ]}
+            >
+              {String(devBroadcastAlert?.severity || "info").toUpperCase()}
+            </Text>
+            <Text style={styles.devAlertMessage}>{devBroadcastAlert?.message}</Text>
+            <TouchableOpacity style={styles.alertButton} onPress={acknowledgeDevAlert}>
+              <LinearGradient colors={["#4e0360", "#c471ed"]} style={styles.alertGradient}>
+                <Text style={styles.alertButtonText}>Acknowledge</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Bribe Warning Modal (Mandatory for Member) */}
       <Modal
         visible={bribeWarningVisible}
         transparent={true}
@@ -925,14 +1060,11 @@ export default function Dashboard({ navigation }) {
             <Ionicons name="warning" size={40} color="#c62828" style={{ marginBottom: 10 }} />
             <Text style={{ fontSize: 16, fontWeight: "bold", color: "#c62828", textAlign: "center", marginBottom: 8 }}>STRICT WARNING</Text>
             <Text style={{ fontSize: 13, color: "#b71c1c", textAlign: "center", marginBottom: 15, lineHeight: 18 }}>
-              Do not get or give bribe. SpaceSolutions is totally against it and will be severely punished.
+              Do not get or give bribe. SpaceSolutions is totally against it and violations will be punished.
             </Text>
             <TouchableOpacity
               style={{ backgroundColor: "#c62828", paddingVertical: 8, paddingHorizontal: 25, borderRadius: 6 }}
-              onPress={async () => {
-                await AsyncStorage.setItem("last_bribe_warning_date", new Date().toDateString());
-                setBribeWarningVisible(false);
-              }}
+              onPress={() => setBribeWarningVisible(false)}
             >
               <Text style={{ color: "#fff", fontWeight: "bold", fontSize: 14 }}>I Understand</Text>
             </TouchableOpacity>
@@ -940,9 +1072,20 @@ export default function Dashboard({ navigation }) {
         </View>
       </Modal>
 
+      {showAppreciationBurst && (
+        <View style={styles.burstOverlay} pointerEvents="none">
+          <Text style={[styles.burstEmoji, { top: "18%", left: "15%" }]}>🎉</Text>
+          <Text style={[styles.burstEmoji, { top: "22%", left: "68%" }]}>✨</Text>
+          <Text style={[styles.burstEmoji, { top: "40%", left: "30%" }]}>🎊</Text>
+          <Text style={[styles.burstEmoji, { top: "48%", left: "58%" }]}>⭐</Text>
+          <Text style={[styles.burstEmoji, { top: "62%", left: "20%" }]}>🎉</Text>
+          <Text style={[styles.burstEmoji, { top: "64%", left: "72%" }]}>🎊</Text>
+        </View>
+      )}
+
       {/* New Case Alert Modal */}
       <Modal
-        visible={newCasesList.length > 0 && !bribeWarningVisible}
+        visible={newCasesList.length > 0 && !bribeWarningVisible && !devAlertVisible}
         transparent={true}
         animationType="slide"
         onRequestClose={async () => {
@@ -1134,6 +1277,8 @@ const styles = StyleSheet.create({
   alertButtonText: { color: "#fff", fontWeight: "bold", fontSize: 16 },
   alertClose: { padding: 10 },
   alertCloseText: { color: "#888", fontWeight: "600" },
+  burstOverlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 2500 },
+  burstEmoji: { position: "absolute", fontSize: 36 },
   maintenanceBanner: {
     backgroundColor: "#ffbb33",
     marginHorizontal: -20,
