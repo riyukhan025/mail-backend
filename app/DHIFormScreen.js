@@ -165,7 +165,8 @@ export default function DHIFormScreen() {
         respondentSignature: String(data.respondentSignature || ""),
         verifierSignature: String(data.verifierSignature || ""),
       }));
-    };
+      console.log('loadData data', data);
+      };
 
     if (route.params?.existingData) {
       loadData(route.params.existingData);

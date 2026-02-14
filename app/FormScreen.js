@@ -2,17 +2,17 @@ import { Ionicons } from "@expo/vector-icons";
 import { Picker } from "@react-native-picker/picker";
 import { useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  Image,
-  Modal,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    Image,
+    Modal,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from "react-native";
 
 import { decode as atob } from "base-64";
@@ -169,6 +169,7 @@ const RelationshipOptions = [
     { label: "Grandfather", value: "Grandfather" },
     { label: "Sister", value: "Sister" },
     { label: "Brother", value: "Brother" },
+    { label: "Self", value: "Self" },
     { label: "Wife", value: "Wife" },
     { label: "Neighbour", value: "Neighbour" },
     { label: "Uncle", value: "Uncle" },

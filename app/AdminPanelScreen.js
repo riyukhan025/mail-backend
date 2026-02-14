@@ -3,7 +3,6 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { Picker } from "@react-native-picker/picker";
 import { BlurView } from "expo-blur";
-import * as DocumentPicker from "expo-document-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Speech from "expo-speech";
 import { createElement, useContext, useEffect, useRef, useState } from "react";
@@ -65,6 +64,24 @@ const THEME = {
 };
 
 const BackgroundDecorations = ({ theme }) => {
+  const orbAnim1 = useRef(new Animated.Value(0)).current;
+  const orbAnim2 = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(orbAnim1, { toValue: 1, duration: 4000, useNativeDriver: true }),
+        Animated.timing(orbAnim1, { toValue: 0, duration: 4000, useNativeDriver: true })
+      ])
+    ).start();
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(orbAnim2, { toValue: 1, duration: 5000, useNativeDriver: true }),
+        Animated.timing(orbAnim2, { toValue: 0, duration: 5000, useNativeDriver: true })
+      ])
+    ).start();
+  }, []);
+
   return (
     <View style={[StyleSheet.absoluteFill, { zIndex: 0 }]} pointerEvents="none">
       <View style={styles.glow1} />
@@ -76,6 +93,9 @@ const BackgroundDecorations = ({ theme }) => {
       <View style={{ position: 'absolute', top: '70%', left: '5%', width: 1, height: 900, backgroundColor: theme.primary + '1A', transform: [{ rotate: '25deg' }] }} />
       <View style={{ position: 'absolute', top: '50%', left: '-20%', width: 1, height: 1200, backgroundColor: theme.primary + '1A', transform: [{ rotate: '60deg' }] }} />
       <View style={{ position: 'absolute', top: '90%', left: '60%', width: 1, height: 700, backgroundColor: theme.primary + '1A', transform: [{ rotate: '-55deg' }] }} />
+      {/* Floating Orbs */}
+      <Animated.View style={[styles.floatingOrb, { opacity: orbAnim1, top: '10%', left: '20%', backgroundColor: theme.primary + '40' }]} />
+      <Animated.View style={[styles.floatingOrb, { opacity: orbAnim2, bottom: '20%', right: '15%', backgroundColor: theme.info + '40' }]} />
     </View>
   );
 };
@@ -89,15 +109,24 @@ const CyberCorner = ({ theme, color }) => (
 
 const BlinkingDot = ({ color }) => {
   const opacity = useRef(new Animated.Value(0.3)).current;
+  const scale = useRef(new Animated.Value(1)).current;
+
   useEffect(() => {
     Animated.loop(
-      Animated.sequence([
-        Animated.timing(opacity, { toValue: 1, duration: 800, useNativeDriver: true }),
-        Animated.timing(opacity, { toValue: 0.3, duration: 800, useNativeDriver: true })
+      Animated.parallel([
+        Animated.sequence([
+          Animated.timing(opacity, { toValue: 1, duration: 800, useNativeDriver: true }),
+          Animated.timing(opacity, { toValue: 0.3, duration: 800, useNativeDriver: true })
+        ]),
+        Animated.sequence([
+          Animated.timing(scale, { toValue: 1.2, duration: 800, useNativeDriver: true }),
+          Animated.timing(scale, { toValue: 1, duration: 800, useNativeDriver: true })
+        ])
       ])
     ).start();
   }, []);
-  return <Animated.View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color, opacity, marginRight: 8 }} />;
+
+  return <Animated.View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color, opacity, transform: [{ scale }] }} />;
 };
 
 export default function AdminPanelScreen({ navigation }) {
@@ -770,77 +799,30 @@ export default function AdminPanelScreen({ navigation }) {
     else Alert.alert("Upload Complete", `Added: ${addedCount}\nSkipped (Exact Duplicates): ${duplicateCount}`);
   };
 
-  const uploadExcel = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      });
-
-      let fileUri;
-      if (!result.canceled && result.assets?.length > 0) fileUri = result.assets[0].uri;
-      else if (result.type === "success") fileUri = result.uri;
-      else return;
-
-      let workbook;
-      if (Platform.OS === "web") {
-        const response = await fetch(fileUri);
-        const arrayBuffer = await response.arrayBuffer();
-        workbook = XLSX.read(arrayBuffer, { type: "array" });
-      } else {
-        const response = await fetch(fileUri);
-        const blob = await response.blob();
-        const b64 = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result.split(',')[1]);
-          reader.onerror = (e) => reject(e);
-          reader.readAsDataURL(blob);
-        });
-        workbook = XLSX.read(b64, { type: "base64" });
-      }
-
-      const sheetName = workbook.SheetNames[0];
-      const sheet = workbook.Sheets[sheetName];
-      const jsonData = XLSX.utils.sheet_to_json(sheet);
-
-      if (Platform.OS === "web") {
-        setPendingUploadData(jsonData);
-        setUploadModalVisible(true);
-      } else {
-        Alert.alert(
-          "Upload Mode",
-          "Choose how to process these cases:",
-          [
-            {
-              text: "Manual",
-              onPress: () => processExcelData(jsonData, "manual"),
-            },
-            {
-              text: "Automate",
-              onPress: () => processExcelData(jsonData, "automate"),
-            },
-            { text: "Cancel", style: "cancel" },
-          ]
-        );
-      }
-    } catch (err) {
-      console.error("Error in uploadExcel:", err);
-      if (Platform.OS === "web") alert("Error: Failed to upload Excel file");
-      else Alert.alert("Error", "Failed to upload Excel file");
-    }
-  };
-
   const StatCard = ({ label, value, icon, color, change }) => {
     const [isPressed, setIsPressed] = useState(false);
     const [realtimeValue, setRealtimeValue] = useState(0);
-    const isPositive = change && change.startsWith('+');
+    const glowAnim = useRef(new Animated.Value(0)).current;
 
     useEffect(() => {
-        const interval = setInterval(() => {
-            setRealtimeValue(prev => prev + Math.floor(Math.random() * 3) + 1);
-        }, 2500 + Math.random() * 1500);
+      const interval = setInterval(() => {
+          setRealtimeValue(prev => prev + Math.floor(Math.random() * 3) + 1);
+      }, 2500 + Math.random() * 1500);
 
-        return () => clearInterval(interval);
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(glowAnim, { toValue: 1, duration: 2000, useNativeDriver: false }),
+          Animated.timing(glowAnim, { toValue: 0, duration: 2000, useNativeDriver: false })
+        ])
+      ).start();
+
+      return () => clearInterval(interval);
     }, []);
+
+    const animatedBorderColor = glowAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [color + '40', color + '80']
+    });
 
     return (
       <TouchableOpacity
@@ -849,15 +831,16 @@ export default function AdminPanelScreen({ navigation }) {
         onPressOut={() => setIsPressed(false)}
         style={[
           styles.statCardTouchable,
-          isPressed && { transform: [{ scale: 1.02 }] }
+          isPressed && { transform: [{ scale: 1.05 }] },
+          { shadowColor: animatedBorderColor, shadowOpacity: 0.6, shadowRadius: 20 }
         ]}
       >
-        <BlurView intensity={30} tint={isLightTheme ? 'light' : 'dark'} style={[styles.statCard, { borderColor: theme.border, shadowColor: isPressed ? color : theme.shadow }]}>
+        <BlurView intensity={30} tint={isLightTheme ? 'light' : 'dark'} style={[styles.statCard, { borderColor: animatedBorderColor }]}>
           <CyberCorner theme={theme} color={color} />
           <View style={styles.statCardHeader}>
-            <View style={[styles.statIconContainer, { backgroundColor: isLightTheme ? theme.border : 'rgba(15, 23, 42, 0.5)' }]}>
+            <Animated.View style={[styles.statIconContainer, { backgroundColor: isLightTheme ? theme.border : 'rgba(15, 23, 42, 0.5)', transform: [{ rotate: glowAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }) }] }]}>
               <Ionicons name={icon} size={22} color={color} style={{ textShadowColor: color, textShadowRadius: 8 }} />
-            </View>
+            </Animated.View>
             {change && (
               <Text style={[styles.statChange, { color: isPositive ? theme.success : theme.error, backgroundColor: (isPositive ? theme.success : theme.error) + '15', borderColor: (isPositive ? theme.success : theme.error) + '30' }]}>{change}</Text>
             )}
@@ -1868,9 +1851,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flex: 1,
     minWidth: 180,
-    shadowOpacity: 0.1,
-    shadowRadius: 35,
-    elevation: 8,
+    shadowOpacity: 0.2,
+    shadowRadius: 40,
+    elevation: 12,
   },
   statCardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 },
   statIconContainer: {
@@ -2005,4 +1988,14 @@ const styles = StyleSheet.create({
   voiceStatus: { color: '#fff', fontSize: 16, marginBottom: 20, textAlign: 'center', fontWeight: '600' },
   voiceInput: { width: '100%', backgroundColor: 'rgba(255,255,255,0.1)', color: '#fff', padding: 15, borderRadius: 12, fontSize: 16, textAlign: 'center' },
   voiceClose: { marginTop: 20, padding: 10 },
+  floatingOrb: {
+    position: 'absolute',
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    shadowColor: '#fff',
+    shadowOpacity: 0.8,
+    shadowRadius: 20,
+    elevation: 10,
+  },
 });

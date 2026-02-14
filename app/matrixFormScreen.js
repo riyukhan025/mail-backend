@@ -2,17 +2,17 @@ import { Ionicons } from "@expo/vector-icons";
 import { Picker } from "@react-native-picker/picker";
 import { useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  Image,
-  Modal,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    Image,
+    Modal,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from "react-native";
 
 import { decode as atob } from "base-64";
@@ -438,7 +438,7 @@ export default function MatrixFormScreen() {
         if (k === "respondentRelationship") {
           const options = ["Self", "Sister", "Uncle", "Aunty", "Mother", "Father", "Brother", "Wife", "Neighbour", "Grandmother", "Grandfather", "Others"];
           return (
-            <View key={k} style={styles.fieldContainer}>
+              <View key={k} style={styles.fieldContainer}>
               <Text style={styles.label}>{label}</Text>
               <View style={styles.pickerContainer}>
                 <Picker
