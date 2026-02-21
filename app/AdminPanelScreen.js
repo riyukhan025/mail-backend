@@ -401,6 +401,8 @@ export default function AdminPanelScreen({ navigation }) {
         response = `Selected ${allIds.length} cases.`;
     } else if (lowerCmd.includes("assign")) {
         if (selectedCases.length > 0) {
+            setAssignTo("");
+            setAssignSearchText("");
             setAssignModalVisible(true);
             response = "Opening assignment menu...";
             closeDelay = 500;
@@ -537,13 +539,27 @@ export default function AdminPanelScreen({ navigation }) {
   // Fetch members
   useEffect(() => {
     const membersRef = firebase.database().ref("users");
-    membersRef.on("value", (snapshot) => {
+    const listener = membersRef.on("value", (snapshot) => {
       const data = snapshot.val() || {};
-      const list = Object.keys(data)
-        .map((key) => ({ id: key, ...data[key] }))
-        .filter(m => m.role !== 'admin' && m.role !== 'dev');
-      setMembers(list);
+      const normalizedUsers = Object.keys(data)
+        .map((key) => {
+          const raw = data[key] || {};
+          if (!raw || typeof raw !== "object") return null;
+          const role = String(raw.role || "").trim().toLowerCase();
+          return {
+            id: key,
+            ...raw,
+            role,
+            name: raw.name || raw.displayName || raw.fullName || raw.email || raw.uniqueId || key,
+          };
+        })
+        .filter(Boolean);
+
+      const nonPrivileged = normalizedUsers.filter((m) => m.role !== "admin" && m.role !== "dev");
+      // Fallback: if role tagging is inconsistent in DB, keep list usable for assignment.
+      setMembers(nonPrivileged.length > 0 ? nonPrivileged : normalizedUsers);
     });
+    return () => membersRef.off("value", listener);
   }, []);
 
   // Fetch archived count
@@ -575,6 +591,14 @@ export default function AdminPanelScreen({ navigation }) {
   const toTitleCase = (str) => str.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase());
   const uniqueCities = [...new Set(cases.map(c => toTitleCase((c.city || "").trim())).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const sortedMembers = [...members].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  const normalizedAssignSearch = assignSearchText.trim().toLowerCase();
+  const assignableMembers = sortedMembers.filter((m) => {
+    const name = String(m.name || "").toLowerCase();
+    const uniqueId = String(m.uniqueId || "").toLowerCase();
+    const email = String(m.email || "").toLowerCase();
+    if (!normalizedAssignSearch) return true;
+    return name.includes(normalizedAssignSearch) || uniqueId.includes(normalizedAssignSearch) || email.includes(normalizedAssignSearch);
+  });
 
   // Counters
   const assignedTL = cases.length + archivedCount;
@@ -1502,6 +1526,8 @@ export default function AdminPanelScreen({ navigation }) {
                         if (Platform.OS === 'web') return alert("Please select at least one case to assign.");
                         return Alert.alert("Error", "Please select at least one case to assign.");
                     }
+                    setAssignTo("");
+                    setAssignSearchText("");
                     setAssignModalVisible(true);
                 }}
              >
@@ -1673,7 +1699,12 @@ export default function AdminPanelScreen({ navigation }) {
                     contentContainerStyle={[styles.tableToolbar, isCompactMobile && styles.tableToolbarMobile]}
                 >
                     <View style={[styles.pickerContainer, isCompactMobile && styles.pickerContainerMobile, { backgroundColor: isLightTheme ? "#F8FAFC" : "#1E293B", borderColor: theme.border }]}>
-                        <Picker key={isLightTheme ? 'light-city' : 'dark-city'} selectedValue={cityFilter} onValueChange={setCityFilter} style={[styles.picker, { color: theme.text }]} dropdownIconColor={theme.text}>
+                        {Platform.OS === "android" && (
+                          <Text pointerEvents="none" style={[styles.pickerClosedLabel, { color: theme.text }]}>
+                            {cityFilter || "City: All"}
+                          </Text>
+                        )}
+                        <Picker key={isLightTheme ? 'light-city' : 'dark-city'} selectedValue={cityFilter} onValueChange={setCityFilter} style={[styles.picker, { color: Platform.OS === "android" ? "transparent" : theme.text }]} dropdownIconColor={theme.text} useNativeAndroidPickerStyle={false}>
                             <Picker.Item label="City: All" value="" color="#000" style={{fontSize: 12}} />
                             {uniqueCities.map(city => (
                                 <Picker.Item key={city} label={city} value={city} color="#000" style={{fontSize: 12}} />
@@ -1681,7 +1712,12 @@ export default function AdminPanelScreen({ navigation }) {
                         </Picker>
                     </View>
                     <View style={[styles.pickerContainer, isCompactMobile && styles.pickerContainerMobile, { backgroundColor: isLightTheme ? "#F8FAFC" : "#1E293B", borderColor: theme.border }]}>
-                        <Picker key={isLightTheme ? 'light-status' : 'dark-status'} selectedValue={statusFilter} onValueChange={setStatusFilter} style={[styles.picker, { color: theme.text }]} dropdownIconColor={theme.text}>
+                        {Platform.OS === "android" && (
+                          <Text pointerEvents="none" style={[styles.pickerClosedLabel, { color: theme.text }]}>
+                            {statusFilter ? `Status: ${statusFilter}` : "Status: All"}
+                          </Text>
+                        )}
+                        <Picker key={isLightTheme ? 'light-status' : 'dark-status'} selectedValue={statusFilter} onValueChange={setStatusFilter} style={[styles.picker, { color: Platform.OS === "android" ? "transparent" : theme.text }]} dropdownIconColor={theme.text} useNativeAndroidPickerStyle={false}>
                             <Picker.Item label="Status: All" value="" color="#000" style={{fontSize: 12}} />
                             <Picker.Item label="Assigned" value="assigned" color="#000" style={{fontSize: 12}} />
                             <Picker.Item label="Audit" value="audit" color="#000" style={{fontSize: 12}} />
@@ -1992,24 +2028,58 @@ export default function AdminPanelScreen({ navigation }) {
                 />
             </View>
 
-            <ScrollView style={styles.memberList}>
-              {sortedMembers.filter(m => (m.name || "").toLowerCase().includes(assignSearchText.toLowerCase()) || (m.uniqueId || "").toLowerCase().includes(assignSearchText.toLowerCase())).map(member => (
-                <TouchableOpacity
-                  key={member.id}
-                  style={[
-                    styles.memberItem,
-                    assignTo === member.id && styles.memberItemSelected
-                  ]}
-                  onPress={() => setAssignTo(member.id)}
+            {isMobile ? (
+              <View style={styles.assignPickerWrap}>
+                <Picker
+                  selectedValue={assignTo}
+                  onValueChange={(value) => setAssignTo(value)}
+                  style={styles.assignPicker}
+                  dropdownIconColor="#fff"
                 >
-                  <Text style={styles.memberItemText}>{member.name} ({member.uniqueId || 'N/A'})</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+                  <Picker.Item label={`Select member (${assignableMembers.length})`} value="" />
+                  {assignableMembers.map((member) => (
+                    <Picker.Item
+                      key={member.id}
+                      label={`${member.name} (${member.uniqueId || member.email || member.id.slice(0, 6)})`}
+                      value={member.id}
+                    />
+                  ))}
+                </Picker>
+                {assignableMembers.length === 0 && (
+                  <Text style={[styles.memberItemText, { opacity: 0.75, textAlign: "center", marginTop: 10 }]}>
+                    No members found. Verify users path permissions in Firebase.
+                  </Text>
+                )}
+              </View>
+            ) : (
+              <ScrollView style={styles.memberList}>
+                {assignableMembers.map(member => (
+                  <TouchableOpacity
+                    key={member.id}
+                    style={[
+                      styles.memberItem,
+                      assignTo === member.id && styles.memberItemSelected
+                    ]}
+                    onPress={() => setAssignTo(member.id)}
+                  >
+                    <Text style={styles.memberItemText}>{member.name} ({member.uniqueId || 'N/A'})</Text>
+                  </TouchableOpacity>
+                ))}
+                {assignableMembers.length === 0 && (
+                  <Text style={[styles.memberItemText, { opacity: 0.75, textAlign: "center", marginTop: 10 }]}>
+                    No members found. Clear search or verify users exist in database.
+                  </Text>
+                )}
+              </ScrollView>
+            )}
             <View style={styles.modalActions}>
               <TouchableOpacity
                 style={[styles.modalButton, styles.cancelButton]}
-                onPress={() => setAssignModalVisible(false)}
+                onPress={() => {
+                  setAssignTo("");
+                  setAssignSearchText("");
+                  setAssignModalVisible(false);
+                }}
               >
                 <Text style={styles.modalButtonText}>Cancel</Text>
               </TouchableOpacity>
@@ -2293,6 +2363,19 @@ const styles = StyleSheet.create({
   memberItem: { padding: 15, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.1)', borderRadius: 8, marginBottom: 5 },
   memberItemSelected: { backgroundColor: 'rgba(0, 198, 255, 0.3)' },
   memberItemText: { color: '#fff', fontSize: 16 },
+  assignPickerWrap: {
+    width: "100%",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.2)",
+    borderRadius: 10,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    marginBottom: 8,
+  },
+  assignPicker: {
+    width: "100%",
+    color: "#fff",
+    backgroundColor: "transparent",
+  },
   modalActions: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 20, paddingTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.1)' },
   modalButton: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8, flex: 1, alignItems: 'center' },
   cancelButton: { backgroundColor: '#666', marginRight: 10 },
@@ -2312,6 +2395,14 @@ const styles = StyleSheet.create({
   modalSearchInput: { flex: 1, color: '#fff', fontSize: 14 },
   pickerContainer: { borderRadius: 8, height: 36, justifyContent: "center", overflow: "hidden", minWidth: 120, borderWidth: 1 },
   pickerContainerMobile: { minWidth: 138, height: 34, borderRadius: 7 },
+  pickerClosedLabel: {
+    position: "absolute",
+    left: 10,
+    right: 28,
+    fontSize: 12,
+    zIndex: 2,
+    includeFontPadding: false,
+  },
   picker: { height: 36, width: 130, backgroundColor: "transparent", borderWidth: 0 },
   statChange: {
     fontSize: 9, fontWeight: '900', paddingHorizontal: 8, paddingVertical: 2,
@@ -2355,6 +2446,4 @@ const styles = StyleSheet.create({
     elevation: 10,
   },
 });
-
-
 

@@ -18,6 +18,7 @@ import {
   TouchableOpacity,
   View
 } from "react-native";
+import { Picker } from "@react-native-picker/picker";
 import { BarChart, LineChart, PieChart } from "react-native-chart-kit";
 import * as XLSX from "xlsx";
 import firebase from "../firebase";
@@ -63,10 +64,13 @@ const OVERVIEW_TRANSACTIONS = [
   { id: "AR-57722590-75", product: "Oura Ring 4", price: "$399.00", customer: "Caleb Turner", date: "22 Apr 2025" },
 ];
 
+const STATUS_OPTIONS = ["open", "assigned", "audit", "reverted", "fired", "completed", "closed"];
+
 const TABS = [
   { id: "overview", label: "Overview", icon: "grid-outline" },
   { id: "alerts", label: "Alerts", icon: "warning-outline" },
   { id: "control_center", label: "Control Center", icon: "speedometer-outline" },
+  { id: "status", label: "Status", icon: "swap-horizontal-outline" },
   { id: "reconciliation", label: "Reconciliation", icon: "git-compare-outline" },
   { id: "manual_audit", label: "Manual Audit", icon: "create-outline" },
   { id: "firebase", label: "Firebase DB", icon: "server-outline" },
@@ -192,6 +196,9 @@ export default function DevDashboardScreen({ navigation }) {
   const [activeTab, setActiveTab] = useState("overview");
   const [logs, setLogs] = useState(LOG_BUFFER);
   const [users, setUsers] = useState([]);
+  const [cases, setCases] = useState([]);
+  const [alerts, setAlerts] = useState([]);
+  const [tickets, setTickets] = useState([]);
   const [networkRequests, setNetworkRequests] = useState(NETWORK_BUFFER);
   const [featureFlags, setFeatureFlags] = useState({
     enableNewUI: false,
@@ -246,7 +253,8 @@ export default function DevDashboardScreen({ navigation }) {
     const ref = firebase.database().ref("cases");
     const listener = ref.on("value", (snapshot) => {
       const data = snapshot.val() || {};
-      const list = Object.values(data);
+      const list = Object.keys(data).map((key) => ({ id: key, ...data[key] }));
+      setCases(list);
       const completed = list.filter((c) => c?.status === "completed").length;
       const audit = list.filter((c) => c?.status === "audit").length;
       const pending = list.filter((c) => c?.status === "assigned" || c?.status === "open").length;
@@ -259,10 +267,21 @@ export default function DevDashboardScreen({ navigation }) {
     const ref = firebase.database().ref("memberAlerts");
     const listener = ref.on("value", (snapshot) => {
       const data = snapshot.val() || {};
-      const list = Object.values(data);
+      const list = Object.keys(data).map((id) => ({ id, ...data[id] }));
+      setAlerts(list);
       const active = list.filter((a) => a?.active !== false).length;
       const critical = list.filter((a) => String(a?.severity || "").toLowerCase() === "critical" && a?.active !== false).length;
       setAlertsMeta({ total: list.length, active, critical });
+    });
+    return () => ref.off("value", listener);
+  }, []);
+
+  useEffect(() => {
+    const ref = firebase.database().ref("tickets");
+    const listener = ref.on("value", (snapshot) => {
+      const data = snapshot.val() || {};
+      const list = Object.keys(data).map((id) => ({ id, ...data[id] }));
+      setTickets(list);
     });
     return () => ref.off("value", listener);
   }, []);
@@ -280,6 +299,8 @@ export default function DevDashboardScreen({ navigation }) {
         return alertsMeta.active;
       case "control_center":
         return caseStats.total;
+      case "status":
+        return cases.length;
       case "tracking":
       case "statistics":
         return caseStats.completed;
@@ -433,9 +454,11 @@ export default function DevDashboardScreen({ navigation }) {
   const renderContent = () => {
     switch (activeTab) {
       case "overview":
-        return <OverviewTab featureFlags={featureFlags} toggleFeatureFlag={toggleFeatureFlag} navigation={navigation} />;
+        return <OverviewTab featureFlags={featureFlags} toggleFeatureFlag={toggleFeatureFlag} navigation={navigation} cases={cases} users={users} alerts={alerts} tickets={tickets} />;
       case "alerts":
         return <AlertsTab currentUser={user} />;
+      case "status":
+        return <StatusTab cases={cases} users={users} currentUser={user} />;
       case "reconciliation":
         return <ReconciliationTab />;
       case "manual_audit":
@@ -449,7 +472,7 @@ export default function DevDashboardScreen({ navigation }) {
       case "users":
         return <UsersTab users={users} onRevoke={handleRevokeAccess} onGrant={handleGrantAccess} />;
       case "tracking":
-        return <TrackingTab />;
+        return <TrackingTab cases={cases} logs={logs} />;
       case "logs":
         return <LogsTab logs={logs} onClear={handleClearLogs} />;
       case "network":
@@ -459,25 +482,25 @@ export default function DevDashboardScreen({ navigation }) {
       case "statistics":
         return <StatisticsTab users={users} />;
       case "control_center":
-        return <ControlCenterTab users={users} logs={logs} networkRequests={networkRequests} />;
+        return <ControlCenterTab users={users} logs={logs} networkRequests={networkRequests} cases={cases} alerts={alerts} tickets={tickets} featureFlags={featureFlags} />;
       case "roles_permissions":
-        return <RolesPermissionsTab canManage={user?.role === "admin" || user?.role === "dev"} />;
+        return <RolesPermissionsTab canManage={user?.role === "admin" || user?.role === "dev"} users={users} />;
       case "content":
-        return <ContentManagementTab canManage={user?.role === "admin" || user?.role === "dev"} />;
+        return <ContentManagementTab canManage={user?.role === "admin" || user?.role === "dev"} cases={cases} />;
       case "settings":
-        return <AppConfigTab featureFlags={featureFlags} toggleFeatureFlag={toggleFeatureFlag} canManage={user?.role === "admin" || user?.role === "dev"} />;
+        return <AppConfigTab featureFlags={featureFlags} toggleFeatureFlag={toggleFeatureFlag} canManage={user?.role === "admin" || user?.role === "dev"} cases={cases} users={users} currentUser={user} />;
       case "analytics_hub":
-        return <AnalyticsInsightsTab />;
+        return <AnalyticsInsightsTab cases={cases} users={users} tickets={tickets} />;
       case "logs_monitoring":
-        return <MonitoringTab logs={logs} requests={networkRequests} />;
+        return <MonitoringTab logs={logs} requests={networkRequests} cases={cases} />;
       case "billing":
-        return <BillingSubscriptionTab canManage={user?.role === "admin" || user?.role === "dev"} />;
+        return <BillingSubscriptionTab canManage={user?.role === "admin" || user?.role === "dev"} tickets={tickets} cases={cases} users={users} />;
       case "security":
         return <SecurityCenterTab canManage={user?.role === "admin" || user?.role === "dev"} />;
       case "notifications":
-        return <NotificationCenterTab />;
+        return <NotificationCenterTab alerts={alerts} users={users} />;
       case "api":
-        return <ApiIntegrationTab canManage={user?.role === "admin" || user?.role === "dev"} />;
+        return <ApiIntegrationTab canManage={user?.role === "admin" || user?.role === "dev"} requests={networkRequests} logs={logs} />;
       case "deployments":
         return <DeploymentControlTab canManage={user?.role === "admin" || user?.role === "dev"} />;
       case "database":
@@ -596,7 +619,7 @@ export default function DevDashboardScreen({ navigation }) {
 // --- TAB COMPONENTS ---
 
 
-function OverviewTab({ featureFlags = {}, toggleFeatureFlag = () => {}, navigation }) {
+function OverviewTab({ featureFlags = {}, toggleFeatureFlag = () => {}, navigation, cases = [], users = [], alerts = [], tickets = [] }) {
   const { logout } = useContext(AuthContext);
   const screenWidth = Dimensions.get("window").width;
   const isWide = screenWidth >= 980;
@@ -621,11 +644,56 @@ function OverviewTab({ featureFlags = {}, toggleFeatureFlag = () => {}, navigati
     barPercentage: 0.42,
   };
 
+  const statusCounts = cases.reduce((acc, c) => {
+    const key = String(c?.status || "unknown").toLowerCase();
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  const roleCounts = users.reduce((acc, u) => {
+    const key = String(u?.role || "unknown").toLowerCase();
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  const cityCounts = cases.reduce((acc, c) => {
+    const key = String(c?.city || "Unknown").trim() || "Unknown";
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  const sortedCities = Object.entries(cityCounts).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const caseStatusPie = Object.entries(statusCounts)
+    .filter(([, count]) => count > 0)
+    .slice(0, 6)
+    .map(([name, count], idx) => ({
+      name: name.toUpperCase(),
+      value: count,
+      color: ["#38bdf8", "#fbbf24", "#14b8a6", "#ef4444", "#a78bfa", "#fb7185"][idx % 6],
+      legendFontColor: "#cbd5e1",
+      legendFontSize: 12,
+    }));
+
+  const recentCases = [...cases]
+    .sort((a, b) => {
+      const at = new Date(a.updatedAt || a.completedAt || a.assignedAt || a.dateInitiated || 0).getTime();
+      const bt = new Date(b.updatedAt || b.completedAt || b.assignedAt || b.dateInitiated || 0).getTime();
+      return bt - at;
+    })
+    .slice(0, 8);
+
+  const liveMetrics = [
+    { id: "cases", title: "Total Cases", value: String(cases.length), unit: "LIVE", delta: `${statusCounts.completed || 0} completed`, deltaUp: true, icon: "briefcase-outline", accent: "#38bdf8" },
+    { id: "users", title: "Total Users", value: String(users.length), unit: "LIVE", delta: `${roleCounts.member || 0} members`, deltaUp: true, icon: "people-outline", accent: "#22c55e" },
+    { id: "alerts", title: "Active Alerts", value: String(alerts.filter((a) => a?.active !== false).length), unit: "LIVE", delta: `${alerts.filter((a) => String(a?.severity || "").toLowerCase() === "critical" && a?.active !== false).length} critical`, deltaUp: false, icon: "warning-outline", accent: "#f97316" },
+    { id: "tickets", title: "Total Tickets", value: String(tickets.length), unit: "LIVE", delta: `${tickets.filter((t) => String(t?.status || "").toLowerCase() !== "closed").length} open`, deltaUp: true, icon: "ticket-outline", accent: "#a78bfa" },
+  ];
+
   return (
     <ScrollView style={styles.dsOverviewScroll} contentContainerStyle={styles.dsOverviewContent}>
       <View style={styles.dsOverviewRow}>
         <View style={styles.dsMetricGrid}>
-          {OVERVIEW_METRICS.map((metric) => (
+          {liveMetrics.map((metric) => (
             <View key={metric.id} style={styles.dsMetricCard}>
               <View style={styles.dsMetricHeader}>
                 <View style={[styles.dsMetricIconWrap, { backgroundColor: `${metric.accent}33` }]}>
@@ -651,16 +719,18 @@ function OverviewTab({ featureFlags = {}, toggleFeatureFlag = () => {}, navigati
 
         <View style={styles.dsActivityCard}>
           <View style={styles.dsCardHeaderRow}>
-            <Text style={styles.dsCardTitle}>Product Activity</Text>
-            <Text style={styles.dsCardSubTitle}>Total: 415,236</Text>
+            <Text style={styles.dsCardTitle}>Case Status Distribution</Text>
+            <Text style={styles.dsCardSubTitle}>Realtime</Text>
           </View>
-          {isWeb ? (
+          {isWeb || caseStatusPie.length === 0 ? (
             <View style={styles.dsChartFallback}>
-              <Text style={styles.dsChartFallbackText}>Chart preview unavailable on web build.</Text>
+              <Text style={styles.dsChartFallbackText}>
+                {caseStatusPie.length === 0 ? "No cases available." : "Chart preview unavailable on web build."}
+              </Text>
             </View>
           ) : (
             <PieChart
-              data={OVERVIEW_ACTIVITY}
+              data={caseStatusPie}
               width={chartWidth}
               height={170}
               accessor="value"
@@ -672,7 +742,7 @@ function OverviewTab({ featureFlags = {}, toggleFeatureFlag = () => {}, navigati
             />
           )}
           <View style={styles.dsLegendList}>
-            {OVERVIEW_ACTIVITY.map((item) => (
+            {caseStatusPie.map((item) => (
               <View key={item.name} style={styles.dsLegendRow}>
                 <View style={[styles.dsLegendDot, { backgroundColor: item.color }]} />
                 <Text style={styles.dsLegendName}>{item.name}</Text>
@@ -686,8 +756,8 @@ function OverviewTab({ featureFlags = {}, toggleFeatureFlag = () => {}, navigati
       <View style={styles.dsOverviewRow}>
         <View style={styles.dsChartCard}>
           <View style={styles.dsCardHeaderRow}>
-            <Text style={styles.dsCardTitle}>Customers Activity</Text>
-            <Text style={styles.dsCardSubTitle}>Apr - Oct 2025</Text>
+            <Text style={styles.dsCardTitle}>Case Volume (Last 7 Days)</Text>
+            <Text style={styles.dsCardSubTitle}>Realtime</Text>
           </View>
           {isWeb ? (
             <View style={styles.dsChartFallback}>
@@ -696,8 +766,24 @@ function OverviewTab({ featureFlags = {}, toggleFeatureFlag = () => {}, navigati
           ) : (
             <BarChart
               data={{
-                labels: ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct"],
-                datasets: [{ data: [900, 1450, 1220, 1300, 980, 1410, 1760] }],
+                labels: [...Array(7)].map((_, idx) => {
+                  const d = new Date();
+                  d.setDate(d.getDate() - (6 - idx));
+                  return `${d.getMonth() + 1}/${d.getDate()}`;
+                }),
+                datasets: [{
+                  data: [...Array(7)].map((_, idx) => {
+                    const d = new Date();
+                    d.setDate(d.getDate() - (6 - idx));
+                    const y = d.getFullYear();
+                    const m = d.getMonth();
+                    const day = d.getDate();
+                    return cases.filter((c) => {
+                      const dt = new Date(c.dateInitiated || c.assignedAt || c.createdAt || 0);
+                      return dt.getFullYear() === y && dt.getMonth() === m && dt.getDate() === day;
+                    }).length;
+                  }),
+                }],
               }}
               width={chartWidth + (isWide ? 60 : 0)}
               height={220}
@@ -714,42 +800,45 @@ function OverviewTab({ featureFlags = {}, toggleFeatureFlag = () => {}, navigati
 
         <View style={styles.dsCountryCard}>
           <View style={styles.dsCardHeaderRow}>
-            <Text style={styles.dsCardTitle}>Customers Active</Text>
+            <Text style={styles.dsCardTitle}>Top Case Cities</Text>
             <Text style={styles.dsCardSubTitle}>Live</Text>
           </View>
-          {OVERVIEW_COUNTRIES.map((country) => (
-            <View key={country.id} style={styles.dsCountryRow}>
+          {sortedCities.map(([city, count]) => {
+            const pct = cases.length ? Math.max(3, Math.round((count / cases.length) * 100)) : 0;
+            return (
+            <View key={city} style={styles.dsCountryRow}>
               <View style={styles.dsCountryLabelRow}>
-                <Text style={styles.dsCountryName}>{country.name}</Text>
-                <Text style={styles.dsCountryValue}>{country.count.toLocaleString()} ({country.pct}%)</Text>
+                <Text style={styles.dsCountryName}>{city}</Text>
+                <Text style={styles.dsCountryValue}>{count.toLocaleString()} ({pct}%)</Text>
               </View>
               <View style={styles.dsCountryTrack}>
-                <View style={[styles.dsCountryFill, { width: `${country.pct}%`, backgroundColor: country.color }]} />
+                <View style={[styles.dsCountryFill, { width: `${pct}%`, backgroundColor: "#38bdf8" }]} />
               </View>
             </View>
-          ))}
+          )})}
+          {sortedCities.length === 0 && <Text style={{ color: "#94a3b8" }}>No city metadata in cases yet.</Text>}
         </View>
       </View>
 
       <View style={styles.dsTransactionCard}>
         <View style={styles.dsCardHeaderRow}>
-          <Text style={styles.dsCardTitle}>Recent Transaction</Text>
-          <Text style={styles.dsCardSubTitle}>{OVERVIEW_TRANSACTIONS.length} rows</Text>
+          <Text style={styles.dsCardTitle}>Recent Case Activity</Text>
+          <Text style={styles.dsCardSubTitle}>{recentCases.length} rows</Text>
         </View>
         <View style={styles.dsTransactionHeader}>
-          <Text style={[styles.dsTransactionHeaderText, { flex: 1.4 }]}>ORDER ID</Text>
-          <Text style={[styles.dsTransactionHeaderText, { flex: 1.3 }]}>PRODUCT</Text>
-          <Text style={[styles.dsTransactionHeaderText, { flex: 0.8 }]}>PRICE</Text>
-          <Text style={[styles.dsTransactionHeaderText, { flex: 1 }]}>CUSTOMER</Text>
+          <Text style={[styles.dsTransactionHeaderText, { flex: 1.2 }]}>REF</Text>
+          <Text style={[styles.dsTransactionHeaderText, { flex: 1.1 }]}>STATUS</Text>
+          <Text style={[styles.dsTransactionHeaderText, { flex: 1.1 }]}>ASSIGNEE</Text>
+          <Text style={[styles.dsTransactionHeaderText, { flex: 1.2 }]}>CITY</Text>
           <Text style={[styles.dsTransactionHeaderText, { flex: 1 }]}>DATE</Text>
         </View>
-        {OVERVIEW_TRANSACTIONS.map((tx) => (
-          <View key={tx.id} style={styles.dsTransactionRow}>
-            <Text style={[styles.dsTransactionCell, { flex: 1.4 }]} numberOfLines={1}>{tx.id}</Text>
-            <Text style={[styles.dsTransactionCell, { flex: 1.3 }]} numberOfLines={1}>{tx.product}</Text>
-            <Text style={[styles.dsTransactionCell, { flex: 0.8, color: "#f8fafc" }]}>{tx.price}</Text>
-            <Text style={[styles.dsTransactionCell, { flex: 1 }]} numberOfLines={1}>{tx.customer}</Text>
-            <Text style={[styles.dsTransactionCell, { flex: 1 }]}>{tx.date}</Text>
+        {recentCases.map((c) => (
+          <View key={c.id} style={styles.dsTransactionRow}>
+            <Text style={[styles.dsTransactionCell, { flex: 1.2 }]} numberOfLines={1}>{c.matrixRefNo || c.RefNo || c.id}</Text>
+            <Text style={[styles.dsTransactionCell, { flex: 1.1, color: "#f8fafc" }]}>{String(c.status || "unknown").toUpperCase()}</Text>
+            <Text style={[styles.dsTransactionCell, { flex: 1.1 }]} numberOfLines={1}>{c.assigneeName || c.assignedTo || "-"}</Text>
+            <Text style={[styles.dsTransactionCell, { flex: 1.2 }]} numberOfLines={1}>{c.city || "-"}</Text>
+            <Text style={[styles.dsTransactionCell, { flex: 1 }]}>{new Date(c.updatedAt || c.assignedAt || c.dateInitiated || 0).toLocaleDateString()}</Text>
           </View>
         ))}
       </View>
@@ -1539,33 +1628,32 @@ function UsersTab({ users, onRevoke, onGrant }) {
   );
 }
 
-function TrackingTab() {
-  // Real analytics stream from logs
-  const [events, setEvents] = useState([]);
-
-  useEffect(() => {
-    const updateEvents = () => {
-      // Filter logs that look like events or just show all logs in a stream
-      const analyticsLogs = LOG_BUFFER.filter(l => 
-        l.message.toLowerCase().includes('event') || 
-        l.message.toLowerCase().includes('analytics') ||
-        l.message.toLowerCase().includes('track')
-      ).map(l => ({ id: l.id, name: 'EVENT', params: l.message }));
-      setEvents(analyticsLogs);
-    };
-    LISTENERS.add(updateEvents);
-    updateEvents();
-    return () => LISTENERS.delete(updateEvents);
-  }, []);
+function TrackingTab({ cases = [], logs = [] }) {
+  const events = [...cases]
+    .sort((a, b) => {
+      const at = new Date(a.updatedAt || a.completedAt || a.assignedAt || a.dateInitiated || 0).getTime();
+      const bt = new Date(b.updatedAt || b.completedAt || b.assignedAt || b.dateInitiated || 0).getTime();
+      return bt - at;
+    })
+    .slice(0, 80)
+    .map((c) => ({
+      id: c.id,
+      time: new Date(c.updatedAt || c.completedAt || c.assignedAt || c.dateInitiated || 0),
+      name: String(c.status || "unknown").toUpperCase(),
+      params: `${c.matrixRefNo || c.RefNo || c.id} • ${c.assigneeName || c.assignedTo || "unassigned"} • ${c.city || "unknown city"}`,
+    }));
 
   return (
     <View style={styles.flexContainer}>
       <View style={styles.toolbar}>
-        <Text style={styles.toolbarTitle}>Live Analytics Stream</Text>
+        <Text style={styles.toolbarTitle}>Live Case Tracking</Text>
         <View style={styles.liveIndicator}>
           <View style={styles.dot} />
-          <Text style={styles.liveText}>LIVE</Text>
+          <Text style={styles.liveText}>{events.length} EVENTS</Text>
         </View>
+      </View>
+      <View style={{ paddingHorizontal: 16, paddingBottom: 6 }}>
+        <Text style={{ color: "#94a3b8", fontSize: 12 }}>Console logs captured: {logs.length}</Text>
       </View>
       <FlatList
         data={events}
@@ -1573,7 +1661,7 @@ function TrackingTab() {
         contentContainerStyle={{ padding: 16 }}
         renderItem={({ item }) => (
           <View style={styles.logRow}>
-            <Text style={styles.logTime}>{new Date(parseInt(item.id)).toLocaleTimeString()}</Text>
+            <Text style={styles.logTime}>{item.time.toLocaleTimeString()}</Text>
             <Text style={styles.logTag}>{item.name}</Text>
             <Text style={styles.logMessage}>{item.params}</Text>
           </View>
@@ -2033,23 +2121,31 @@ function StatisticsTab({ users }) {
 }
 
 
-function ControlCenterTab({ users = [], logs = [], networkRequests = [] }) {
+function ControlCenterTab({ users = [], logs = [], networkRequests = [], cases = [], alerts = [], tickets = [], featureFlags = {} }) {
   const totalUsers = users.length;
   const activeDaily = users.filter((u) => u.lastSeen && (Date.now() - new Date(u.lastSeen).getTime()) < 24 * 60 * 60 * 1000).length;
   const activeMonthly = users.filter((u) => u.lastSeen && (Date.now() - new Date(u.lastSeen).getTime()) < 30 * 24 * 60 * 60 * 1000).length;
   const totalReq = networkRequests.length;
   const errorReq = networkRequests.filter((r) => r.status === "ERR" || Number(r.status) >= 400).length;
   const errorRate = totalReq ? ((errorReq / totalReq) * 100).toFixed(2) : "0.00";
+  const openCases = cases.filter((c) => ["open", "assigned", "audit", "reverted", "fired"].includes(String(c.status || "").toLowerCase())).length;
+  const completedCases = cases.filter((c) => String(c.status || "").toLowerCase() === "completed").length;
+  const activeAlerts = alerts.filter((a) => a?.active !== false).length;
+  const openTickets = tickets.filter((t) => String(t?.status || "").toLowerCase() !== "closed").length;
 
   const snapshot = [
     ["Total Users", totalUsers],
     ["Active Users (24h)", activeDaily],
     ["Active Users (30d)", activeMonthly],
-    ["Revenue", "Not Connected"],
+    ["Total Cases", cases.length],
+    ["Open Cases", openCases],
+    ["Completed Cases", completedCases],
+    ["Open Tickets", openTickets],
+    ["Active Alerts", activeAlerts],
     ["API Requests", totalReq],
     ["Error Rate", `${errorRate}%`],
-    ["Server Uptime", "99.97% (30d)"],
-    ["Latest Deploy", "v1.0.4 build 203"],
+    ["Maintenance(Admin)", String(featureFlags.maintenanceModeAdmin ? "ON" : "OFF")],
+    ["Maintenance(Member)", String(featureFlags.maintenanceModeMember ? "ON" : "OFF")],
   ];
 
   return (
@@ -2457,35 +2553,232 @@ function AlertsTab({ currentUser }) {
   );
 }
 
-function RolesPermissionsTab({ canManage }) {
+function StatusTab({ cases = [], users = [], currentUser }) {
+  const [search, setSearch] = useState("");
+  const [updating, setUpdating] = useState({});
+
+  const userMap = users.reduce((acc, u) => {
+    acc[u.id] = u;
+    return acc;
+  }, {});
+
+  const filtered = cases.filter((c) => {
+    const s = search.trim().toLowerCase();
+    if (!s) return true;
+    return (
+      String(c.matrixRefNo || c.RefNo || c.id || "").toLowerCase().includes(s) ||
+      String(c.candidateName || "").toLowerCase().includes(s) ||
+      String(c.assigneeName || c.assignedTo || "").toLowerCase().includes(s)
+    );
+  }).slice(0, 200);
+
+  const updateCaseStatus = async (item, nextStatus) => {
+    if (!nextStatus || nextStatus === item.status) return;
+    setUpdating((prev) => ({ ...prev, [item.id]: true }));
+    try {
+      const nowIso = new Date().toISOString();
+      const payload = {
+        status: nextStatus,
+        updatedAt: nowIso,
+        devStatusUpdatedAt: Date.now(),
+        devStatusUpdatedBy: currentUser?.uid || "dev_manual_override",
+      };
+      if (nextStatus === "completed") {
+        payload.completedAt = item.completedAt || nowIso;
+        payload.finalizedAt = Date.now();
+      }
+      if (nextStatus === "reverted") payload.revertedAt = Date.now();
+      if (nextStatus === "audit") payload.auditAt = Date.now();
+      if (nextStatus === "fired") payload.firedAt = Date.now();
+      await firebase.database().ref(`cases/${item.id}`).update(payload);
+    } catch (error) {
+      Alert.alert("Status Update Failed", error.message);
+    } finally {
+      setUpdating((prev) => ({ ...prev, [item.id]: false }));
+    }
+  };
+
+  return (
+    <View style={styles.flexContainer}>
+      <View style={styles.searchContainer}>
+        <Ionicons name="search-outline" size={18} color="#94a3b8" />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search ref/candidate/assignee..."
+          placeholderTextColor="#64748b"
+          value={search}
+          onChangeText={setSearch}
+        />
+      </View>
+      <FlatList
+        data={filtered}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={{ padding: 16, paddingTop: 0 }}
+        renderItem={({ item }) => {
+          const assignee = userMap[item.assignedTo];
+          return (
+            <View style={styles.statusCaseCard}>
+              <View style={styles.statusCaseTop}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.statusCaseRef}>{item.matrixRefNo || item.RefNo || item.id}</Text>
+                  <Text style={styles.statusCaseMeta} numberOfLines={1}>{item.candidateName || "Unknown Candidate"} • {item.city || "Unknown City"}</Text>
+                  <Text style={styles.statusCaseMeta} numberOfLines={1}>Assignee: {item.assigneeName || assignee?.name || item.assignedTo || "Unassigned"}</Text>
+                </View>
+                <View style={[styles.badge, { backgroundColor: getStatusColor(item.status || "unknown") }]}>
+                  <Text style={styles.badgeText}>{String(item.status || "unknown").toUpperCase()}</Text>
+                </View>
+              </View>
+              <View style={styles.statusPickerWrap}>
+                <Text style={styles.statusPickerLabel}>Change Status</Text>
+                <Picker
+                  selectedValue={String(item.status || "open").toLowerCase()}
+                  onValueChange={(value) => updateCaseStatus(item, value)}
+                  style={styles.statusPicker}
+                  dropdownIconColor="#e2e8f0"
+                >
+                  {STATUS_OPTIONS.map((s) => (
+                    <Picker.Item key={s} label={s.toUpperCase()} value={s} color="#e2e8f0" />
+                  ))}
+                </Picker>
+                {updating[item.id] && <ActivityIndicator color="#38bdf8" size="small" />}
+              </View>
+            </View>
+          );
+        }}
+        ListEmptyComponent={<Text style={{ color: "#94a3b8", textAlign: "center", marginTop: 40 }}>No cases found.</Text>}
+      />
+    </View>
+  );
+}
+
+function RolesPermissionsTab({ canManage, users = [] }) {
+  const roleCounts = users.reduce((acc, u) => {
+    const role = String(u.role || "unknown").toLowerCase();
+    acc[role] = (acc[role] || 0) + 1;
+    return acc;
+  }, {});
   return (
     <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
-      <ModuleChecklist canManage={canManage} title="Roles & Permissions" items={[
-        "Role-based access control (RBAC)",
-        "Custom permission creation",
-        "Feature-level access control",
-        "Temporary access grants",
-        "Audit trail of permission changes",
-      ]} />
+      <View style={styles.card}>
+        <Text style={[styles.sectionTitle, { marginBottom: 8 }]}>Roles & Permissions (Live)</Text>
+        <InfoRow label="Total Users" value={String(users.length)} />
+        {Object.keys(roleCounts).sort().map((role) => (
+          <InfoRow key={role} label={`Role: ${role}`} value={String(roleCounts[role])} />
+        ))}
+        {!canManage && <Text style={{ color: "#ffbb33", marginTop: 8 }}>Read-only mode for this account.</Text>}
+      </View>
     </ScrollView>
   );
 }
 
-function ContentManagementTab({ canManage }) {
+function ContentManagementTab({ canManage, cases = [] }) {
+  const uploaded = cases.filter((c) => !!c.ingestedAt).length;
+  const withPhotos = cases.filter((c) => !!c.photosFolderLink).length;
+  const withForms = cases.filter((c) => !!c.filledForm || !!c.filledFormLink).length;
   return (
     <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
-      <ModuleChecklist canManage={canManage} title="Content Management" items={[
-        "Approve / Reject content",
-        "Edit or delete posts",
-        "Flag reports moderation",
-        "Media library control",
-        "Bulk operations + scheduled publishing",
-      ]} />
+      <View style={styles.card}>
+        <Text style={[styles.sectionTitle, { marginBottom: 8 }]}>Content Layer (Cases)</Text>
+        <InfoRow label="Total Cases" value={String(cases.length)} />
+        <InfoRow label="Uploaded/Ingested Cases" value={String(uploaded)} />
+        <InfoRow label="Cases With Photo Folder" value={String(withPhotos)} />
+        <InfoRow label="Cases With Filled Form" value={String(withForms)} />
+        {!canManage && <Text style={{ color: "#ffbb33", marginTop: 8 }}>Read-only mode for this account.</Text>}
+      </View>
     </ScrollView>
   );
 }
 
-function AppConfigTab({ featureFlags = {}, toggleFeatureFlag = () => {}, canManage }) {
+function AppConfigTab({ featureFlags = {}, toggleFeatureFlag = () => {}, canManage, cases = [], users = [], currentUser }) {
+  const [sendingOverdueWarning, setSendingOverdueWarning] = useState(false);
+  const [lastOverdueRun, setLastOverdueRun] = useState(null);
+
+  const sendOverdueCaseWarnings = async () => {
+    if (!canManage) {
+      Alert.alert("Access Denied", "Only admin/dev can trigger overdue warnings.");
+      return;
+    }
+
+    const now = Date.now();
+    const overdueMs = 4 * 24 * 60 * 60 * 1000;
+    const userMap = users.reduce((acc, u) => {
+      acc[u.id] = u;
+      return acc;
+    }, {});
+
+    const overdueCases = cases
+      .map((c) => {
+        const status = String(c?.status || "").toLowerCase();
+        if (!c?.assignedTo) return null;
+        if (status === "completed" || status === "closed") return null;
+        const baseTime = new Date(c.assignedAt || c.dateInitiated || c.createdAt || 0).getTime();
+        if (!baseTime || Number.isNaN(baseTime)) return null;
+        const ageMs = now - baseTime;
+        if (ageMs <= overdueMs) return null;
+        const ageDays = Math.floor(ageMs / (24 * 60 * 60 * 1000));
+        const refNo = c.matrixRefNo || c.RefNo || c.id;
+        return { ...c, refNo, ageDays };
+      })
+      .filter(Boolean);
+
+    if (overdueCases.length === 0) {
+      Alert.alert("No Overdue Cases", "No assigned cases are older than 4 days.");
+      return;
+    }
+
+    try {
+      setSendingOverdueWarning(true);
+      const groupedByMember = overdueCases.reduce((acc, c) => {
+        if (!acc[c.assignedTo]) acc[c.assignedTo] = [];
+        acc[c.assignedTo].push(c);
+        return acc;
+      }, {});
+      const memberIds = Object.keys(groupedByMember);
+
+      await Promise.all(
+        memberIds.map((uid) => {
+          const member = userMap[uid] || {};
+          const memberCases = groupedByMember[uid] || [];
+          const caseList = memberCases.map((c) => `${c.refNo} (${c.ageDays}d)`).join(", ");
+          const message = `Day limit exceeded. Overdue cases: ${caseList}. Complete immediately to avoid being fined.`;
+          return firebase.database().ref("memberAlerts").push({
+            message,
+            severity: "critical",
+            active: true,
+            targetType: "user",
+            targetUid: uid,
+            targetQuery: String(member.uniqueId || member.email || uid),
+            overdueCaseIds: memberCases.map((c) => c.id),
+            overdueCaseRefs: memberCases.map((c) => c.refNo),
+            overdueCaseDays: memberCases.map((c) => c.ageDays),
+            overdueCaseCount: memberCases.length,
+            templateId: "overdue_case_4_days_consolidated",
+            createdAt: Date.now(),
+            createdBy: currentUser?.email || currentUser?.uid || "dev",
+          });
+        })
+      );
+
+      const impactedUsers = memberIds.length;
+      setLastOverdueRun({
+        at: Date.now(),
+        totalAlerts: impactedUsers,
+        impactedUsers,
+        rows: overdueCases.slice(0, 12).map((c) => ({
+          id: c.id,
+          refNo: c.refNo,
+          assignee: c.assigneeName || userMap[c.assignedTo]?.name || c.assignedTo,
+          days: c.ageDays,
+        })),
+      });
+      Alert.alert("Warnings Sent", `Sent ${impactedUsers} consolidated warning(s) to ${impactedUsers} member(s).`);
+    } catch (e) {
+      Alert.alert("Error", "Failed to send warnings: " + e.message);
+    } finally {
+      setSendingOverdueWarning(false);
+    }
+  };
+
   return (
     <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
       <ModuleChecklist canManage={canManage} title="App Configuration Panel" items={[
@@ -2506,51 +2799,93 @@ function AppConfigTab({ featureFlags = {}, toggleFeatureFlag = () => {}, canMana
           </View>
         ))}
       </View>
+      <View style={[styles.card, { marginTop: 12 }]}>
+        <Text style={[styles.sectionTitle, { marginBottom: 8 }]}>Overdue Warning Trigger</Text>
+        <Text style={{ color: "#cbd5e1", fontSize: 12, marginBottom: 10 }}>
+          Sends a critical alert to members with assigned cases older than 4 days.
+        </Text>
+        <GradientButton
+          colors={["#b91c1c", "#ef4444"]}
+          icon="warning-outline"
+          label={sendingOverdueWarning ? "Sending Warnings..." : "Warn Overdue Members (4+ days)"}
+          onPress={sendOverdueCaseWarnings}
+          disabled={!canManage || sendingOverdueWarning}
+          loading={sendingOverdueWarning}
+        />
+        {lastOverdueRun && (
+          <View style={{ marginTop: 12 }}>
+            <InfoRow label="Last Run" value={new Date(lastOverdueRun.at).toLocaleString()} />
+            <InfoRow label="Alerts Sent" value={String(lastOverdueRun.totalAlerts)} />
+            <InfoRow label="Members Impacted" value={String(lastOverdueRun.impactedUsers)} />
+            <Text style={{ color: "#94a3b8", fontSize: 12, marginTop: 8, marginBottom: 6 }}>Recent alerted cases</Text>
+            {lastOverdueRun.rows.map((r) => (
+              <Text key={r.id} style={{ color: "#e2e8f0", fontSize: 12, marginBottom: 4 }}>
+                {r.refNo} • {r.assignee} • {r.days} days
+              </Text>
+            ))}
+          </View>
+        )}
+      </View>
     </ScrollView>
   );
 }
 
-function AnalyticsInsightsTab() {
+function AnalyticsInsightsTab({ cases = [], users = [], tickets = [] }) {
+  const statusCounts = cases.reduce((acc, c) => {
+    const key = String(c.status || "unknown").toLowerCase();
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
   return (
     <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
-      <ModuleChecklist title="Analytics & Insights" items={[
-        "User growth",
-        "Retention rate",
-        "Session duration",
-        "Conversion rate",
-        "Revenue analytics",
-        "Funnel tracking",
-        "Cohort analysis",
-      ]} />
+      <View style={styles.card}>
+        <Text style={[styles.sectionTitle, { marginBottom: 8 }]}>Analytics Hub (Live)</Text>
+        <InfoRow label="Users" value={String(users.length)} />
+        <InfoRow label="Cases" value={String(cases.length)} />
+        <InfoRow label="Tickets" value={String(tickets.length)} />
+        {Object.keys(statusCounts).sort().map((status) => (
+          <InfoRow key={status} label={`Cases: ${status}`} value={String(statusCounts[status])} />
+        ))}
+      </View>
     </ScrollView>
   );
 }
 
-function MonitoringTab({ logs = [], requests = [] }) {
+function MonitoringTab({ logs = [], requests = [], cases = [] }) {
   const crashCount = logs.filter((l) => l.message?.toLowerCase().includes("crash")).length;
+  const errReq = requests.filter((r) => r.status === "ERR" || Number(r.status) >= 400).length;
+  const updatedToday = cases.filter((c) => {
+    const d = new Date(c.updatedAt || c.assignedAt || c.completedAt || 0);
+    const t = new Date();
+    return d.getFullYear() === t.getFullYear() && d.getMonth() === t.getMonth() && d.getDate() === t.getDate();
+  }).length;
   return (
     <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
-      <ModuleChecklist title="Logs & Monitoring" items={[
-        `Real-time logs (${logs.length})`,
-        `API request logs (${requests.length})`,
-        `Crash reports (${crashCount})`,
-        "Performance monitoring",
-        "Alerts (Email/Slack)",
-      ]} />
+      <View style={styles.card}>
+        <Text style={[styles.sectionTitle, { marginBottom: 8 }]}>Monitoring (Live)</Text>
+        <InfoRow label="Logs Captured" value={String(logs.length)} />
+        <InfoRow label="Network Requests" value={String(requests.length)} />
+        <InfoRow label="Request Errors" value={String(errReq)} />
+        <InfoRow label="Crash-like Logs" value={String(crashCount)} />
+        <InfoRow label="Cases Updated Today" value={String(updatedToday)} />
+      </View>
     </ScrollView>
   );
 }
 
-function BillingSubscriptionTab({ canManage }) {
+function BillingSubscriptionTab({ canManage, tickets = [], cases = [], users = [] }) {
+  const completed = cases.filter((c) => String(c.status || "").toLowerCase() === "completed").length;
+  const closedTickets = tickets.filter((t) => String(t.status || "").toLowerCase() === "closed").length;
   return (
     <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
-      <ModuleChecklist canManage={canManage} title="Billing & Subscription Control" items={[
-        "View subscriptions",
-        "Refund management",
-        "Plan upgrades/downgrades",
-        "Invoice management",
-        "Promo codes + payment logs",
-      ]} />
+      <View style={styles.card}>
+        <Text style={[styles.sectionTitle, { marginBottom: 8 }]}>Billing / Ops Signals (Live)</Text>
+        <InfoRow label="Total Users" value={String(users.length)} />
+        <InfoRow label="Completed Cases (Billable Candidate)" value={String(completed)} />
+        <InfoRow label="Closed Tickets" value={String(closedTickets)} />
+        <InfoRow label="Open Tickets" value={String(Math.max(0, tickets.length - closedTickets))} />
+        {!canManage && <Text style={{ color: "#ffbb33", marginTop: 8 }}>Read-only mode for this account.</Text>}
+      </View>
     </ScrollView>
   );
 }
@@ -2569,29 +2904,41 @@ function SecurityCenterTab({ canManage }) {
   );
 }
 
-function NotificationCenterTab() {
+function NotificationCenterTab({ alerts = [], users = [] }) {
+  const active = alerts.filter((a) => a?.active !== false).length;
+  const acknowledgements = alerts.reduce((n, a) => n + Object.keys(a?.ackBy || {}).length, 0);
   return (
     <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
-      <ModuleChecklist title="Notification & Communication" items={[
-        "Send push notifications",
-        "Send bulk emails",
-        "In-app messages",
-        "Announcement banner control",
-      ]} />
+      <View style={styles.card}>
+        <Text style={[styles.sectionTitle, { marginBottom: 8 }]}>Comms Center (Live)</Text>
+        <InfoRow label="Directory Size" value={String(users.length)} />
+        <InfoRow label="Alerts (Total)" value={String(alerts.length)} />
+        <InfoRow label="Alerts (Active)" value={String(active)} />
+        <InfoRow label="Total Acknowledgements" value={String(acknowledgements)} />
+      </View>
     </ScrollView>
   );
 }
 
-function ApiIntegrationTab({ canManage }) {
+function ApiIntegrationTab({ canManage, requests = [], logs = [] }) {
+  const methods = requests.reduce((acc, r) => {
+    const m = String(r.method || "UNKNOWN").toUpperCase();
+    acc[m] = (acc[m] || 0) + 1;
+    return acc;
+  }, {});
+  const errReq = requests.filter((r) => r.status === "ERR" || Number(r.status) >= 400).length;
   return (
     <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
-      <ModuleChecklist canManage={canManage} title="API & Integration Management" items={[
-        "API key creation",
-        "Rate limit settings",
-        "Webhook management",
-        "API usage tracking",
-        "Third-party integration control",
-      ]} />
+      <View style={styles.card}>
+        <Text style={[styles.sectionTitle, { marginBottom: 8 }]}>API Monitor (Live)</Text>
+        <InfoRow label="Captured Requests" value={String(requests.length)} />
+        <InfoRow label="Request Errors" value={String(errReq)} />
+        <InfoRow label="Relevant Logs" value={String(logs.length)} />
+        {Object.keys(methods).sort().map((m) => (
+          <InfoRow key={m} label={`Method ${m}`} value={String(methods[m])} />
+        ))}
+        {!canManage && <Text style={{ color: "#ffbb33", marginTop: 8 }}>Read-only mode for this account.</Text>}
+      </View>
     </ScrollView>
   );
 }
@@ -2831,6 +3178,32 @@ const styles = StyleSheet.create({
   userDetails: { flexDirection: "row", justifyContent: "space-between", marginBottom: 12, paddingVertical: 8, borderTopWidth: 1, borderBottomWidth: 1, borderColor: "rgba(255,255,255,0.05)" },
   detailText: { color: "#888", fontSize: 12 },
   userActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10 },
+  statusCaseCard: {
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+  statusCaseTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  statusCaseRef: { color: "#e2e8f0", fontSize: 14, fontWeight: "700" },
+  statusCaseMeta: { color: "#94a3b8", fontSize: 12, marginTop: 2 },
+  statusPickerWrap: {
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.08)",
+    paddingTop: 10,
+  },
+  statusPickerLabel: { color: "#cbd5e1", fontSize: 12, marginBottom: 4, fontWeight: "600" },
+  statusPicker: {
+    color: "#e2e8f0",
+    backgroundColor: "rgba(15,23,42,0.7)",
+    borderRadius: 8,
+  },
 
   // Logs
   filterBar: { flexDirection: "row", padding: 10, alignItems: "center" },

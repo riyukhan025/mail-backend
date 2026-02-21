@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useEffect, useMemo, useState } from "react";
-import { StyleSheet } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Alert, AppState, Platform, StyleSheet, View } from "react-native";
 import "react-native-gesture-handler";
 
 import { NavigationContainer } from "@react-navigation/native";
@@ -8,6 +8,7 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { AuthContext } from "./app/AuthContext";
+import firebase from "./firebase";
 
 /* ---------------- Screens ---------------- */
 import AdminEmailScreen from "./app/AdminEmailScreen";
@@ -49,6 +50,8 @@ import VerifyProfileScreen from "./app/VerifyProfileScreen";
 
 /* ---------------- Stack ---------------- */
 const Stack = createNativeStackNavigator();
+const INACTIVITY_LIMIT_MS = 60 * 60 * 1000; // 1 hour
+const ENABLE_INACTIVITY_TIMEOUT = Platform.OS !== "web";
 
 /* ---------------- Auth Stack ---------------- */
 function AuthStack() {
@@ -158,6 +161,47 @@ function AppContent() {
   const [dbUser, setDbUser] = useState(null);
   const [ready, setReady] = useState(false);
   const [language, setLanguage] = useState("en");
+  const inactivityTimerRef = useRef(null);
+  const appStateRef = useRef(AppState.currentState);
+
+  const performLogout = useCallback(async () => {
+    try {
+      await AsyncStorage.removeItem("dbUser");
+    } catch (e) {
+      console.log("Failed to clear stored user during logout", e);
+    }
+
+    try {
+      const auth = firebase.auth();
+      if (auth?.currentUser) await auth.signOut();
+    } catch (e) {
+      console.log("Firebase signout failed during inactivity logout", e);
+    }
+
+    setDbUser(null);
+  }, []);
+
+  const clearInactivityTimer = useCallback(() => {
+    if (inactivityTimerRef.current) {
+      clearTimeout(inactivityTimerRef.current);
+      inactivityTimerRef.current = null;
+    }
+  }, []);
+
+  const resetInactivityTimer = useCallback(() => {
+    if (!dbUser || !ENABLE_INACTIVITY_TIMEOUT) return;
+    clearInactivityTimer();
+
+    inactivityTimerRef.current = setTimeout(() => {
+      Alert.alert("Session Timeout", "Logged out after 1 hour of inactivity.");
+      performLogout();
+    }, INACTIVITY_LIMIT_MS);
+  }, [clearInactivityTimer, dbUser, performLogout]);
+
+  const onUserInteraction = useCallback(() => {
+    resetInactivityTimer();
+    return false;
+  }, [resetInactivityTimer]);
 
   useEffect(() => {
     const restoreUser = async () => {
@@ -179,32 +223,67 @@ function AppContent() {
     restoreUser();
   }, []);
 
+  useEffect(() => {
+    if (!ENABLE_INACTIVITY_TIMEOUT) return;
+    if (!dbUser) {
+      clearInactivityTimer();
+      return;
+    }
+    resetInactivityTimer();
+    return clearInactivityTimer;
+  }, [dbUser, resetInactivityTimer, clearInactivityTimer]);
+
+  useEffect(() => {
+    if (!ENABLE_INACTIVITY_TIMEOUT) return;
+    const sub = AppState.addEventListener("change", (nextState) => {
+      const prevState = appStateRef.current;
+      appStateRef.current = nextState;
+
+      if (nextState === "active" && /inactive|background/.test(prevState)) {
+        resetInactivityTimer();
+      } else if (/inactive|background/.test(nextState)) {
+        clearInactivityTimer();
+      }
+    });
+
+    return () => sub.remove();
+  }, [clearInactivityTimer, resetInactivityTimer]);
+
   const authContext = useMemo(() => ({
     user: dbUser,
-    login: (userData) => setDbUser(userData),
-    logout: () => setDbUser(null),
+    login: async (userData) => {
+      setDbUser(userData);
+      await AsyncStorage.setItem("dbUser", JSON.stringify(userData));
+    },
+    logout: performLogout,
     language,
     setLanguage: async (lang) => {
       setLanguage(lang);
       await AsyncStorage.setItem("appLanguage", lang);
     },
-  }), [dbUser, language]);
+  }), [dbUser, language, performLogout]);
 
   if (!ready) return <SplashScreen />;
 
   return (
     <AuthContext.Provider value={authContext}>
-      <NavigationContainer>
-        {!dbUser ? (
-          <AuthStack />
-        ) : dbUser.role === "admin" ? (
-          <AdminStack />
-        ) : dbUser.role === "dev" ? (
-          <DevStack />
-        ) : (
-          <MemberStack />
-        )}
-      </NavigationContainer>
+      <View
+        style={{ flex: 1 }}
+        onStartShouldSetResponderCapture={onUserInteraction}
+        onMoveShouldSetResponderCapture={onUserInteraction}
+      >
+        <NavigationContainer onStateChange={resetInactivityTimer}>
+          {!dbUser ? (
+            <AuthStack />
+          ) : dbUser.role === "admin" ? (
+            <AdminStack />
+          ) : dbUser.role === "dev" ? (
+            <DevStack />
+          ) : (
+            <MemberStack />
+          )}
+        </NavigationContainer>
+      </View>
     </AuthContext.Provider>
   );
 }
