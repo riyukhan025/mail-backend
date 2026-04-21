@@ -3,7 +3,7 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as Location from "expo-location";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, Image, Linking, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { captureRef } from "react-native-view-shot";
 
 export default function CameraGPSScreen({ navigation, route }) {
@@ -26,13 +26,21 @@ export default function CameraGPSScreen({ navigation, route }) {
   /* ---------------- Permissions ---------------- */
   useEffect(() => {
     (async () => {
-      if (permission && !permission.granted) {
-        await requestPermission();
-      }
-      const locStatus = await Location.requestForegroundPermissionsAsync();
-      setHasLocationPermission(locStatus.status === "granted");
+      if (permission && permission.canAskAgain === false) return;
+      if (!permission?.granted) await requestPermission();
     })();
-  }, [permission]);
+  }, [permission?.granted, permission?.canAskAgain, requestPermission]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const locStatus = await Location.requestForegroundPermissionsAsync();
+        setHasLocationPermission(locStatus.status === "granted");
+      } catch {
+        setHasLocationPermission(false);
+      }
+    })();
+  }, []);
 
   /* ---------------- Clock ---------------- */
   useEffect(() => {
@@ -152,7 +160,7 @@ export default function CameraGPSScreen({ navigation, route }) {
       };
       processSnapshot();
     }
-  }, [previewUri]);
+  }, [previewUri, category, currentLocation, currentTime, currentAddress, onPhotosCapture, navigation]);
 
   /* ---------------- UI helpers ---------------- */
   const toggleFlash = () => setFlash((f) => (f === "off" ? "on" : "off"));
@@ -167,11 +175,68 @@ export default function CameraGPSScreen({ navigation, route }) {
     );
   };
 
-  if (!permission || !permission.granted)
-    return <View style={styles.container}><Text style={styles.text}>Requesting permissions…</Text></View>;
+  if (!permission)
+    return (
+      <View style={styles.container}>
+        <Text style={styles.text}>Loading camera permissions…</Text>
+      </View>
+    );
+
+  if (!permission.granted) {
+    return (
+      <View style={styles.container}>
+        <Ionicons name="camera-outline" size={56} color="#fff" style={{ marginTop: 50, opacity: 0.9 }} />
+        <Text style={styles.text}>Camera permission is required</Text>
+        <TouchableOpacity
+          style={[styles.permissionButton, { backgroundColor: "rgba(96,165,250,0.25)", borderColor: "rgba(96,165,250,0.8)" }]}
+          onPress={async () => {
+            try {
+              await requestPermission();
+            } catch {}
+          }}
+        >
+          <Text style={styles.permissionButtonText}>Grant Camera Access</Text>
+        </TouchableOpacity>
+        {permission.canAskAgain === false && (
+          <TouchableOpacity
+            style={[styles.permissionButton, { backgroundColor: "rgba(255,255,255,0.12)", borderColor: "rgba(255,255,255,0.35)" }]}
+            onPress={async () => {
+              try {
+                if (Platform.OS !== "web") await Linking.openSettings();
+              } catch {}
+            }}
+          >
+            <Text style={styles.permissionButtonText}>Open Settings</Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity style={{ marginTop: 16, padding: 8 }} onPress={() => navigation.goBack()}>
+          <Text style={{ color: "rgba(255,255,255,0.85)" }}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   if (hasLocationPermission === false)
-    return <View style={styles.container}><Text style={styles.text}>Location permission required</Text></View>;
+    return (
+      <View style={styles.container}>
+        <Ionicons name="location-outline" size={56} color="#fff" style={{ marginTop: 50, opacity: 0.9 }} />
+        <Text style={styles.text}>Location permission required</Text>
+        <TouchableOpacity
+          style={[styles.permissionButton, { backgroundColor: "rgba(96,165,250,0.25)", borderColor: "rgba(96,165,250,0.8)" }]}
+          onPress={async () => {
+            try {
+              const locStatus = await Location.requestForegroundPermissionsAsync();
+              setHasLocationPermission(locStatus.status === "granted");
+            } catch {}
+          }}
+        >
+          <Text style={styles.permissionButtonText}>Grant Location Access</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={{ marginTop: 16, padding: 8 }} onPress={() => navigation.goBack()}>
+          <Text style={{ color: "rgba(255,255,255,0.85)" }}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
 
   const renderOverlay = () => (
     <View style={styles.overlay}>
@@ -244,6 +309,14 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "black" },
   camera: { flex: 1 },
   text: { color: "white", marginTop: 50, textAlign: "center" },
+  permissionButton: {
+    marginTop: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  permissionButtonText: { color: "#fff", fontWeight: "800" },
 
   overlay: {
     position: "absolute",

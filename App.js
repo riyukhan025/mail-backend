@@ -47,6 +47,26 @@ import StatisticsScreen from "./app/StatisticsScreen";
 import TeamDSRScreen from "./app/TeamDSRScreen";
 import Updatescreen from "./app/Updatescreen";
 import VerifyProfileScreen from "./app/VerifyProfileScreen";
+import VerifyCaseScreen from "./app/VerifyCaseScreen";
+
+const LINKING = {
+  prefixes: [
+    "finalapp://",
+    "https://spacesolutions2-89738.web.app",
+    "https://spacesolutions2-89738.firebaseapp.com",
+    "http://localhost:8081",
+  ],
+  config: {
+    screens: {
+      VerifyCase: "verify/:caseId",
+      Auth: "auth",
+      ForgotPassword: "forgot",
+      AdminPanel: "admin",
+      Dashboard: "dashboard",
+      CaseDetail: "case/:caseId",
+    },
+  },
+};
 
 /* ---------------- Stack ---------------- */
 const Stack = createNativeStackNavigator();
@@ -60,6 +80,12 @@ function AuthStack() {
       <Stack.Screen name="Auth">
         {(props) => <AuthScreen {...props} />}
       </Stack.Screen>
+      <Stack.Screen name="VerifyCase" component={VerifyCaseScreen} />
+      <Stack.Screen name="CaseDetail" component={CaseDetailScreen} />
+      <Stack.Screen name="CameraGPSScreen" component={CameraGPSScreen} />
+      <Stack.Screen name="FormScreen" component={FormScreen} />
+      <Stack.Screen name="MatrixFormScreen" component={MatrixFormScreen} />
+      <Stack.Screen name="DHIFormScreen" component={DHIFormScreen} />
       <Stack.Screen
         name="ForgotPassword"
         component={ForgotPasswordScreen}
@@ -78,6 +104,7 @@ function AdminStack() {
       />
       <Stack.Screen name="AuditCaseScreen" component={AuditCaseScreen} />
       <Stack.Screen name="CaseDetail" component={CaseDetailScreen} />
+      <Stack.Screen name="VerifyCase" component={VerifyCaseScreen} />
       <Stack.Screen name="MemberViewScreen" component={MemberViewScreen} />
       <Stack.Screen name="MemberDetailScreen" component={MemberDetailScreen} />
       <Stack.Screen name="CompletedCases" component={CompletedCasesScreen} />
@@ -130,6 +157,7 @@ function MemberStack() {
       <Stack.Screen name="MemberChats" component={MemberChatScreen} />
       <Stack.Screen name="ChatDetailScreen" component={ChatDetailScreen} />
       <Stack.Screen name="CaseDetail" component={CaseDetailScreen} />
+      <Stack.Screen name="VerifyCase" component={VerifyCaseScreen} />
       <Stack.Screen name="PlanYourDayScreen" component={PlanYourDayScreen} />
       <Stack.Screen
         name="DaywiseTrackerScreen"
@@ -272,7 +300,7 @@ function AppContent() {
         onStartShouldSetResponderCapture={onUserInteraction}
         onMoveShouldSetResponderCapture={onUserInteraction}
       >
-        <NavigationContainer onStateChange={resetInactivityTimer}>
+        <NavigationContainer linking={LINKING} onStateChange={resetInactivityTimer}>
           {!dbUser ? (
             <AuthStack />
           ) : dbUser.role === "admin" ? (

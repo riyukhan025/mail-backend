@@ -453,6 +453,31 @@ export default function CaseDetailScreen({ navigation, route }) {
         }
     };
 
+    const uploadWebFileToCloudinary = async (file, category, index) => {
+        try {
+            if (!file) return null;
+            const formData = new FormData();
+            const name = `${category}_${Date.now()}_${Math.floor(Math.random() * 10000)}_${index}.jpg`;
+            formData.append("file", file, name);
+            formData.append("upload_preset", UPLOAD_PRESET);
+            const rawRefNo = caseData.matrixRefNo || caseData.RefNo || caseId;
+            const safeRefNo = rawRefNo.replace(/[^a-zA-Z0-9-_]/g, '_');
+            formData.append("folder", `cases/${safeRefNo}`);
+            formData.append("context", `timestamp=${new Date().toLocaleString()}|address=Web Upload`);
+
+            const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
+                method: "POST",
+                body: formData,
+            });
+            const data = await response.json();
+            if (data.secure_url) return data.secure_url;
+            throw new Error(data.error?.message || "Upload failed");
+        } catch (e) {
+            console.error("Cloudinary web upload error:", e);
+            return null;
+        }
+    };
+
     // Pick image
     const pickImage = async (category) => {
         if (!category) return Alert.alert("Error", "Photo category not specified.");
@@ -553,6 +578,58 @@ export default function CaseDetailScreen({ navigation, route }) {
         );
     };
     const openCamera = (category) => {
+        if (Platform.OS === "web") {
+            // Browser flow: use file input + upload to Cloudinary, then store in Firebase.
+            const input = document.createElement("input");
+            input.type = "file";
+            input.accept = "image/*";
+            input.multiple = true;
+            // Prefer front camera for selfie category
+            if (category === "selfie") input.setAttribute("capture", "user");
+            else input.setAttribute("capture", "environment");
+
+            input.onchange = async () => {
+                try {
+                    const files = Array.from(input.files || []);
+                    if (files.length === 0) return;
+
+                    setIsUploadingPhotos(true);
+                    const currentFirebaseList =
+                        (await firebase.database().ref(`cases/${caseId}/photosFolder/${category}`).once('value')).val() || [];
+
+                    const uploaded = [];
+                    for (let i = 0; i < files.length; i++) {
+                        const cloudUrl = await uploadWebFileToCloudinary(files[i], category, i);
+                        if (cloudUrl) {
+                            uploaded.push({
+                                uri: cloudUrl,
+                                timestamp: new Date().toLocaleString(),
+                                geotag: null,
+                                address: "Web Upload",
+                                category,
+                                id: `${Date.now()}-${Math.random()}`,
+                            });
+                        }
+                    }
+
+                    if (uploaded.length > 0) {
+                        const finalList = [...currentFirebaseList, ...uploaded];
+                        await firebase.database().ref(`cases/${caseId}/photosFolder/${category}`).set(finalList);
+                        setPhotos(prev => ({ ...prev, [category]: finalList }));
+                    }
+                } catch (e) {
+                    console.error("[WEB-UPLOAD] Failed:", e);
+                    if (Platform.OS === "web") alert("Upload failed: " + (e?.message || e));
+                } finally {
+                    setIsUploadingPhotos(false);
+                }
+            };
+
+            // Must be user-gesture triggered
+            input.click();
+            return;
+        }
+
         // --- MODIFIED: Navigate to the dedicated GPS Camera Screen with callback ---
         navigation.navigate("CameraGPSScreen", {
             caseId,

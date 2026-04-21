@@ -4,14 +4,18 @@ import DateTimePicker from "@react-native-community/datetimepicker";
 import { Picker } from "@react-native-picker/picker";
 import { BlurView } from "expo-blur";
 import * as DocumentPicker from "expo-document-picker";
+import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
+import * as MailComposer from "expo-mail-composer";
 import * as Speech from "expo-speech";
 import { createElement, useContext, useEffect, useRef, useState } from "react";
 import {
   Alert,
+  ActivityIndicator,
   Animated,
   Dimensions,
   Image,
+  Linking,
   Modal,
   Platform,
   ScrollView,
@@ -32,6 +36,7 @@ const SCREEN_WIDTH = Dimensions.get("window").width;
 const MENU_WIDTH = SCREEN_WIDTH * 0.6;
 const MINI_SIDEBAR_WIDTH = 56; // 14 in tailwind units (14*4=56)
 const IS_DESKTOP = SCREEN_WIDTH > 768;
+const DIGITAL_VERIFY_BASE_URL = "https://spacesolutions2-89738.web.app";
 
 const THEME = {
   light: {
@@ -157,6 +162,8 @@ const BlinkingDot = ({ color }) => {
   return <Animated.View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color, opacity, transform: [{ scale }] }} />;
 };
 
+const AnimatedTouchableOpacity = Animated.createAnimatedComponent(TouchableOpacity);
+
 export default function AdminPanelScreen({ navigation }) {
   const { user, logout } = useContext(AuthContext);
   const [cases, setCases] = useState([]);
@@ -183,6 +190,11 @@ export default function AdminPanelScreen({ navigation }) {
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [assignMode, setAssignMode] = useState(false);
+  const [showDigitalCases, setShowDigitalCases] = useState(false);
+  const [digitalMarking, setDigitalMarking] = useState(false);
+  const [digitalSending, setDigitalSending] = useState(false);
+  const [digitalMarkSentBusy, setDigitalMarkSentBusy] = useState(false);
+  const [toast, setToast] = useState(null);
   const [dateInitiatedFilter, setDateInitiatedFilter] = useState("");
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [uploadDateFilter, setUploadDateFilter] = useState("");
@@ -199,6 +211,9 @@ export default function AdminPanelScreen({ navigation }) {
   const [currentUserProfile, setCurrentUserProfile] = useState(null);
   const knownCaseStatuses = useRef(new Map());
   const isFirstLoad = useRef(true);
+  const toastAnim = useRef(new Animated.Value(0)).current;
+  const toastTimer = useRef(null);
+  const awaitingPulse = useRef(new Animated.Value(0)).current;
 
   // Feature Flags
   const [newUI, setNewUI] = useState(false);
@@ -216,6 +231,95 @@ export default function AdminPanelScreen({ navigation }) {
   
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
   const [activeSidebarItem, setActiveSidebarItem] = useState("Command");
+
+  useEffect(() => {
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(awaitingPulse, { toValue: 1, duration: 900, useNativeDriver: true }),
+        Animated.timing(awaitingPulse, { toValue: 0, duration: 900, useNativeDriver: true }),
+      ])
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [awaitingPulse]);
+
+  const runHaptic = async (kind) => {
+    if (Platform.OS === "web") return;
+    try {
+      if (kind === "success") return await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      if (kind === "warning") return await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      if (kind === "error") return await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      return await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {
+      // ignore
+    }
+  };
+
+  const showToast = (message, type = "info", durationMs = 2600) => {
+    if (!message) return;
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ message, type });
+    toastAnim.stopAnimation();
+    toastAnim.setValue(0);
+    Animated.timing(toastAnim, { toValue: 1, duration: 220, useNativeDriver: true }).start();
+    toastTimer.current = setTimeout(() => {
+      Animated.timing(toastAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start(({ finished }) => {
+        if (finished) setToast(null);
+      });
+    }, durationMs);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    };
+  }, []);
+
+  const ScaleButton = ({ onPress, disabled, style, children }) => {
+    const scale = useRef(new Animated.Value(1)).current;
+
+    const pressIn = () => {
+      if (disabled) return;
+      Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, speed: 22, bounciness: 6 }).start();
+    };
+    const pressOut = () => {
+      Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 18, bounciness: 6 }).start();
+    };
+
+    return (
+      <AnimatedTouchableOpacity
+        activeOpacity={0.92}
+        onPress={onPress}
+        disabled={disabled}
+        onPressIn={pressIn}
+        onPressOut={pressOut}
+        style={[{ transform: [{ scale }], opacity: disabled ? 0.65 : 1 }, style]}
+      >
+        {children}
+      </AnimatedTouchableOpacity>
+    );
+  };
+
+  const getStatusLabel = (rawStatus) => {
+    const s = String(rawStatus || "").toLowerCase();
+    if (!s) return "-";
+    if (s === "awaiting_candidate") return "awaiting";
+    return s;
+  };
+
+  const getDigitalLinkTracking = (item) => {
+    const usedAt = item?.digitalVerification?.usedAt || null;
+    const expiresAt = Number(item?.digitalVerification?.expiresAt || 0);
+    const now = Date.now();
+    const sentAt = item?.candidateLinkSentAt || null;
+    const draftedAt = item?.candidateLinkDraftedAt || item?.digitalVerification?.linkDraftedAt || null;
+
+    if (usedAt) return { label: "USED", tone: "info" };
+    if (expiresAt && expiresAt > 0 && now > expiresAt) return { label: "EXPIRED", tone: "warning" };
+    if (sentAt) return { label: "SENT", tone: "success" };
+    if (draftedAt) return { label: "DRAFT", tone: "info" };
+    return { label: "NOT_SENT", tone: "muted" };
+  };
 
   const sidebarItems = [
     { label: "Command", icon: "grid-outline", screen: "AdminPanel" },
@@ -320,7 +424,7 @@ export default function AdminPanelScreen({ navigation }) {
     if (cases.length === 0) return;
 
     const completedCases = cases.filter(c => c.status === 'completed' || c.status === 'closed');
-    const pendingCases = cases.filter(c => c.status === 'assigned' || c.status === 'audit' || c.status === 'fired' || c.status === 'reverted');
+  const pendingCases = cases.filter(c => c.status === 'assigned' || c.status === 'audit' || c.status === 'fired' || c.status === 'reverted' || c.status === 'awaiting_candidate');
 
     const groupedCompleted = {};
     const groupedPending = {};
@@ -614,9 +718,15 @@ export default function AdminPanelScreen({ navigation }) {
     // Exclude completed and closed cases from the main admin view
     if (c.status === "completed" || c.status === "closed") return false;
 
+    // Separate table views: normal vs digital verification
+    const digital = isDigitalVerificationCase(c);
+    if (showDigitalCases && !digital) return false;
+    if (!showDigitalCases && digital) return false;
+
     const matchesSearch =
       c.matrixRefNo?.toLowerCase().includes(searchText.toLowerCase()) ||
-      c.candidateName?.toLowerCase().includes(searchText.toLowerCase());
+      c.candidateName?.toLowerCase().includes(searchText.toLowerCase()) ||
+      String(c.candidateEmail || "").toLowerCase().includes(searchText.toLowerCase());
     const matchesStatus = statusFilter ? c.status === statusFilter : true;
     const matchesRefNo = refNoFilter ? c.matrixRefNo?.includes(refNoFilter) : true;
     const matchesVerification = verificationFilter
@@ -658,6 +768,7 @@ export default function AdminPanelScreen({ navigation }) {
       if (key === "client") val = c.client;
       else if (key === "ReferenceNo") val = c.matrixRefNo;
       else if (key === "candidateName") val = c.candidateName;
+      else if (key === "gmail") val = c.candidateEmail;
       else if (key === "checkType") val = c.checkType;
       else if (key === "chkType") val = c.chkType;
       else if (key === "company") val = c.company;
@@ -726,7 +837,259 @@ export default function AdminPanelScreen({ navigation }) {
     }
   };
 
+  function isDigitalVerificationCase(c) {
+    if (!c) return false;
+    return String(c.verificationMode || "").toLowerCase() === "digital" || c.status === "awaiting_candidate";
+  }
+
+  const getSelectedDigitalCases = () =>
+    selectedCases
+      .map((id) => cases.find((c) => c.id === id))
+      .filter((c) => c && isDigitalVerificationCase(c));
+
+  const markCasesAsDigitalVerification = () => {
+    if (selectedCases.length === 0) {
+      if (Platform.OS === "web") return alert("Please select at least one case to mark as digital verification.");
+      return Alert.alert("Error", "Please select at least one case to mark as digital verification.");
+    }
+
+    const targetCases = selectedCases
+      .map((id) => cases.find((c) => c.id === id))
+      .filter(Boolean);
+
+    if (targetCases.length === 0) {
+      if (Platform.OS === "web") return alert("No valid cases selected.");
+      return Alert.alert("Error", "No valid cases selected.");
+    }
+
+    const alreadyDigital = targetCases.filter((c) => isDigitalVerificationCase(c));
+    const msg =
+      alreadyDigital.length > 0
+        ? `Some selected cases are already digital verification (${alreadyDigital.length}). Continue and mark all selected as digital verification?`
+        : "Mark selected cases as digital verification? This will clear any member assignment.";
+
+    const performMark = async () => {
+      if (digitalMarking) return;
+      setDigitalMarking(true);
+      const now = new Date().toISOString();
+      try {
+        await Promise.all(
+          targetCases.map((c) =>
+            firebase.database().ref(`cases/${c.id}`).update({
+              verificationMode: "digital",
+              status: "awaiting_candidate",
+              assigneeName: null,
+              assigneeRole: null,
+              assignedTo: null,
+              assignedAt: null,
+              digitalRequestedAt: now,
+            })
+          )
+        );
+        setSelectedCases([]);
+        setShowDigitalCases(true);
+        runHaptic("success");
+        showToast(`Marked ${targetCases.length} case${targetCases.length === 1 ? "" : "s"} for digital verification.`, "success");
+        if (Platform.OS === "web") alert("Success: Cases marked for digital verification.");
+      } catch (e) {
+        runHaptic("error");
+        const m = String(e?.message || e);
+        showToast("Failed to mark cases: " + m, "error", 3400);
+        if (Platform.OS === "web") alert("Failed to mark cases: " + m);
+        else Alert.alert("Error", "Failed to mark cases: " + m);
+      } finally {
+        setDigitalMarking(false);
+      }
+    };
+
+    if (Platform.OS === "web") {
+      if (confirm(msg)) performMark();
+    } else {
+      Alert.alert("Confirm Digital Verification", msg, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Continue", onPress: performMark },
+      ]);
+    }
+  };
+
+  const sendDigitalVerificationEmails = async () => {
+    if (digitalSending) return;
+    if (selectedCases.length === 0) {
+      if (Platform.OS === "web") return alert("Please select 1 case to email.");
+      return Alert.alert("Error", "Please select 1 case to email.");
+    }
+    if (selectedCases.length > 1) {
+      if (Platform.OS === "web") return alert("Manual email supports 1 case at a time (select only 1).");
+      return Alert.alert("One Case Only", "Manual email supports 1 case at a time (select only 1).");
+    }
+
+    const selected = cases.find((c) => c.id === selectedCases[0]);
+    if (!selected) {
+      if (Platform.OS === "web") return alert("Selected case not found.");
+      return Alert.alert("Error", "Selected case not found.");
+    }
+
+    if (!isDigitalVerificationCase(selected)) {
+      if (Platform.OS === "web") return alert("Please mark this case as digital verification first.");
+      return Alert.alert("Not Ready", "Please mark this case as digital verification first.");
+    }
+
+    const to = String(selected.candidateEmail || "").trim();
+    if (!to) {
+      if (Platform.OS === "web") return alert("Missing candidate email on this case.");
+      return Alert.alert("Missing Email", "Missing candidate email on this case.");
+    }
+
+    const now = Date.now();
+    const expiresAtMs = now + 72 * 60 * 60 * 1000;
+
+    const existingToken = String(selected?.digitalVerification?.token || "").trim();
+    const existingExpiresAt = Number(selected?.digitalVerification?.expiresAt || 0);
+    const existingUsedAt = selected?.digitalVerification?.usedAt || null;
+
+    let token = existingToken;
+    let expiresAt = existingExpiresAt;
+
+    // Store token inside the case object to avoid RTDB rules blocking writes to other paths.
+    if (!token || !expiresAt || expiresAt <= now || existingUsedAt) {
+      token =
+        Date.now().toString(36) +
+        Math.random().toString(36).slice(2, 10) +
+        Math.random().toString(36).slice(2, 10);
+      expiresAt = expiresAtMs;
+    }
+
+    await firebase.database().ref(`cases/${selected.id}/digitalVerification`).update({
+      token,
+      expiresAt,
+      usedAt: null,
+      linkDraftedAt: now,
+      channel: "draft_email",
+    });
+
+    await firebase.database().ref(`cases/${selected.id}`).update({
+      candidateLinkDraftedAt: new Date(now).toISOString(),
+      candidateLinkDraftedTo: to,
+    });
+
+    const refNo = String(selected.matrixRefNo || selected.RefNo || selected.id);
+    const candidateName = String(selected.candidateName || "Candidate");
+    let base = String(DIGITAL_VERIFY_BASE_URL || "").trim();
+    while (base.endsWith("/")) base = base.slice(0, -1);
+    const webLink = `${base}/verify/${selected.id}?t=${encodeURIComponent(token)}`;
+
+    const subject = `Digital Verification Required: ${refNo}`;
+    const body =
+      `Hi ${candidateName},\n\n` +
+      `Please complete your digital verification using the link below:\n` +
+      `${webLink}\n\n` +
+      `This link will expire in 72 hours.\n\n` +
+      `Thanks,\n` +
+      `Space Solutions`;
+
+    try {
+      setDigitalSending(true);
+      if (Platform.OS === "web") {
+        const gmailUrl =
+          `https://mail.google.com/mail/?view=cm&fs=1` +
+          `&to=${encodeURIComponent(to)}` +
+          `&su=${encodeURIComponent(subject)}` +
+          `&body=${encodeURIComponent(body)}`;
+        window.open(gmailUrl, "_blank");
+      } else {
+        const available = await MailComposer.isAvailableAsync();
+        if (available) {
+          await MailComposer.composeAsync({
+            recipients: [to],
+            subject,
+            body,
+          });
+        } else {
+          const mailto =
+            `mailto:${encodeURIComponent(to)}` +
+            `?subject=${encodeURIComponent(subject)}` +
+            `&body=${encodeURIComponent(body)}`;
+          await Linking.openURL(mailto);
+        }
+      }
+
+      setSelectedCases([]);
+      runHaptic("success");
+      showToast("Email draft opened. After sending, tap MARK_SENT.", "success", 3200);
+      if (Platform.OS !== "web") {
+        Alert.alert("Draft Opened", "Email draft opened. Please review and send.");
+      }
+    } catch (e) {
+      runHaptic("error");
+      const msg = String(e?.message || e);
+      showToast("Failed to open email draft: " + msg, "error", 3400);
+      if (Platform.OS === "web") alert("Failed to open email draft: " + msg);
+      else Alert.alert("Error", "Failed to open email draft: " + msg);
+    } finally {
+      setDigitalSending(false);
+    }
+  };
+
+  const markDigitalEmailAsSent = async () => {
+    if (digitalMarkSentBusy) return;
+    if (selectedCases.length === 0) {
+      if (Platform.OS === "web") return alert("Select at least one digital case first.");
+      return Alert.alert("Error", "Select at least one digital case first.");
+    }
+
+    const targets = selectedCases
+      .map((id) => cases.find((c) => c.id === id))
+      .filter((c) => c && isDigitalVerificationCase(c));
+
+    if (targets.length === 0) {
+      if (Platform.OS === "web") return alert("Only digital verification cases can be marked as SENT.");
+      return Alert.alert("Not Allowed", "Only digital verification cases can be marked as SENT.");
+    }
+
+    const perform = async () => {
+      setDigitalMarkSentBusy(true);
+      try {
+        const nowIso = new Date().toISOString();
+        await Promise.all(
+          targets.map((c) => {
+            const to = String(c.candidateEmail || c.gmail || c.email || "").trim() || null;
+            return firebase.database().ref(`cases/${c.id}`).update({
+              candidateLinkSentAt: nowIso,
+              candidateLinkSentTo: to,
+            });
+          })
+        );
+        runHaptic("success");
+        showToast(`Marked ${targets.length} as SENT.`, "success");
+        setSelectedCases([]);
+      } catch (e) {
+        runHaptic("error");
+        const m = String(e?.message || e);
+        showToast("Failed to mark SENT: " + m, "error", 3400);
+        if (Platform.OS === "web") alert("Failed to mark SENT: " + m);
+        else Alert.alert("Error", "Failed to mark SENT: " + m);
+      } finally {
+        setDigitalMarkSentBusy(false);
+      }
+    };
+
+    const msg = `Mark ${targets.length} case${targets.length === 1 ? "" : "s"} as SENT?`;
+    if (Platform.OS === "web") {
+      if (confirm(msg)) perform();
+    } else {
+      Alert.alert("Confirm", msg, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Mark SENT", onPress: perform },
+      ]);
+    }
+  };
+
   const assignCases = () => {
+    const digitalSelected = getSelectedDigitalCases();
+    if (digitalSelected.length > 0) {
+      if (Platform.OS === "web") return alert("Digital verification cases cannot be assigned to members.");
+      return Alert.alert("Not Allowed", "Digital verification cases cannot be assigned to members.");
+    }
     if (selectedCases.length === 0) {
       if (Platform.OS === "web") return alert("Error: Please select at least one case to assign.");
       return Alert.alert("Error", "Please select at least one case to assign.");
@@ -922,6 +1285,26 @@ export default function AdminPanelScreen({ navigation }) {
         checkType: row["Check type"] || "",
         company: row["company"] || "",
         candidateName: row["Candidate Name"] || "",
+        candidateEmail: (() => {
+          // Excel headers vary a lot; normalize keys so "gmail" works too.
+          const byLower = {};
+          Object.keys(row || {}).forEach((k) => {
+            byLower[String(k).trim().toLowerCase()] = row[k];
+          });
+          const raw =
+            row["Candidate Email"] ||
+            row["candidate email"] ||
+            row["Email"] ||
+            row["E-mail"] ||
+            row["Gmail"] ||
+            row["gmail"] ||
+            byLower["candidate email"] ||
+            byLower["gmail"] ||
+            byLower["email"] ||
+            byLower["e-mail"] ||
+            "";
+          return String(raw || "").trim();
+        })(),
         address: row["Address"] || "",
         chkType: row["ChkType"] || "",
         dateInitiated: (() => {
@@ -1063,6 +1446,8 @@ export default function AdminPanelScreen({ navigation }) {
     client: 100,
     ReferenceNo: 100,
     candidateName: 120,
+    gmail: 180,
+    tracking: 110,
     tmName: 100,
     checkType: 100,
     chkType: 100,
@@ -1083,8 +1468,13 @@ export default function AdminPanelScreen({ navigation }) {
   };
 
   const getVisibleColumns = () => {
-      if (!assignMode) return columnWidths;
-      const hidden = ['tmName', 'checkType', 'chkType', 'state', 'assigneeRole', 'completedAt', 'comments'];
+      const hidden = [];
+
+      // Digital table has an extra Gmail column; normal table hides it.
+      if (!showDigitalCases) hidden.push("gmail", "tracking");
+
+      if (assignMode) hidden.push('tmName', 'checkType', 'chkType', 'state', 'assigneeRole', 'completedAt', 'comments');
+
       const visible = {};
       Object.keys(columnWidths).forEach(key => {
           if (!hidden.includes(key)) visible[key] = columnWidths[key];
@@ -1119,6 +1509,51 @@ export default function AdminPanelScreen({ navigation }) {
             case "candidateName":
               value = item.candidateName || "-";
               break;
+            case "gmail": {
+              const to = String(item.candidateEmail || item.gmail || item.email || "").trim();
+              const sent = Boolean(item.candidateLinkSentAt);
+              const drafted = Boolean(item.candidateLinkDraftedAt || item.digitalVerification?.linkDraftedAt);
+              value = to || "-";
+              if (to && sent) value = `${to} (sent)`;
+              else if (to && drafted) value = `${to} (draft)`;
+              break;
+            }
+            case "tracking": {
+              const t = getDigitalLinkTracking(item);
+              value = t.label;
+              const toneColor =
+                t.tone === "success"
+                  ? theme.success
+                  : t.tone === "warning"
+                  ? theme.warning
+                  : t.tone === "error"
+                  ? theme.error
+                  : t.tone === "info"
+                  ? theme.info
+                  : theme.textSecondary;
+              component = (
+                <View key={key} style={{ width: visibleCols[key], justifyContent: "center", paddingRight: 5 }}>
+                  <View
+                    style={[
+                      styles.statusPill,
+                      {
+                        backgroundColor: toneColor + "18",
+                        borderColor: toneColor + "AA",
+                        shadowColor: toneColor,
+                        shadowOpacity: 0.2,
+                        shadowRadius: 5,
+                        shadowOffset: { width: 0, height: 0 },
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.statusText, { color: toneColor }]} numberOfLines={1} ellipsizeMode="tail">
+                      {t.label}
+                    </Text>
+                  </View>
+                </View>
+              );
+              break;
+            }
             case "tmName":
               value = "Spacesolutions";
               break;
@@ -1147,11 +1582,21 @@ export default function AdminPanelScreen({ navigation }) {
               value = item.contactNumber || "-";
               break;
             case "status":
-              value = item.status || "-";
+              value = getStatusLabel(item.status);
               break;
             case "assigneeName":
               value = item.assigneeName || "-";
-              if (item.assignedTo && item.assignedTo !== "null") {
+              if (isDigitalVerificationCase(item)) {
+                value = "Candidate";
+                component = (
+                  <View key={key} style={[styles.assigneeCell, { width: visibleCols[key] }]}>
+                    <Ionicons name="shield-checkmark-outline" size={16} color={theme.primary} style={{ marginRight: 6 }} />
+                    <Text style={[styles.cell, isCompactMobile && styles.cellMobile, { flex: 1, paddingHorizontal: 4, color: theme.text }]} numberOfLines={2}>
+                      {value}
+                    </Text>
+                  </View>
+                );
+              } else if (item.assignedTo && item.assignedTo !== "null") {
                 const member = members.find(m => m.id === item.assignedTo);
                 component = (
                   <View key={key} style={[styles.assigneeCell, { width: visibleCols[key] }]}>
@@ -1242,6 +1687,7 @@ export default function AdminPanelScreen({ navigation }) {
                 (item.status === "completed") ? theme.success : 
                 (item.status === "audit") ? theme.info :
                 item.status === "assigned" ? theme.warning : 
+                (item.status === "awaiting_candidate") ? theme.primary :
                 (item.status === "reverted" || item.status === "fired") ? theme.error : 
                 theme.textSecondary;
              
@@ -1253,19 +1699,37 @@ export default function AdminPanelScreen({ navigation }) {
                     onPress={() => navigation.navigate("AuditCaseScreen", { caseId: item.id, caseData: item })}
                   >
                       <View style={[styles.statusPill, { backgroundColor: statusColor + '20', borderColor: statusColor, shadowColor: statusColor, shadowOpacity: 0.5, shadowRadius: 8, shadowOffset: {width: 0, height: 0} }]}>
-                          <Text style={[styles.statusText, { color: statusColor, textShadowColor: statusColor, textShadowRadius: 5 }]}>
+                          <Text style={[styles.statusText, { color: statusColor, textShadowColor: statusColor, textShadowRadius: 5 }]} numberOfLines={1} ellipsizeMode="tail">
                               {value.toUpperCase()}
                           </Text>
                       </View>
                   </TouchableOpacity>
                );
              } else {
+               const isAwaitingCandidate = item.status === "awaiting_candidate";
+               const dotOpacity = awaitingPulse.interpolate({ inputRange: [0, 1], outputRange: [0.35, 1] });
+               const dotScale = awaitingPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.35] });
                component = (
                   <View key={key} style={{ width: visibleCols[key], justifyContent: 'center', paddingRight: 5 }}>
                       <View style={[styles.statusPill, { backgroundColor: statusColor + '20', borderColor: statusColor, shadowColor: statusColor, shadowOpacity: 0.3, shadowRadius: 5, shadowOffset: {width: 0, height: 0} }]}>
-                          <Text style={[styles.statusText, { color: statusColor }]}>
-                              {value.toUpperCase()}
-                          </Text>
+                          <View style={{ flexDirection: "row", alignItems: "center" }}>
+                            {isAwaitingCandidate && (
+                              <Animated.View
+                                style={{
+                                  width: 7,
+                                  height: 7,
+                                  borderRadius: 3.5,
+                                  marginRight: 6,
+                                  backgroundColor: statusColor,
+                                  opacity: dotOpacity,
+                                  transform: [{ scale: dotScale }],
+                                }}
+                              />
+                            )}
+                            <Text style={[styles.statusText, { color: statusColor }]} numberOfLines={1} ellipsizeMode="tail">
+                                {value.toUpperCase()}
+                            </Text>
+                          </View>
                       </View>
                   </View>
                );
@@ -1358,6 +1822,66 @@ export default function AdminPanelScreen({ navigation }) {
   return (
     <LinearGradient colors={theme.background} style={styles.container}>
       <BackgroundDecorations theme={theme} />
+      {toast && (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.toastWrap,
+            {
+              opacity: toastAnim,
+              transform: [
+                {
+                  translateY: toastAnim.interpolate({ inputRange: [0, 1], outputRange: [-10, 0] }),
+                },
+              ],
+            },
+          ]}
+        >
+          <BlurView
+            intensity={40}
+            tint={isLightTheme ? "light" : "dark"}
+            style={[
+              styles.toastCard,
+              {
+                backgroundColor: theme.cardBg,
+                borderColor:
+                  toast.type === "success"
+                    ? theme.success
+                    : toast.type === "error"
+                    ? theme.error
+                    : toast.type === "warning"
+                    ? theme.warning
+                    : theme.primary,
+              },
+            ]}
+          >
+            <Ionicons
+              name={
+                toast.type === "success"
+                  ? "checkmark-circle"
+                  : toast.type === "error"
+                  ? "alert-circle"
+                  : toast.type === "warning"
+                  ? "warning"
+                  : "information-circle"
+              }
+              size={18}
+              color={
+                toast.type === "success"
+                  ? theme.success
+                  : toast.type === "error"
+                  ? theme.error
+                  : toast.type === "warning"
+                  ? theme.warning
+                  : theme.primary
+              }
+            />
+            <Text style={[styles.toastMessage, { color: theme.text }]} numberOfLines={2}>
+              {toast.message}
+            </Text>
+          </BlurView>
+        </Animated.View>
+      )}
       <View style={{flex: 1, flexDirection: 'row'}}>
       
       {/* 1️⃣ SIDEBAR (Desktop) */}
@@ -1519,12 +2043,54 @@ export default function AdminPanelScreen({ navigation }) {
                 <Ionicons name="cloud-upload-outline" size={16} color="#fff" />
                 <Text style={[styles.topActionButtonText, isMobile && styles.topActionButtonTextMobile]}>{isMobile ? "UPLOAD" : "BATCH_INGEST"}</Text>
              </TouchableOpacity>
+             <ScaleButton
+                style={[styles.topActionButton, { backgroundColor: theme.info }]}
+                onPress={() => {
+                  runHaptic("light");
+                  markCasesAsDigitalVerification();
+                }}
+                disabled={digitalMarking}
+             >
+                {digitalMarking ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="shield-checkmark-outline" size={16} color="#fff" />}
+                <Text style={[styles.topActionButtonText, isMobile && styles.topActionButtonTextMobile]}>{isMobile ? "DIGITAL" : "DIGITAL_VERIFY"}</Text>
+             </ScaleButton>
+             {showDigitalCases && (
+               <ScaleButton 
+                  style={[styles.topActionButton, { backgroundColor: theme.success }]}
+                  onPress={() => {
+                    runHaptic("light");
+                    sendDigitalVerificationEmails();
+                  }}
+                  disabled={digitalSending}
+               >
+                  {digitalSending ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="mail-outline" size={16} color="#fff" />}
+                  <Text style={[styles.topActionButtonText, isMobile && styles.topActionButtonTextMobile]}>{isMobile ? "SEND" : "SEND_EMAIL"}</Text>
+               </ScaleButton>
+             )}
+             {showDigitalCases && (
+               <ScaleButton
+                  style={[styles.topActionButton, { backgroundColor: theme.warning }]}
+                  onPress={() => {
+                    runHaptic("light");
+                    markDigitalEmailAsSent();
+                  }}
+                  disabled={digitalMarkSentBusy}
+               >
+                  {digitalMarkSentBusy ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="checkmark-done-outline" size={16} color="#fff" />}
+                  <Text style={[styles.topActionButtonText, isMobile && styles.topActionButtonTextMobile]}>{isMobile ? "SENT" : "MARK_SENT"}</Text>
+               </ScaleButton>
+             )}
              <TouchableOpacity 
                 style={[styles.topActionButton, { backgroundColor: isLightTheme ? theme.cardBg : 'rgba(255,255,255,0.05)', borderColor: theme.border, borderWidth: 1 }]} 
                 onPress={() => {
                     if (selectedCases.length === 0) {
                         if (Platform.OS === 'web') return alert("Please select at least one case to assign.");
                         return Alert.alert("Error", "Please select at least one case to assign.");
+                    }
+                    const digitalSelected = getSelectedDigitalCases();
+                    if (digitalSelected.length > 0) {
+                        if (Platform.OS === "web") return alert("Digital verification cases cannot be assigned to members.");
+                        return Alert.alert("Not Allowed", "Digital verification cases cannot be assigned to members.");
                     }
                     setAssignTo("");
                     setAssignSearchText("");
@@ -1673,9 +2239,21 @@ export default function AdminPanelScreen({ navigation }) {
             {/* 5️⃣ DATA TABLE SECTION */}
             <View style={[styles.sectionCard, isCompactMobile && styles.sectionCardMobile, { backgroundColor: theme.cardBg, borderColor: theme.border, marginTop: isCompactMobile ? 14 : 24, padding: 0, overflow: 'hidden', shadowColor: theme.primary, shadowOpacity: 0.1, shadowRadius: 20 }]}>
                 <View style={[styles.sectionHeader, isCompactMobile && styles.sectionHeaderMobile, { padding: isCompactMobile ? 10 : 16, borderBottomWidth: 1, borderBottomColor: theme.border }]}>
-                    <Text style={[styles.sectionTitle, isCompactMobile && styles.sectionTitleMobile, { color: theme.text }]}>All Cases</Text>
+                    <Text style={[styles.sectionTitle, isCompactMobile && styles.sectionTitleMobile, { color: theme.text }]}>
+                      {showDigitalCases ? "Digital Verification Cases" : "All Cases"}
+                    </Text>
                     
                     <View style={{flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: isMobile ? 'wrap' : 'nowrap', justifyContent: isMobile ? 'flex-end' : 'flex-start'}}>
+                        <Text style={{color: theme.textSecondary, fontSize: 12}}>Digital</Text>
+                        <Switch 
+                            value={showDigitalCases} 
+                            onValueChange={(v) => {
+                              setShowDigitalCases(v);
+                              setSelectedCases([]);
+                              setHeaderFilters({});
+                            }}
+                            trackColor={{ false: "#767577", true: theme.info }}
+                        />
                         <Text style={{color: theme.textSecondary, fontSize: 12}}>Assign Mode</Text>
                         <Switch 
                             value={assignMode} 
@@ -1720,6 +2298,7 @@ export default function AdminPanelScreen({ navigation }) {
                         <Picker key={isLightTheme ? 'light-status' : 'dark-status'} selectedValue={statusFilter} onValueChange={setStatusFilter} style={[styles.picker, { color: Platform.OS === "android" ? "transparent" : theme.text }]} dropdownIconColor={theme.text} useNativeAndroidPickerStyle={false}>
                             <Picker.Item label="Status: All" value="" color="#000" style={{fontSize: 12}} />
                             <Picker.Item label="Assigned" value="assigned" color="#000" style={{fontSize: 12}} />
+                            <Picker.Item label="Awaiting Candidate" value="awaiting_candidate" color="#000" style={{fontSize: 12}} />
                             <Picker.Item label="Audit" value="audit" color="#000" style={{fontSize: 12}} />
                             <Picker.Item label="Reverted" value="reverted" color="#000" style={{fontSize: 12}} />
                             <Picker.Item label="Fired" value="fired" color="#000" style={{fontSize: 12}} />
@@ -1815,7 +2394,9 @@ export default function AdminPanelScreen({ navigation }) {
                                     <Ionicons name={selectedCases.length > 0 && fullyFilteredCases.every(c => selectedCases.includes(c.id)) ? "checkbox" : "square-outline"} size={18} color={theme.primary} />
                                 </TouchableOpacity>
                             ) :
-                            <Text key={key} style={[styles.headerCell, isCompactMobile && styles.headerCellMobile, { width: visibleCols[key], color: theme.textSecondary }]}>{key === "number" ? "#" : key}</Text>
+                            <Text key={key} style={[styles.headerCell, isCompactMobile && styles.headerCellMobile, { width: visibleCols[key], color: theme.textSecondary }]}>
+                              {key === "number" ? "#" : key === "tracking" ? "TRACK" : key}
+                            </Text>
                         ))}
                         </View>
                         {showHeaderFilters && renderFilterRow()}
@@ -1878,7 +2459,11 @@ export default function AdminPanelScreen({ navigation }) {
               </View>
               <View style={{flex: 1}} />
               <View style={styles.footerSection}>
-                <Text style={[styles.footerText, {color: theme.primary}]}>{new Date().toLocaleDateString()} // {new Date().toLocaleTimeString()} UTC</Text>
+                <Text style={[styles.footerText, {color: theme.primary}]}>
+                  {new Date().toLocaleDateString()}
+                  {" // "}
+                  {new Date().toLocaleTimeString()} UTC
+                </Text>
               </View>
             </BlurView>
         </ScrollView>
@@ -2316,7 +2901,7 @@ const styles = StyleSheet.create({
   },
   assigneeAvatarText: { fontSize: 10, fontWeight: 'bold' },
 
-  statusPill: { borderRadius: 20, paddingVertical: 4, paddingHorizontal: 10, borderWidth: 1 },
+  statusPill: { borderRadius: 20, paddingVertical: 4, paddingHorizontal: 10, borderWidth: 1, maxWidth: "100%", overflow: "hidden", alignSelf: "flex-start" },
   statusText: { fontSize: 10, fontWeight: '700', textAlign: 'center', textTransform: 'uppercase' },
 
   // Footer
@@ -2445,5 +3030,22 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 10,
   },
+  toastWrap: {
+    position: "absolute",
+    top: 76,
+    left: 16,
+    right: 16,
+    zIndex: 6000,
+    alignItems: "center",
+  },
+  toastCard: {
+    maxWidth: 560,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 16,
+    borderWidth: 1,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  toastMessage: { fontSize: 12, fontWeight: "700", flexShrink: 1 },
 });
-

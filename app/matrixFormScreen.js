@@ -20,6 +20,7 @@ import { Asset } from "expo-asset";
 import * as FileSystem from "expo-file-system/legacy";
 import { PDFDocument, PDFName } from "pdf-lib";
 import SignatureScreen from "react-native-signature-canvas";
+import WebSignaturePad from "./WebSignaturePad";
 
 import { useNavigation, useRoute } from "@react-navigation/native";
 import firebase from "../firebase";
@@ -608,18 +609,22 @@ export default function MatrixFormScreen() {
 
       <Modal visible={!!signingField} animationType="slide">
         <View style={{ flex: 1 }}>
-          <SignatureScreen
-            onOK={handleSignature}
-            onEnd={() => {}}
-            autoClear={false}
-            descriptionText="Sign above"
-            clearText="Clear"
-            confirmText="Save"
-            trimWhitespace={true}
-            minWidth={3}
-            maxWidth={5}
-            webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 60px; width: 100%; position: absolute; } .m-signature-pad--body { margin-bottom: 100px; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
-          />
+          {Platform.OS === "web" ? (
+            <WebSignaturePad onOK={handleSignature} onCancel={() => setSigningField(null)} />
+          ) : (
+            <SignatureScreen
+              onOK={handleSignature}
+              onEnd={() => {}}
+              autoClear={false}
+              descriptionText="Sign above"
+              clearText="Clear"
+              confirmText="Save"
+              trimWhitespace={true}
+              minWidth={3}
+              maxWidth={5}
+              webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 60px; width: 100%; position: absolute; } .m-signature-pad--body { margin-bottom: 100px; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
+            />
+          )}
           <TouchableOpacity
             style={styles.close}
             onPress={() => setSigningField(null)}

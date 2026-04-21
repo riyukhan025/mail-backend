@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Picker } from "@react-native-picker/picker";
 import Constants from "expo-constants";
 import * as DocumentPicker from "expo-document-picker";
 import { LinearGradient } from "expo-linear-gradient";
@@ -18,7 +19,6 @@ import {
   TouchableOpacity,
   View
 } from "react-native";
-import { Picker } from "@react-native-picker/picker";
 import { BarChart, LineChart, PieChart } from "react-native-chart-kit";
 import * as XLSX from "xlsx";
 import firebase from "../firebase";
@@ -74,6 +74,7 @@ const TABS = [
   { id: "reconciliation", label: "Reconciliation", icon: "git-compare-outline" },
   { id: "manual_audit", label: "Manual Audit", icon: "create-outline" },
   { id: "firebase", label: "Firebase DB", icon: "server-outline" },
+  { id: "monthly_firebase_clearance", label: "Monthly Firebase Clearance", icon: "trash-bin-outline" },
   { id: "cloudinary", label: "Cloudinary", icon: "cloud-circle-outline" },
   { id: "tickets", label: "Tickets", icon: "ticket-outline" },
   { id: "users", label: "Users", icon: "people-outline" },
@@ -301,6 +302,8 @@ export default function DevDashboardScreen({ navigation }) {
         return caseStats.total;
       case "status":
         return cases.length;
+      case "monthly_firebase_clearance":
+        return caseStats.completed;
       case "tracking":
       case "statistics":
         return caseStats.completed;
@@ -465,6 +468,8 @@ export default function DevDashboardScreen({ navigation }) {
         return <ManualAuditTab />;
       case "firebase":
         return <FirebaseTab />;
+      case "monthly_firebase_clearance":
+        return <MonthlyFirebaseClearanceTab canManage={user?.role === "admin" || user?.role === "dev"} cases={cases} />;
       case "cloudinary":
         return <CloudinaryTab />;
       case "tickets":
@@ -1332,6 +1337,118 @@ function FirebaseTab() {
               )}
           />
       </View>
+  );
+}
+
+function MonthlyFirebaseClearanceTab({ canManage, cases = [] }) {
+  const [clearing, setClearing] = useState(false);
+  const [lastResult, setLastResult] = useState(null);
+
+  const completedCount = cases.filter((c) => String(c?.status || "").toLowerCase() === "completed").length;
+
+  const runClearance = async () => {
+    if (!canManage) {
+      Alert.alert("Access Denied", "Only admin/dev users can run monthly Firebase clearance.");
+      return;
+    }
+
+    const message =
+      `This will permanently delete ONLY cases with status 'completed' from Firebase (/cases).` +
+      `\n\nCompleted cases found: ${completedCount}` +
+      `\n\nContinue?`;
+
+    const execute = async () => {
+      setClearing(true);
+      setLastResult(null);
+      try {
+        const casesRef = firebase.database().ref("cases");
+        const snap = await casesRef.orderByChild("status").equalTo("completed").once("value");
+
+        const keysToDelete = [];
+        snap.forEach((child) => {
+          const val = child.val();
+          if (String(val?.status || "").toLowerCase() === "completed") keysToDelete.push(child.key);
+        });
+
+        if (keysToDelete.length === 0) {
+          const at = new Date().toISOString();
+          setLastResult({ ok: true, deleted: 0, at });
+          Alert.alert("Nothing to clear", "No completed cases were found in Firebase.");
+          return;
+        }
+
+        const chunkSize = 250;
+        let deleted = 0;
+        for (let i = 0; i < keysToDelete.length; i += chunkSize) {
+          const chunk = keysToDelete.slice(i, i + chunkSize);
+          const updates = {};
+          chunk.forEach((id) => {
+            updates[id] = null;
+          });
+          await casesRef.update(updates);
+          deleted += chunk.length;
+        }
+
+        const at = new Date().toISOString();
+        setLastResult({ ok: true, deleted, at });
+        Alert.alert("Cleared", `Deleted ${deleted} completed cases from Firebase.`);
+      } catch (err) {
+        const at = new Date().toISOString();
+        const msg = err?.message || String(err);
+        setLastResult({ ok: false, error: msg, at });
+        Alert.alert("Error", `Failed to clear completed cases: ${msg}`);
+      } finally {
+        setClearing(false);
+      }
+    };
+
+    if (Platform.OS === "web") {
+      // eslint-disable-next-line no-restricted-globals
+      if (confirm(message)) execute();
+    } else {
+      Alert.alert("Monthly Firebase Clearance", message, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Clear", style: "destructive", onPress: execute },
+      ]);
+    }
+  };
+
+  return (
+    <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+      <View style={[styles.moduleCard, { borderColor: "rgba(244,63,94,0.35)" }]}>
+        <Text style={styles.moduleTitle}>Monthly Firebase Clearance</Text>
+        <Text style={styles.moduleDesc}>
+          Deletes cases from Firebase Realtime Database path <Text style={{ fontWeight: "bold" }}>/cases</Text> where{" "}
+          <Text style={{ fontWeight: "bold" }}>status === "completed"</Text>.{"\n"}This is permanent and cannot be undone.
+        </Text>
+
+        <View style={{ marginTop: 12 }}>
+          <InfoRow label="Completed Cases (Local Snapshot)" value={String(completedCount)} />
+          <InfoRow label="Permission" value={canManage ? "admin/dev" : "read-only"} />
+          {lastResult && (
+            <InfoRow
+              label="Last Run"
+              value={
+                lastResult.ok
+                  ? `${lastResult.deleted} deleted @ ${new Date(lastResult.at).toLocaleString()}`
+                  : `FAILED @ ${new Date(lastResult.at).toLocaleString()}`
+              }
+            />
+          )}
+        </View>
+
+        <View style={{ flexDirection: "row", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+          <GradientButton
+            colors={["#ef4444", "#b91c1c"]}
+            icon="trash-outline"
+            label={clearing ? "Clearing..." : "Clear Completed"}
+            onPress={runClearance}
+            disabled={clearing || !canManage}
+            loading={clearing}
+          />
+        </View>
+      </View>
+    </ScrollView>
   );
 }
 
