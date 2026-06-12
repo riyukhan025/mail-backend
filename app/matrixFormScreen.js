@@ -2,17 +2,17 @@ import { Ionicons } from "@expo/vector-icons";
 import { Picker } from "@react-native-picker/picker";
 import { useEffect, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    Image,
-    Modal,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  Image,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from "react-native";
 
 import { decode as atob } from "base-64";
@@ -438,17 +438,25 @@ export default function MatrixFormScreen() {
         // 2. Respondent Relationship (Dropdown)
         if (k === "respondentRelationship") {
           const options = ["Self", "Sister", "Uncle", "Aunty", "Mother", "Father", "Brother", "Wife", "Neighbour", "Grandmother", "Grandfather", "Others"];
+          const currentVal = form[k];
+          const isCustom = currentVal && !options.includes(currentVal) && currentVal !== "Others";
+          const pickerVal = isCustom ? "Others" : currentVal;
+
           return (
-              <View key={k} style={styles.fieldContainer}>
+            <View key={k} style={styles.fieldContainer}>
               <Text style={styles.label}>{label}</Text>
               <View style={styles.pickerContainer}>
                 <Picker
-                  selectedValue={form[k]}
+                  selectedValue={pickerVal}
                   onValueChange={(v) => {
                     const updates = { [k]: v };
                     if (v === "Neighbour") {
                       updates.addressProofDetails = "Not Provided";
                       updates.neighbourConfirmation = "Yes";
+                    } else if (v === "Others") {
+                      updates.neighbourConfirmation = "No";
+                      // Only set to literal "Others" if not currently a custom value
+                      if (!isCustom) updates[k] = "Others";
                     } else {
                       updates.neighbourConfirmation = "No";
                     }
@@ -460,6 +468,14 @@ export default function MatrixFormScreen() {
                   {options.map(o => <Picker.Item key={o} label={o} value={o} />)}
                 </Picker>
               </View>
+              {(pickerVal === "Others") && (
+                <TextInput
+                  placeholder="Enter Relationship"
+                  style={[styles.textInput, { marginTop: 10 }]}
+                  value={isCustom ? currentVal : ""}
+                  onChangeText={v => setForm({ ...form, [k]: v })}
+                />
+              )}
             </View>
           );
         }

@@ -4,21 +4,22 @@ import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import { useContext, useEffect, useRef, useState } from "react";
 import {
-  Alert,
-  FlatList,
-  Image,
-  Linking,
-  Modal,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    Alert,
+    FlatList,
+    Image,
+    Linking,
+    Modal,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from "react-native";
 import firebase from "../firebase";
 import { AuthContext } from "./AuthContext";
+import { getAllCasesCacheKey, getCachedCases, getUserCaseCacheKey, saveCasesToCache } from "./utils/caseCache";
 import { FINE_CONFIG, getCaseFineInfo } from "./utils/fines";
 
 const TRANSLATIONS = {
@@ -224,7 +225,17 @@ export default function Dashboard({ navigation }) {
     }
   };
 
-  const loadCases = (uid) => {
+  const loadCases = async (uid) => {
+    // Try to load from cache first for instant display
+    const cacheKey = getUserCaseCacheKey(uid);
+    const cachedCases = await getCachedCases(cacheKey);
+    
+    if (cachedCases && cachedCases.length > 0) {
+      console.log("[Dashboard] Loading cases from cache:", cachedCases.length);
+      setCases(cachedCases.filter((c) => c.status !== "reverted"));
+    }
+
+    // Fetch from Firebase and update cache
     firebase
       .database()
       .ref("cases")
@@ -237,6 +248,9 @@ export default function Dashboard({ navigation }) {
               ...snapshot.val()[key],
             }))
           : [];
+
+        // Save to cache for next time
+        await saveCasesToCache(cacheKey, data);
 
         // Alert System Logic
         if (isFirstLoad.current) {
@@ -282,17 +296,31 @@ export default function Dashboard({ navigation }) {
       });
   };
 
-  const loadAllCases = () => {
+  const loadAllCases = async () => {
+    // Try to load from cache first for instant display
+    const allCasesCacheKey = getAllCasesCacheKey();
+    const cachedAllCases = await getCachedCases(allCasesCacheKey);
+    
+    if (cachedAllCases && cachedAllCases.length > 0) {
+      console.log("[Dashboard] Loading all cases from cache:", cachedAllCases.length);
+      setCases(cachedAllCases.filter((c) => c.status !== "reverted"));
+    }
+
+    // Fetch from Firebase and update cache
     firebase
       .database()
       .ref("cases")
-      .on("value", (snapshot) => {
+      .on("value", async (snapshot) => {
         const data = snapshot.val()
           ? Object.keys(snapshot.val()).map((key) => ({
               id: key,
               ...snapshot.val()[key],
             }))
           : [];
+        
+        // Save to cache for next time
+        await saveCasesToCache(allCasesCacheKey, data);
+        
         setCases(data.filter((c) => c.status !== "reverted"));
       });
   };
@@ -628,6 +656,11 @@ export default function Dashboard({ navigation }) {
                 label: "My Tickets",
                 action: () => navigation.navigate("MyTicketsScreen"),
                 icon: "ticket-outline"
+              },
+              {
+                label: "My Rewards",
+                action: () => navigation.navigate("RewardsScreen"),
+                icon: "gift-outline"
               },
             ].map((item, index) => (
               <TouchableOpacity

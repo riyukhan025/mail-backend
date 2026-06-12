@@ -9,6 +9,7 @@ import { createElement, useEffect, useState } from "react";
 import { Alert, Dimensions, FlatList, Modal, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import * as XLSX from "xlsx";
 import firebase from "../firebase";
+import { getAllCasesCacheKey, getCachedCases, saveCasesToCache } from "./utils/caseCache";
 
 const { width } = Dimensions.get("window");
 
@@ -26,12 +27,28 @@ export default function CompletedCasesScreen({ navigation }) {
   const [pickerMode, setPickerMode] = useState(null); // 'start' or 'end'
 
   useEffect(() => {
+    // Load from cache first for instant display
+    const allCasesCacheKey = getAllCasesCacheKey();
+    getCachedCases(allCasesCacheKey).then((cachedAllCases) => {
+      if (cachedAllCases) {
+        const list = cachedAllCases
+          .filter((c) => c.status === "completed" || c.status === "closed");
+        setCases(list);
+      }
+    });
+
+    // Fetch from Firebase and update cache
     const casesRef = firebase.database().ref("cases");
-    const listener = casesRef.on("value", (snapshot) => {
+    const listener = casesRef.on("value", async (snapshot) => {
       const data = snapshot.val() || {};
       const list = Object.keys(data)
         .map((key) => ({ id: key, ...data[key] }))
         .filter((c) => c.status === "completed" || c.status === "closed");
+      
+      // Save all cases to cache
+      const allData = Object.keys(data).map((key) => ({ id: key, ...data[key] }));
+      await saveCasesToCache(allCasesCacheKey, allData);
+      
       setCases(list);
     });
     return () => casesRef.off("value", listener);

@@ -1366,6 +1366,39 @@ const handleCloseCase = async () => {
         });
     };
 
+    // --- NEW: Handle Call with multiple numbers ---
+    const handleCall = () => {
+        const contact = String(caseData?.contactNumber || "").trim();
+        if (!contact) return;
+
+        if (contact.includes('/')) {
+            const numbers = contact.split('/').map(n => n.trim()).filter(Boolean);
+            if (numbers.length > 1) {
+                if (Platform.OS === 'web') {
+                    // Simple choice logic for web
+                    if (window.confirm(`Call ${numbers[0]}? (Cancel to see option for ${numbers[1]})`)) {
+                        Linking.openURL(`tel:${numbers[0]}`);
+                    } else if (window.confirm(`Call ${numbers[1]}?`)) {
+                        Linking.openURL(`tel:${numbers[1]}`);
+                    }
+                    return;
+                }
+
+                Alert.alert(
+                    "Select Number",
+                    "Which number would you like to call?",
+                    [
+                        { text: numbers[0], onPress: () => Linking.openURL(`tel:${numbers[0]}`) },
+                        { text: numbers[1], onPress: () => Linking.openURL(`tel:${numbers[1]}`) },
+                        { text: "Cancel", style: "cancel" }
+                    ]
+                );
+                return;
+            }
+        }
+        Linking.openURL(`tel:${contact}`);
+    };
+
 
 
     // If user is null (logged out) or auth isn't checked yet, don't show details.
@@ -1473,7 +1506,7 @@ const handleCloseCase = async () => {
                         <Ionicons name="call-outline" size={18} color="#fbbf24" style={styles.infoIcon} />
                         <Text style={styles.infoText}>{caseData.contactNumber || "No contact"}</Text>
                         {caseData.contactNumber && (
-                            <TouchableOpacity onPress={() => Linking.openURL(`tel:${caseData.contactNumber}`)} style={styles.callButton}>
+                            <TouchableOpacity onPress={handleCall} style={styles.callButton}>
                                 <Ionicons name="call" size={14} color="#fff" />
                                 <Text style={styles.callButtonText}>Call</Text>
                             </TouchableOpacity>

@@ -25,6 +25,7 @@ import CompletedCasesScreen from "./app/CompletedCasesScreen";
 import Dashboard from "./app/Dashboard";
 import DaywiseTrackerScreen from "./app/DaywiseTrackerScreen";
 import DevDashboardScreen from "./app/DevDashboardScreen";
+import DevRewardsScreen from "./app/DevRewardsScreen";
 import DHIFormScreen from "./app/DHIFormScreen";
 import DigitalIDCard from "./app/DigitalIDCard";
 import DSRScreen from "./app/DSRScreen";
@@ -38,20 +39,21 @@ import MemberDetailScreen from "./app/MemberDetailScreen";
 import MemberDSRDetailScreen from "./app/MemberDSRDetailScreen";
 import MemberDSRScreen from "./app/MemberDSRScreen";
 import MemberReportDetailScreen from "./app/MemberReportDetailScreen";
-import MemberReportsScreen from "./app/MemberReportsScreen";
 import MemberReportSendScreen from "./app/MemberReportSendScreen";
+import MemberReportsScreen from "./app/MemberReportsScreen";
 import MemberViewScreen from "./app/MemberViewScreen";
-import MyTicketsScreen from "./app/MyTicketsScreen";
 import MonthEndReportScreen from "./app/MonthEndReportScreen";
+import MyTicketsScreen from "./app/MyTicketsScreen";
 import PlanYourDayScreen from "./app/PlanYourDayScreen";
 import RaiseTicketScreen from "./app/RaiseTicketScreen";
 import RevertedCasesScreen from "./app/RevertedCasesScreen";
+import RewardsScreen from "./app/RewardsScreen";
 import SplashScreen from "./app/SplashScreen";
 import StatisticsScreen from "./app/StatisticsScreen";
 import TeamDSRScreen from "./app/TeamDSRScreen";
 import Updatescreen from "./app/Updatescreen";
-import VerifyProfileScreen from "./app/VerifyProfileScreen";
 import VerifyCaseScreen from "./app/VerifyCaseScreen";
+import VerifyProfileScreen from "./app/VerifyProfileScreen";
 
 const LINKING = {
   prefixes: [
@@ -139,6 +141,7 @@ function AdminStack() {
       <Stack.Screen name="AllTicketsScreen" component={AllTicketsScreen} />
       <Stack.Screen name="RaiseTicketScreen" component={RaiseTicketScreen} />
       <Stack.Screen name="MonthEndReportScreen" component={MonthEndReportScreen} />
+      <Stack.Screen name="DevRewardsScreen" component={DevRewardsScreen} />
     </Stack.Navigator>
   );
 }
@@ -154,6 +157,7 @@ function DevStack() {
       <Stack.Screen name="MemberReportsScreen" component={MemberReportsScreen} />
       <Stack.Screen name="MemberReportDetailScreen" component={MemberReportDetailScreen} />
       <Stack.Screen name="MemberReportSendScreen" component={MemberReportSendScreen} />
+      <Stack.Screen name="DevRewardsScreen" component={DevRewardsScreen} />
     </Stack.Navigator>
   );
 }
@@ -188,10 +192,12 @@ function MemberStack() {
       <Stack.Screen name="TeamDSRScreen" component={TeamDSRScreen} />
       <Stack.Screen
         name="RaiseTicketScreen" component={RaiseTicketScreen} />
-      <Stack.Screen name="MyTicketsScreen" component={MyTicketsScreen} /><Stack.Screen
+      <Stack.Screen name="MyTicketsScreen" component={MyTicketsScreen} />
+      <Stack.Screen
         name="VerifyProfileScreen"
         component={VerifyProfileScreen}
       />
+      <Stack.Screen name="RewardsScreen" component={RewardsScreen} />
     </Stack.Navigator>
   );
 }

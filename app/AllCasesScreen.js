@@ -4,6 +4,7 @@ import { useContext, useEffect, useState } from "react";
 import { FlatList, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import firebase from "../firebase";
 import { AuthContext } from "./AuthContext";
+import { getCachedCases, getUserCaseCacheKey, saveCasesToCache } from "./utils/caseCache";
 
 export default function AllCasesScreen({ navigation }) {
   const { user } = useContext(AuthContext);
@@ -12,12 +13,25 @@ export default function AllCasesScreen({ navigation }) {
   useEffect(() => {
     if (!user) return;
 
+    // Load from cache first for instant display
+    const cacheKey = getUserCaseCacheKey(user.uid);
+    getCachedCases(cacheKey).then((cachedCases) => {
+      if (cachedCases && cachedCases.length > 0) {
+        setCases(cachedCases);
+      }
+    });
+
+    // Fetch from Firebase and update cache
     const casesRef = firebase.database().ref("cases");
     const query = casesRef.orderByChild("assignedTo").equalTo(user.uid);
 
-    const listener = query.on("value", (snapshot) => {
+    const listener = query.on("value", async (snapshot) => {
       const data = snapshot.val() || {};
       const list = Object.keys(data).map((key) => ({ id: key, ...data[key] }));
+      
+      // Save to cache
+      await saveCasesToCache(cacheKey, list);
+      
       setCases(list);
     });
     return () => query.off("value", listener);

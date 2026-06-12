@@ -6,24 +6,25 @@ import * as DocumentPicker from "expo-document-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import { useContext, useEffect, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  Dimensions,
-  FlatList,
-  Platform,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    Dimensions,
+    FlatList,
+    Platform,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from "react-native";
 import { BarChart, LineChart, PieChart } from "react-native-chart-kit";
 import * as XLSX from "xlsx";
 import firebase from "../firebase";
 import { APPWRITE_CONFIG, client, databases, Query } from "./appwrite";
 import { AuthContext } from "./AuthContext";
+import DevRewardsScreen from "./DevRewardsScreen";
 import MemberReportsScreen from "./MemberReportsScreen";
 import MonthEndReportScreen from "./MonthEndReportScreen";
 import { FINE_CONFIG, getCaseFineInfo } from "./utils/fines";
@@ -81,6 +82,7 @@ const TABS = [
   { id: "monthly_firebase_clearance", label: "Monthly Firebase Clearance", icon: "trash-bin-outline" },
   { id: "month_end_report", label: "Month End Report", icon: "document-text-outline" },
   { id: "member_reports", label: "Member Reports", icon: "people-outline" },
+  { id: "rewards", label: "Manage Rewards", icon: "gift-outline" },
   { id: "cloudinary", label: "Cloudinary", icon: "cloud-circle-outline" },
   { id: "tickets", label: "Tickets", icon: "ticket-outline" },
   { id: "users", label: "Users", icon: "people-outline" },
@@ -480,6 +482,8 @@ export default function DevDashboardScreen({ navigation }) {
         return <MonthEndReportScreen embedded navigation={navigation} cases={cases} users={users} />;
       case "member_reports":
         return <MemberReportsScreen navigation={navigation} />;
+      case "rewards":
+        return <DevRewardsScreen navigation={navigation} />;
       case "cloudinary":
         return <CloudinaryTab />;
       case "tickets":
