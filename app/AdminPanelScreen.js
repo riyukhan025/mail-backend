@@ -10,8 +10,8 @@ import * as MailComposer from "expo-mail-composer";
 import * as Speech from "expo-speech";
 import { createElement, useContext, useEffect, useRef, useState } from "react";
 import {
-  Alert,
   ActivityIndicator,
+  Alert,
   Animated,
   Dimensions,
   Image,
@@ -30,6 +30,7 @@ import { LineChart } from "react-native-chart-kit";
 import * as XLSX from "xlsx";
 import firebase from "../firebase";
 import { AuthContext } from "./AuthContext";
+import { FINE_CONFIG, getCaseFineInfo } from "./utils/fines";
 
 const SCREEN_HEIGHT = Dimensions.get("window").height;
 const SCREEN_WIDTH = Dimensions.get("window").width;
@@ -199,6 +200,7 @@ export default function AdminPanelScreen({ navigation }) {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [uploadDateFilter, setUploadDateFilter] = useState("");
   const [showUploadDatePicker, setShowUploadDatePicker] = useState(false);
+  const [expandedFineMember, setExpandedFineMember] = useState(null);
   const [voiceModalVisible, setVoiceModalVisible] = useState(false);
   const [voiceCommand, setVoiceCommand] = useState("");
   const [aiResponse, setAiResponse] = useState("Listening for command...");
@@ -331,6 +333,7 @@ export default function AdminPanelScreen({ navigation }) {
     { label: "Mails", icon: "mail-outline", screen: "MailRecordsScreen" },
     { label: "Analytics", icon: "stats-chart-outline", screen: "StatisticsScreen" },
     { label: "Tickets", icon: "ticket-outline", screen: "AllTicketsScreen" }, // Assuming this exists
+    { label: "Fines", icon: "cash-outline", screen: "AdminPanel" },
     { label: "Settings", icon: "settings-outline" },
   ];
 
@@ -800,6 +803,44 @@ export default function AdminPanelScreen({ navigation }) {
     const dateB = new Date(b.assignedAt || b.dateInitiated || 0).getTime();
     return dateB - dateA;
   });
+
+  const fineRows = cases
+    .map((c) => {
+      const status = String(c?.status || "").toLowerCase();
+      if (status === "completed" || status === "closed") return null;
+      const fineInfo = getCaseFineInfo(c, Date.now(), FINE_CONFIG);
+      if (!fineInfo?.penaltyPercent || fineInfo.penaltyPercent <= 0) return null;
+      const refNo = c.matrixRefNo || c.RefNo || c.id;
+      const memberName =
+        c.assigneeName ||
+        (c.assignedTo ? members.find((m) => m.id === c.assignedTo)?.name : null) ||
+        c.assignedTo ||
+        "-";
+      return {
+        id: c.id,
+        refNo,
+        memberName,
+        penaltyPercent: fineInfo.penaltyPercent,
+        diffDays: fineInfo.diffDays,
+        delayDays: fineInfo.delayDays,
+        reason: fineInfo.reason || "Fine calculated due to delay.",
+        assignedAt: fineInfo.baseMs ? new Date(fineInfo.baseMs).toLocaleString() : "-",
+        dueAt: fineInfo.dueAtMs ? new Date(fineInfo.dueAtMs).toLocaleString() : "-",
+        status,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => (b.penaltyPercent || 0) - (a.penaltyPercent || 0) || (b.delayDays || 0) - (a.delayDays || 0));
+
+  const fineGroups = fineRows.reduce((acc, r) => {
+    const key = String(r.memberName || "-");
+    if (!acc[key]) acc[key] = { memberName: key, count: 0, cases: [] };
+    acc[key].count += 1;
+    acc[key].cases.push(r);
+    return acc;
+  }, {});
+
+  const fineGroupList = Object.values(fineGroups).sort((a, b) => (b.count || 0) - (a.count || 0) || String(a.memberName).localeCompare(String(b.memberName)));
 
   const handleDateChange = (event, selectedDate) => {
     if (Platform.OS === 'android') setShowDatePicker(false);
@@ -1919,6 +1960,7 @@ export default function AdminPanelScreen({ navigation }) {
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => {
                     firebase.auth().signOut().then(() => logout());
+                    logout(); firebase.auth().signOut().catch(() => {});
                 }}>
                     <Image 
                     source={{ uri: user?.photoURL || 'https://picsum.photos/id/11/60/60' }} 
@@ -1958,6 +2000,8 @@ export default function AdminPanelScreen({ navigation }) {
                       if (Platform.OS === 'web') alert("Error: Failed to log off: " + error.message);
                       else Alert.alert("Error", "Failed to log off: " + error.message);
                     });
+                    logout();
+                    firebase.auth().signOut().catch(() => {});
                 }}>
                     <Ionicons name="log-out-outline" size={20} color={theme.error} />
                     <Text style={[styles.menuText, { color: theme.error, marginLeft: 12 }]}>Log Off</Text>
@@ -2163,6 +2207,79 @@ export default function AdminPanelScreen({ navigation }) {
         </BlurView>
 
         <ScrollView contentContainerStyle={{ padding: contentPadding, paddingBottom: isMobile ? 72 : 100 }}>
+            {activeSidebarItem === "Fines" ? (
+              <View>
+                <View style={[styles.pageHeader, isMobile && styles.pageHeaderMobile]}>
+                  <View>
+                    <Text style={[styles.pageTitle, isMobile && styles.pageTitleMobile, { color: theme.text, textShadowColor: theme.primary, textShadowRadius: 20, textShadowOffset: {width: 0, height: 0} }]}>FINES</Text>
+                    <View style={styles.pageSubtitleContainer}>
+                      <BlinkingDot color={theme.warning} />
+                      <Text style={styles.pageSubtitle}>DELAYED_CASES // AUTO_CALC</Text>
+                    </View>
+                  </View>
+                  <View style={[{ flexDirection: 'row', gap: 24 }, isMobile && styles.pageStatsRowMobile]}>
+                    <View style={[{ alignItems: 'flex-end', borderRightWidth: 1, borderRightColor: theme.border, paddingRight: 24 }, isMobile && { alignItems: 'flex-start', borderRightWidth: 0, paddingRight: 0 }]}>
+                      <Text style={styles.headerStatLabel}>PENALIZED_CASES</Text>
+                      <Text style={[styles.headerStatValue, {color: theme.text, textShadowColor: theme.primary, textShadowRadius: 10}]}>{fineRows.length}</Text>
+                    </View>
+                    <View style={[{ alignItems: 'flex-end' }, isMobile && { alignItems: 'flex-start' }]}>
+                      <Text style={styles.headerStatLabel}>MEMBERS</Text>
+                      <Text style={[styles.headerStatValue, {color: theme.warning, textShadowColor: theme.warning, textShadowRadius: 10}]}>{fineGroupList.length}</Text>
+                    </View>
+                  </View>
+                </View>
+
+                <View style={{ marginTop: 12, borderRadius: 16, borderWidth: 1, borderColor: theme.border, backgroundColor: isLightTheme ? theme.cardBg : 'rgba(255,255,255,0.04)', padding: 14 }}>
+                  <Text style={{ color: theme.text, fontWeight: "900", marginBottom: 8 }}>Penalty By Member</Text>
+                  {fineRows.length === 0 ? (
+                    <Text style={{ color: theme.textSecondary }}>No penalized cases found.</Text>
+                  ) : (
+                    fineGroupList.map((g) => {
+                      const open = expandedFineMember === g.memberName;
+                      return (
+                        <View key={g.memberName} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.border }}>
+                          <TouchableOpacity
+                            onPress={() => setExpandedFineMember(open ? null : g.memberName)}
+                            style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}
+                          >
+                            <Text style={{ color: theme.text, fontWeight: "900", flex: 1, paddingRight: 10 }} numberOfLines={1}>
+                              {g.memberName}
+                            </Text>
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                              <View style={{ backgroundColor: theme.warning + "20", borderColor: theme.warning + "66", borderWidth: 1, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 }}>
+                                <Text style={{ color: theme.warning, fontWeight: "900", fontSize: 11 }}>{g.count} case{g.count === 1 ? "" : "s"}</Text>
+                              </View>
+                              <Ionicons name={open ? "chevron-up" : "chevron-down"} size={18} color={theme.textSecondary} />
+                            </View>
+                          </TouchableOpacity>
+
+                          {open && (
+                            <View style={{ marginTop: 10 }}>
+                              {g.cases.map((r) => (
+                                <View key={r.id} style={{ paddingVertical: 8, borderTopWidth: 1, borderTopColor: theme.border }}>
+                                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                                    <Text style={{ color: theme.text, fontWeight: "800", flex: 1, paddingRight: 10 }} numberOfLines={1}>
+                                      {r.refNo}
+                                    </Text>
+                                    <View style={{ backgroundColor: theme.error + "20", borderColor: theme.error + "66", borderWidth: 1, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 }}>
+                                      <Text style={{ color: theme.error, fontWeight: "900", fontSize: 11 }}>{r.penaltyPercent}%</Text>
+                                    </View>
+                                  </View>
+                                  <Text style={{ color: theme.textSecondary, marginTop: 4, fontSize: 12 }} numberOfLines={2}>
+                                    Status: {r.status} • Delay: {r.delayDays} day{r.delayDays === 1 ? "" : "s"} • Assigned: {r.assignedAt}
+                                  </Text>
+                                </View>
+                              ))}
+                            </View>
+                          )}
+                        </View>
+                      );
+                    })
+                  )}
+                </View>
+              </View>
+            ) : (
+            <View>
             <View style={[styles.pageHeader, isMobile && styles.pageHeaderMobile]}>
               <View>
                 <Text style={[styles.pageTitle, isMobile && styles.pageTitleMobile, { color: theme.text, textShadowColor: theme.primary, textShadowRadius: 20, textShadowOffset: {width: 0, height: 0} }]}>SPACE_COMMAND</Text>
@@ -2420,6 +2537,8 @@ export default function AdminPanelScreen({ navigation }) {
                     </View>
                 </ScrollView>
             </View>
+            </View>
+            )}
 
             {showDatePicker && Platform.OS !== 'web' && (
                 <DateTimePicker

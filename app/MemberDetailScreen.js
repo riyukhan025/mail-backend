@@ -109,7 +109,11 @@ export default function MemberDetailScreen({ navigation, route }) {
             <Image source={{ uri: member.photoURL }} style={styles.avatar} />
           ) : (
             <View style={styles.avatarPlaceholder}>
-              <Ionicons name="person" size={48} color="#94a3b8" />
+              <Ionicons 
+                name={member.gender === 'female' ? "woman" : member.gender === 'male' ? "man" : "person"} 
+                size={48} 
+                color="#94a3b8" 
+              />
             </View>
           )}
         </View>

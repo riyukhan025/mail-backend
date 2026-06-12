@@ -1,17 +1,21 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Picker } from "@react-native-picker/picker";
 import { BlurView } from "expo-blur";
+import * as Haptics from "expo-haptics";
+import { LinearGradient } from "expo-linear-gradient";
 import { useContext, useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Animated,
+  Easing,
   Image,
   ImageBackground,
   KeyboardAvoidingView,
   Linking,
   Modal,
   Platform,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -28,13 +32,15 @@ const AnimatedBG = Animated.createAnimatedComponent(ImageBackground);
 
 export default function AuthScreen({ navigation }) {
   const { login } = useContext(AuthContext);
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const isWeb = Platform.OS === "web";
   const [isSignup, setIsSignup] = useState(false);
+  const [webSignupStep, setWebSignupStep] = useState(0);
   const [name, setName] = useState("");
   const [city, setCity] = useState("");
   const [pincode, setPincode] = useState("");
   const [bloodGroup, setBloodGroup] = useState("");
+  const [gender, setGender] = useState("");
 
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
@@ -55,6 +61,7 @@ export default function AuthScreen({ navigation }) {
   const authSlider = useRef(new Animated.Value(0)).current;
   const bgScale = useRef(new Animated.Value(1)).current;
   const mobileSubmitScale = useRef(new Animated.Value(1)).current;
+  const webStepAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.loop(
@@ -85,11 +92,39 @@ export default function AuthScreen({ navigation }) {
       toValue: isSignup ? 1 : 0,
       duration: 500,
       useNativeDriver: true,
+      easing: Easing.out(Easing.cubic),
     }).start();
   }, [isSignup, authSlider]);
 
+  useEffect(() => {
+    if (!isWeb) return;
+    if (!isSignup) setWebSignupStep(0);
+  }, [isSignup, isWeb]);
+
+  useEffect(() => {
+    if (!isWeb) return;
+    Animated.timing(webStepAnim, {
+      toValue: webSignupStep,
+      duration: 240,
+      useNativeDriver: true,
+      easing: Easing.out(Easing.cubic),
+    }).start();
+  }, [isWeb, webSignupStep, webStepAnim]);
+
+  const triggerHaptic = (type = 'impact') => {
+    if (Platform.OS === 'web') return;
+    if (type === 'success') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    else if (type === 'error') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    else Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  };
+
   const showMessage = (txt) => {
-    Platform.OS === "web" ? setMessage(txt) : Alert.alert(txt);
+    if (Platform.OS === "web") {
+      setMessage(txt);
+    } else {
+      triggerHaptic('error');
+      Alert.alert(txt);
+    }
     setTimeout(() => setMessage(""), 3000);
   };
 
@@ -101,6 +136,7 @@ export default function AuthScreen({ navigation }) {
 
   const handleLogin = async () => {
     if (!identifier || !password) return showMessage("Enter Unique ID / Email and password");
+    triggerHaptic();
     try {
       setLoading(true);
       const field = /^\d{4}$/.test(identifier) ? "uniqueId" : "email";
@@ -122,6 +158,7 @@ export default function AuthScreen({ navigation }) {
 
       setCurrentUid(uid);
       await generateOtp(uid);
+      triggerHaptic('success');
       setOtpPhase(true);
     } catch (e) {
       logErrorToFirebase(e, "Login");
@@ -132,9 +169,10 @@ export default function AuthScreen({ navigation }) {
   };
 
   const handleSignup = async () => {
-    if (!name || !identifier || !password || !city || !pincode || !bloodGroup) {
+    if (!name || !identifier || !password || !city || !pincode || !bloodGroup || !gender) {
       return showMessage("Please fill all fields");
     }
+    triggerHaptic();
     try {
       setLoading(true);
       const userCredential = await firebase.auth().createUserWithEmailAndPassword(identifier, password);
@@ -147,6 +185,7 @@ export default function AuthScreen({ navigation }) {
         city,
         pincode,
         bloodGroup,
+        gender,
         uniqueId,
         role: "member",
         createdAt: Date.now(),
@@ -167,6 +206,7 @@ export default function AuthScreen({ navigation }) {
 
   const handleVerifyOtp = async () => {
     if (!otpInput) return showMessage("Enter OTP");
+    triggerHaptic();
     try {
       setLoading(true);
       const snap = await firebase.database().ref(`users/${currentUid}/loginOtp`).once("value");
@@ -176,6 +216,7 @@ export default function AuthScreen({ navigation }) {
       const { password: pwd, loginOtp, ...clean } = userSnap.val();
       const userWithUid = { ...clean, uid: currentUid, id: currentUid };
       await AsyncStorage.setItem("dbUser", JSON.stringify(userWithUid));
+      triggerHaptic('success');
       login(userWithUid);
     } catch (e) {
       logErrorToFirebase(e, "Verify OTP");
@@ -187,6 +228,7 @@ export default function AuthScreen({ navigation }) {
 
   const handleResendOtp = async () => {
     if (resendTimer > 0 || !currentUid) return;
+    triggerHaptic();
     try {
       setResendTimer(30);
       await generateOtp(currentUid);
@@ -197,6 +239,7 @@ export default function AuthScreen({ navigation }) {
   };
 
   const handleRetrieveUniqueId = async () => {
+    triggerHaptic();
     setRetrieveEmail("");
     setRetrievePassword("");
     setRetrieveModalVisible(true);
@@ -218,6 +261,12 @@ export default function AuthScreen({ navigation }) {
       speed: 20,
       bounciness: 10,
     }).start();
+  };
+
+  const handleWebNextSignupStep = () => {
+    if (!isWeb) return;
+    if (!name || !identifier || !password) return showMessage("Enter name, email and password");
+    setWebSignupStep(1);
   };
 
   const executeRetrieve = async () => {
@@ -331,12 +380,17 @@ export default function AuthScreen({ navigation }) {
     }
   };
 
-  const buttonText = loading ? "Verifying..." : "Verify OTP";
   const theme = { background: "#1A1A2E", color: "#FFFFFF", primaryColor: "#0F3460" };
   const screenWidth = windowWidth;
-  const webCardWidth = Math.min(1120, Math.max(860, screenWidth - 80));
+  const compactWeb = isWeb && windowHeight < 820;
+  const webContainerPadding = isWeb ? (compactWeb ? 12 : 18) : undefined;
+  const webCardHeight = isWeb ? Math.max(0, Math.min(760, windowHeight - webContainerPadding * 2)) : undefined;
+  const webCardPadding = isWeb ? (compactWeb ? 18 : 22) : undefined;
+  const webLogoSize = isWeb ? (compactWeb ? 72 : 82) : undefined;
+  const webLogoMarginBottom = isWeb ? (compactWeb ? 8 : 10) : undefined;
+  const webCardWidth = Math.min(980, Math.max(360, screenWidth - (compactWeb ? 24 : 92)));
   const sliderWidth = isWeb
-    ? Math.min(1000, Math.max(760, webCardWidth - 70))
+    ? Math.min(920, Math.max(320, webCardWidth - (compactWeb ? 40 : 64)))
     : screenWidth < 760
       ? Math.max(300, screenWidth - 28)
       : Math.min(980, Math.max(700, screenWidth - 180));
@@ -406,7 +460,14 @@ export default function AuthScreen({ navigation }) {
                       disabled={loading}
                       activeOpacity={0.9}
                     >
-                      <Text style={[styles.mobileButtonText, { color: theme.color }]}>{buttonText}</Text>
+                      {loading ? (
+                        <ActivityIndicator color={theme.color} />
+                      ) : (
+                        <View style={styles.buttonContent}>
+                           <Text style={[styles.mobileButtonText, { color: theme.color }]}>VERIFY OTP</Text>
+                           <Ionicons name="shield-checkmark-outline" size={18} color={theme.color} style={{ marginLeft: 8 }} />
+                        </View>
+                      )}
                     </TouchableOpacity>
                   </Animated.View>
                 </>
@@ -446,6 +507,17 @@ export default function AuthScreen({ navigation }) {
                     value={bloodGroup}
                     onChangeText={setBloodGroup}
                   />
+                  <View style={styles.mobilePickerWrapper}>
+                    <Picker
+                      selectedValue={gender}
+                      onValueChange={(itemValue) => setGender(itemValue)}
+                      style={styles.mobilePicker}
+                    >
+                      <Picker.Item label="GENDER" value="" color="#fff" />
+                      <Picker.Item label="MALE" value="male" color="#000" />
+                      <Picker.Item label="FEMALE" value="female" color="#000" />
+                    </Picker>
+                  </View>
                   <Animated.View style={{ transform: [{ scale: mobileSubmitScale }] }}>
                     <TouchableOpacity
                       style={[styles.mobileButton, { backgroundColor: theme.primaryColor }]}
@@ -455,7 +527,14 @@ export default function AuthScreen({ navigation }) {
                       disabled={loading}
                       activeOpacity={0.9}
                     >
-                      <Text style={[styles.mobileButtonText, { color: theme.color }]}>{loading ? "SIGNING UP..." : "SUBMIT"}</Text>
+                      {loading ? (
+                        <ActivityIndicator color={theme.color} />
+                      ) : (
+                        <View style={styles.buttonContent}>
+                          <Text style={[styles.mobileButtonText, { color: theme.color }]}>SUBMIT</Text>
+                          <Ionicons name="person-add-outline" size={18} color={theme.color} style={{ marginLeft: 8 }} />
+                        </View>
+                      )}
                     </TouchableOpacity>
                   </Animated.View>
                   <View style={styles.mobileLinksRow}>
@@ -492,7 +571,14 @@ export default function AuthScreen({ navigation }) {
                       disabled={loading}
                       activeOpacity={0.9}
                     >
-                      <Text style={[styles.mobileButtonText, { color: theme.color }]}>{loading ? "LOADING..." : "SUBMIT"}</Text>
+                      {loading ? (
+                        <ActivityIndicator color={theme.color} />
+                      ) : (
+                        <View style={styles.buttonContent}>
+                          <Text style={[styles.mobileButtonText, { color: theme.color }]}>SUBMIT</Text>
+                          <Ionicons name="log-in-outline" size={18} color={theme.color} style={{ marginLeft: 8 }} />
+                        </View>
+                      )}
                     </TouchableOpacity>
                   </Animated.View>
                   <View style={[styles.mobileLinksRow, styles.mobileLoginLinksRow]}>
@@ -500,7 +586,7 @@ export default function AuthScreen({ navigation }) {
                       <Text style={[styles.mobileLink, styles.mobileTopLink, { color: theme.color }]}>REGISTER</Text>
                     </TouchableOpacity>
                     <TouchableOpacity onPress={() => navigation.navigate("ForgotPassword")} style={styles.mobileLinkSlot}>
-                      <Text style={[styles.mobileLink, styles.mobileTopLink, { color: theme.color }]}>FORGOT PASSWORD</Text>
+                      <Text style={[styles.mobileLink, styles.mobileTopLink, { color: theme.color }]}>FORGOT?</Text>
                     </TouchableOpacity>
                   </View>
                   <TouchableOpacity onPress={handleRetrieveUniqueId} style={styles.mobileRetrieveCenter}>
@@ -524,18 +610,37 @@ export default function AuthScreen({ navigation }) {
         <View style={styles.webAuraOne} />
         <View style={styles.webAuraTwo} />
         <View style={styles.webAuraThree} />
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={[styles.container, { width: "100%" }]}>
-          <BlurView intensity={80} tint="dark" style={[styles.card, { width: webCardWidth }]}>
-            <Image source={require("../assets/logo.png")} style={styles.logo} />
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              style={{ width: "100%" }}
-              contentContainerStyle={{ paddingBottom: 20, alignItems: "center" }}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={[styles.container, isWeb && { padding: webContainerPadding }, { width: "100%" }]}
+        >
+          <BlurView
+            intensity={80}
+            tint="dark"
+            style={[styles.card, { width: webCardWidth }, isWeb && { padding: webCardPadding, maxHeight: webCardHeight, height: webCardHeight }]}
+          >
+            <Image
+              source={require("../assets/logo.png")}
+              style={[styles.logo, isWeb && { width: webLogoSize, height: webLogoSize, borderRadius: webLogoSize / 2, marginBottom: webLogoMarginBottom }]}
+            />
+            <View
+              style={{
+                width: "100%",
+                flex: 1,
+                minHeight: 0,
+                alignItems: "center",
+                justifyContent: "center",
+                position: "relative",
+              }}
             >
-              {message ? <Text style={styles.message}>{message}</Text> : null}
+              {message ? (
+                <View pointerEvents="none" style={styles.webToast}>
+                  <Text style={styles.webToastText}>{message}</Text>
+                </View>
+              ) : null}
 
               {otpPhase ? (
-                <>
+                <View style={{ width: "100%", maxWidth: 520 }}>
                   <Text style={styles.header}>Verify OTP</Text>
                   <View style={styles.inputRow}>
                     <Ionicons name="shield-checkmark-outline" size={20} color="#fff" />
@@ -545,17 +650,22 @@ export default function AuthScreen({ navigation }) {
                     <Text style={[styles.resend, resendTimer > 0 && { opacity: 0.5 }]}>{resendTimer > 0 ? `Resend OTP (${resendTimer}s)` : "Resend OTP"}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={[styles.button, { backgroundColor: loading ? "#166534" : "#22c55e" }]} onPress={handleVerifyOtp} disabled={loading}>
-                    <Text style={styles.buttonText}>{buttonText}</Text>
+                    {loading ? <ActivityIndicator color="#fff" /> : (
+                      <View style={styles.buttonContent}>
+                        <Text style={styles.buttonText}>Verify OTP</Text>
+                        <Ionicons name="shield-checkmark-outline" size={18} color="#000" style={{ marginLeft: 8 }} />
+                      </View>
+                    )}
                   </TouchableOpacity>
-                </>
+                </View>
               ) : (
-                <View style={[styles.doubleSliderShell, { width: sliderWidth }]}>
+                <View style={[styles.doubleSliderShell, { width: sliderWidth, flex: 1, minHeight: 0 }]}>
                   <View style={[styles.formsViewport, { width: panelWidth }]}>
                     <Animated.View style={[styles.formsTrack, { width: panelWidth * 2, transform: [{ translateX: formTrackTranslateX }] }]}>
-                      <View style={[styles.formPanel, { width: panelWidth }]}>
-                        <Text style={styles.panelTitle}>Sign in</Text>
-                        <Text style={styles.panelSub}>or use your account</Text>
-                        <View style={styles.socialRow}>
+                      <View style={[styles.formPanel, { width: panelWidth }, compactWeb && { paddingTop: 6, paddingBottom: 12, justifyContent: "center" }]}>
+                        <Text style={[styles.panelTitle, compactWeb && { fontSize: 34, marginBottom: 6 }]}>Sign in</Text>
+                        <Text style={[styles.panelSub, compactWeb && { marginBottom: 12 }]}>or use your account</Text>
+                        <View style={[styles.socialRow, compactWeb && { marginBottom: 12 }]}>
                           <TouchableOpacity style={styles.socialBtn} onPress={() => showMessage("Facebook sign-in coming soon")}>
                             <Ionicons name="logo-facebook" size={14} color="#fff" />
                           </TouchableOpacity>
@@ -566,11 +676,11 @@ export default function AuthScreen({ navigation }) {
                             <Ionicons name="logo-linkedin" size={14} color="#fff" />
                           </TouchableOpacity>
                         </View>
-                        <View style={styles.inputRow}>
+                        <View style={[styles.inputRow, compactWeb && { paddingVertical: 10, marginBottom: 8 }]}>
                           <Ionicons name="key-outline" size={20} color="#fff" />
                           <TextInput style={styles.input} placeholder="Unique ID or Email" placeholderTextColor="#ccc" value={identifier} onChangeText={setIdentifier} />
                         </View>
-                        <View style={styles.inputRow}>
+                        <View style={[styles.inputRow, compactWeb && { paddingVertical: 10, marginBottom: 8 }]}>
                           <Ionicons name="lock-closed-outline" size={20} color="#fff" />
                           <TextInput style={styles.input} placeholder="Password" placeholderTextColor="#ccc" secureTextEntry={!showPassword} value={password} onChangeText={setPassword} />
                           <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
@@ -578,7 +688,12 @@ export default function AuthScreen({ navigation }) {
                           </TouchableOpacity>
                         </View>
                         <TouchableOpacity style={[styles.button, styles.authActionBtn]} onPress={handleLogin} disabled={loading}>
-                          <Text style={styles.buttonText}>{loading ? "Generating OTP..." : "Sign In"}</Text>
+                          {loading ? <ActivityIndicator color="#000" /> : (
+                            <View style={styles.buttonContent}>
+                              <Text style={styles.buttonText}>Sign In</Text>
+                              <Ionicons name="log-in-outline" size={18} color="#000" style={{ marginLeft: 8 }} />
+                            </View>
+                          )}
                         </TouchableOpacity>
                         <View style={styles.extraActions}>
                           <TouchableOpacity onPress={handleRetrieveUniqueId} style={styles.retrieveBtn}>
@@ -591,10 +706,10 @@ export default function AuthScreen({ navigation }) {
                         </View>
                       </View>
 
-                      <View style={[styles.formPanel, { width: panelWidth }]}>
-                        <Text style={styles.panelTitle}>Create Account</Text>
-                        <Text style={styles.panelSub}>or use your email for registration</Text>
-                        <View style={styles.socialRow}>
+                      <View style={[styles.formPanel, { width: panelWidth }, compactWeb && { paddingTop: 6, paddingBottom: 12, justifyContent: "center" }]}>
+                        <Text style={[styles.panelTitle, compactWeb && { fontSize: 30, marginBottom: 6 }]}>Create Account</Text>
+                        <Text style={[styles.panelSub, compactWeb && { marginBottom: 12 }]}>or use your email for registration</Text>
+                        <View style={[styles.socialRow, compactWeb && { marginBottom: 12 }]}>
                           <TouchableOpacity style={styles.socialBtn} onPress={() => showMessage("Facebook sign-in coming soon")}>
                             <Ionicons name="logo-facebook" size={14} color="#fff" />
                           </TouchableOpacity>
@@ -605,55 +720,122 @@ export default function AuthScreen({ navigation }) {
                             <Ionicons name="logo-linkedin" size={14} color="#fff" />
                           </TouchableOpacity>
                         </View>
-                        <View style={styles.inputRow}>
-                          <Ionicons name="person-outline" size={20} color="#fff" />
-                          <TextInput style={styles.input} placeholder="Full Name" placeholderTextColor="#ccc" value={name} onChangeText={setName} />
+                        <View style={styles.webStepDots}>
+                          <View style={[styles.webStepDot, webSignupStep === 0 && styles.webStepDotActive]} />
+                          <View style={[styles.webStepDot, webSignupStep === 1 && styles.webStepDotActive]} />
                         </View>
-                        <View style={styles.inputRow}>
-                          <Ionicons name="mail-outline" size={20} color="#fff" />
-                          <TextInput style={styles.input} placeholder="Email Address" placeholderTextColor="#ccc" value={identifier} onChangeText={setIdentifier} />
+
+                        <View style={styles.webStepContainer}>
+                          <Animated.View
+                            style={[
+                              styles.webStepPane,
+                              {
+                                opacity: webStepAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
+                                transform: [{ translateY: webStepAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -10] }) }],
+                              },
+                            ]}
+                            pointerEvents={webSignupStep === 0 ? "auto" : "none"}
+                          >
+                            <View style={[styles.inputRow, compactWeb && { paddingVertical: 10, marginBottom: 8 }]}>
+                              <Ionicons name="person-outline" size={20} color="#fff" />
+                              <TextInput style={styles.input} placeholder="Full Name" placeholderTextColor="#ccc" value={name} onChangeText={setName} />
+                            </View>
+                          <View style={[styles.inputRow, compactWeb && { paddingVertical: 10, marginBottom: 8 }]}>
+                             <Ionicons name="transgender-outline" size={20} color="#fff" />
+                             <Picker
+                                selectedValue={gender}
+                                onValueChange={(v) => setGender(v)}
+                                style={[styles.input, { color: '#fff', marginLeft: 0 }]}
+                             >
+                               <Picker.Item label="Select Gender" value="" color="#000" />
+                               <Picker.Item label="Male" value="male" color="#000" />
+                               <Picker.Item label="Female" value="female" color="#000" />
+                             </Picker>
+                          </View>
+                            <View style={[styles.inputRow, compactWeb && { paddingVertical: 10, marginBottom: 8 }]}>
+                              <Ionicons name="mail-outline" size={20} color="#fff" />
+                              <TextInput style={styles.input} placeholder="Email Address" placeholderTextColor="#ccc" value={identifier} onChangeText={setIdentifier} />
+                            </View>
+                            <View style={[styles.inputRow, compactWeb && { paddingVertical: 10, marginBottom: 8 }]}>
+                              <Ionicons name="lock-closed-outline" size={20} color="#fff" />
+                              <TextInput style={styles.input} placeholder="Password" placeholderTextColor="#ccc" secureTextEntry={!showPassword} value={password} onChangeText={setPassword} />
+                              <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+                                <Ionicons name={showPassword ? "eye-off" : "eye"} size={20} color="#fff" />
+                              </TouchableOpacity>
+                            </View>
+                            <TouchableOpacity style={[styles.button, styles.authActionBtn]} onPress={handleWebNextSignupStep} disabled={loading}>
+                              {loading ? <ActivityIndicator color="#000" /> : (
+                                <View style={styles.buttonContent}>
+                                  <Text style={styles.buttonText}>Next</Text>
+                                  <Ionicons name="arrow-forward-outline" size={18} color="#000" style={{ marginLeft: 8 }} />
+                                </View>
+                              )}
+                            </TouchableOpacity>
+                          </Animated.View>
+
+                          <Animated.View
+                            style={[
+                              styles.webStepPane,
+                              {
+                                opacity: webStepAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }),
+                                transform: [{ translateY: webStepAnim.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
+                              },
+                            ]}
+                            pointerEvents={webSignupStep === 1 ? "auto" : "none"}
+                          >
+                            <View style={styles.webTwoCol}>
+                              <View style={[styles.inputRow, styles.webCol, compactWeb && { paddingVertical: 10, marginBottom: 8 }]}>
+                                <Ionicons name="location-outline" size={20} color="#fff" />
+                                <TextInput style={styles.input} placeholder="City" placeholderTextColor="#ccc" value={city} onChangeText={setCity} />
+                              </View>
+                              <View style={[styles.inputRow, styles.webCol, compactWeb && { paddingVertical: 10, marginBottom: 8 }]}>
+                                <Ionicons name="map-outline" size={20} color="#fff" />
+                                <TextInput style={styles.input} placeholder="Pincode" placeholderTextColor="#ccc" value={pincode} onChangeText={setPincode} keyboardType="numeric" />
+                              </View>
+                            </View>
+                            <View style={[styles.inputRow, compactWeb && { paddingVertical: 10, marginBottom: 8 }]}>
+                              <Ionicons name="water-outline" size={20} color="#fff" />
+                              <TextInput style={styles.input} placeholder="Blood Group" placeholderTextColor="#ccc" value={bloodGroup} onChangeText={setBloodGroup} />
+                            </View>
+                            <View style={styles.webStepActions}>
+                              <TouchableOpacity style={styles.webBackBtn} onPress={() => setWebSignupStep(0)} disabled={loading}>
+                                <Ionicons name="arrow-back" size={16} color="#e2e8f0" />
+                                <Text style={styles.webBackText}>Back</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity style={[styles.button, styles.authActionBtn, styles.webPrimaryBtn]} onPress={handleSignup} disabled={loading}>
+                                {loading ? <ActivityIndicator color="#000" /> : (
+                                  <View style={styles.buttonContent}>
+                                    <Text style={styles.buttonText}>Sign Up</Text>
+                                    <Ionicons name="person-add-outline" size={18} color="#000" style={{ marginLeft: 8 }} />
+                                  </View>
+                                )}
+                              </TouchableOpacity>
+                            </View>
+                          </Animated.View>
                         </View>
-                        <View style={styles.inputRow}>
-                          <Ionicons name="lock-closed-outline" size={20} color="#fff" />
-                          <TextInput style={styles.input} placeholder="Password" placeholderTextColor="#ccc" secureTextEntry={!showPassword} value={password} onChangeText={setPassword} />
-                          <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
-                            <Ionicons name={showPassword ? "eye-off" : "eye"} size={20} color="#fff" />
-                          </TouchableOpacity>
-                        </View>
-                        <View style={styles.inputRow}>
-                          <Ionicons name="location-outline" size={20} color="#fff" />
-                          <TextInput style={styles.input} placeholder="City" placeholderTextColor="#ccc" value={city} onChangeText={setCity} />
-                        </View>
-                        <View style={styles.inputRow}>
-                          <Ionicons name="map-outline" size={20} color="#fff" />
-                          <TextInput style={styles.input} placeholder="Pincode" placeholderTextColor="#ccc" value={pincode} onChangeText={setPincode} keyboardType="numeric" />
-                        </View>
-                        <View style={styles.inputRow}>
-                          <Ionicons name="water-outline" size={20} color="#fff" />
-                          <TextInput style={styles.input} placeholder="Blood Group" placeholderTextColor="#ccc" value={bloodGroup} onChangeText={setBloodGroup} />
-                        </View>
-                        <TouchableOpacity style={[styles.button, styles.authActionBtn]} onPress={handleSignup} disabled={loading}>
-                          <Text style={styles.buttonText}>{loading ? "Signing Up..." : "Sign Up"}</Text>
-                        </TouchableOpacity>
                       </View>
                     </Animated.View>
                   </View>
 
                   <View style={[styles.overlayViewport, { width: panelWidth, left: panelWidth }]}>
                     <Animated.View style={[styles.overlayTrack, { width: panelWidth * 2, transform: [{ translateX: overlayTrackTranslateX }] }]}>
-                      <View style={[styles.overlayPanel, { width: panelWidth }]}>
+                      <View style={[styles.overlayPanel, { width: panelWidth }, isWeb && { justifyContent: "center", paddingTop: 0 }]}>
+                        <LinearGradient pointerEvents="none" colors={["rgba(255,47,113,0.96)", "rgba(244,114,182,0.92)"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.overlayGradient} />
+                        <Image source={require("../assets/logo.png")} style={styles.overlayMark} />
                         <View style={styles.overlayGlowOne} />
                         <View style={styles.overlayGlowTwo} />
-                        <Text style={styles.overlayTitle}>Welcome Back!</Text>
+                        <Text style={[styles.overlayTitle, compactWeb && { fontSize: 32 }]}>Welcome Back!</Text>
                         <Text style={styles.overlayText}>To keep connected with us please login with your personal info</Text>
                         <TouchableOpacity style={styles.ghostBtn} onPress={() => setIsSignup(false)}>
                           <Text style={styles.ghostBtnText}>Sign In</Text>
                         </TouchableOpacity>
                       </View>
-                      <View style={[styles.overlayPanel, { width: panelWidth }]}>
+                      <View style={[styles.overlayPanel, { width: panelWidth }, isWeb && { justifyContent: "center", paddingTop: 0 }]}>
+                        <LinearGradient pointerEvents="none" colors={["rgba(255,47,113,0.96)", "rgba(244,114,182,0.92)"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.overlayGradient} />
+                        <Image source={require("../assets/logo.png")} style={styles.overlayMark} />
                         <View style={styles.overlayGlowOne} />
                         <View style={styles.overlayGlowTwo} />
-                        <Text style={styles.overlayTitle}>Hello, Friend!</Text>
+                        <Text style={[styles.overlayTitle, compactWeb && { fontSize: 32 }]}>Hello, Friend!</Text>
                         <Text style={styles.overlayText}>Enter your personal details and start journey with us</Text>
                         <TouchableOpacity style={styles.ghostBtn} onPress={() => setIsSignup(true)}>
                           <Text style={styles.ghostBtnText}>Sign Up</Text>
@@ -663,7 +845,7 @@ export default function AuthScreen({ navigation }) {
                   </View>
                 </View>
               )}
-            </ScrollView>
+            </View>
           </BlurView>
         </KeyboardAvoidingView>
       </AnimatedBG>
@@ -765,10 +947,10 @@ const styles = StyleSheet.create({
     }),
   },
   mobileButton: {
-    paddingVertical: 13,
-    borderRadius: 20,
+    paddingVertical: 11,
+    borderRadius: 18,
     marginTop: 6,
-    marginBottom: 18,
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.35)",
     shadowColor: "#0f172a",
@@ -778,9 +960,9 @@ const styles = StyleSheet.create({
   },
   mobileButtonText: {
     textAlign: "center",
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "700",
-    letterSpacing: 1.5,
+    letterSpacing: 1.1,
   },
   mobileLinksRow: {
     marginTop: 8,
@@ -793,7 +975,7 @@ const styles = StyleSheet.create({
     columnGap: 14,
   },
   mobileLinkSlot: {
-    width: 132,
+    flex: 1,
     alignItems: "center",
   },
   mobileRegisterSlot: {
@@ -823,7 +1005,16 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
   },
-  root: { flex: 1, width: "100%", height: "100%", backgroundColor: "#000" },
+  root: {
+    flex: 1,
+    width: "100%",
+    height: Platform.OS === "web" ? "100vh" : "100%",
+    backgroundColor: "#000",
+    ...Platform.select({
+      web: { overflow: "hidden" },
+      default: {},
+    }),
+  },
   background: {
     flex: 1,
     width: Platform.OS === "web" ? "100vw" : "100%",
@@ -866,7 +1057,7 @@ const styles = StyleSheet.create({
     maxHeight: "90%",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.2)",
-    backgroundColor: "rgba(7, 14, 30, 0.36)",
+    backgroundColor: Platform.OS === "web" ? "rgba(7, 14, 30, 0.5)" : "rgba(7, 14, 30, 0.36)",
     shadowColor: "#050b1e",
     shadowOffset: { width: 0, height: 16 },
     shadowOpacity: 0.35,
@@ -897,17 +1088,72 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     overflow: "hidden",
   },
+  webToast: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 12,
+    paddingTop: 6,
+    zIndex: 20,
+  },
+  webToastText: {
+    textAlign: "center",
+    color: "#ffe4e6",
+    fontWeight: "700",
+    backgroundColor: "rgba(255, 0, 80, 0.22)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.18)",
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 14,
+    overflow: "hidden",
+  },
+  webStepDots: { flexDirection: "row", justifyContent: "center", gap: 8, marginBottom: 10 },
+  webStepDot: { width: 7, height: 7, borderRadius: 99, backgroundColor: "rgba(255,255,255,0.28)" },
+  webStepDotActive: { backgroundColor: "rgba(250, 204, 21, 0.92)", transform: [{ scale: 1.15 }] },
+  webStepContainer: { position: "relative", width: "100%", flex: 1, minHeight: 0 },
+  webStepPane: { position: "absolute", left: 0, right: 0, top: 0 },
+  webTwoCol: { flexDirection: "row", gap: 10 },
+  webCol: { flex: 1 },
+  webStepActions: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 10 },
+  webBackBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(226,232,240,0.25)",
+    backgroundColor: "rgba(226,232,240,0.08)",
+    ...Platform.select({
+      web: { cursor: "pointer" },
+      default: {},
+    }),
+  },
+  webBackText: { color: "#e2e8f0", fontWeight: "800", fontSize: 12, letterSpacing: 0.8, textTransform: "uppercase" },
+  webPrimaryBtn: { flex: 1 },
   doubleSliderShell: {
-    minHeight: 520,
+    minHeight: 0,
     borderTopLeftRadius: 30,
     borderTopRightRadius: 22,
     borderBottomLeftRadius: 22,
     borderBottomRightRadius: 30,
     overflow: "hidden",
     alignSelf: "center",
-    backgroundColor: "rgba(5, 10, 24, 0.56)",
+    backgroundColor: "rgba(10, 18, 36, 0.62)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.2)",
+    borderColor: "rgba(255,255,255,0.18)",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 18 },
+    shadowOpacity: 0.22,
+    shadowRadius: 28,
+    elevation: 10,
+    ...Platform.select({
+      web: { boxShadow: "0px 18px 60px rgba(0,0,0,0.35)" },
+      default: {},
+    }),
   },
   formsViewport: {
     position: "absolute",
@@ -923,32 +1169,32 @@ const styles = StyleSheet.create({
   formPanel: {
     height: "100%",
     paddingHorizontal: 18,
-    paddingBottom: 18,
-    paddingTop: 8,
+    paddingBottom: Platform.OS === "web" ? 12 : 18,
+    paddingTop: Platform.OS === "web" ? 6 : 8,
     justifyContent: "flex-start",
   },
   panelTitle: {
     color: "#f8fafc",
     textAlign: "center",
-    fontSize: 42,
+    fontSize: Platform.OS === "web" ? 34 : 42,
     fontWeight: "800",
     marginBottom: 8,
     letterSpacing: 0.4,
-    textShadowColor: "rgba(125, 211, 252, 0.8)",
+    textShadowColor: "rgba(125, 211, 252, 0.65)",
     textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 14,
+    textShadowRadius: 10,
   },
   panelSub: {
     color: "#cbd5e1",
     textAlign: "center",
-    fontSize: 15,
-    marginBottom: 16,
+    fontSize: Platform.OS === "web" ? 14 : 15,
+    marginBottom: Platform.OS === "web" ? 14 : 16,
   },
-  socialRow: { flexDirection: "row", justifyContent: "center", gap: 10, marginBottom: 18 },
+  socialRow: { flexDirection: "row", justifyContent: "center", gap: 10, marginBottom: Platform.OS === "web" ? 14 : 18 },
   socialBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: Platform.OS === "web" ? 36 : 38,
+    height: Platform.OS === "web" ? 36 : 38,
+    borderRadius: Platform.OS === "web" ? 18 : 19,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.55)",
     backgroundColor: "rgba(255,255,255,0.08)",
@@ -959,6 +1205,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 4,
     elevation: 3,
+    ...Platform.select({
+      web: { cursor: "pointer" },
+      default: {},
+    }),
   },
   overlayViewport: {
     position: "absolute",
@@ -969,13 +1219,14 @@ const styles = StyleSheet.create({
   overlayTrack: { height: "100%", flexDirection: "row" },
   overlayPanel: {
     height: "100%",
-    backgroundColor: "#ff2f71",
+    backgroundColor: "transparent",
     justifyContent: "flex-start",
     alignItems: "center",
-    paddingTop: 110,
+    paddingTop: Platform.OS === "web" ? 92 : 110,
     paddingHorizontal: 18,
     overflow: "hidden",
   },
+  overlayGradient: { ...StyleSheet.absoluteFillObject },
   overlayGlowOne: {
     position: "absolute",
     width: 220,
@@ -994,9 +1245,18 @@ const styles = StyleSheet.create({
     bottom: -70,
     right: -50,
   },
+  overlayMark: {
+    position: "absolute",
+    width: 320,
+    height: 320,
+    opacity: 0.08,
+    top: "50%",
+    left: "50%",
+    transform: [{ translateX: -160 }, { translateY: -160 }],
+  },
   overlayTitle: {
     color: "#fff",
-    fontSize: 46,
+    fontSize: Platform.OS === "web" ? 36 : 46,
     fontWeight: "800",
     textAlign: "center",
     marginBottom: 12,
@@ -1004,9 +1264,10 @@ const styles = StyleSheet.create({
   overlayText: {
     color: "#fff",
     textAlign: "center",
-    fontSize: 16,
-    lineHeight: 22,
-    marginBottom: 24,
+    fontSize: Platform.OS === "web" ? 15 : 16,
+    lineHeight: Platform.OS === "web" ? 21 : 22,
+    marginBottom: Platform.OS === "web" ? 18 : 24,
+    maxWidth: 320,
   },
   ghostBtn: {
     borderWidth: 1,
@@ -1014,6 +1275,10 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     paddingVertical: 10,
     paddingHorizontal: 26,
+    ...Platform.select({
+      web: { cursor: "pointer" },
+      default: {},
+    }),
   },
   ghostBtnText: { color: "#fff", fontWeight: "800", fontSize: 12, letterSpacing: 0.8 },
   inputRow: {
@@ -1022,8 +1287,8 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(3,8,20,0.7)",
     borderRadius: 16,
     paddingHorizontal: 15,
-    paddingVertical: 12,
-    marginBottom: 10,
+    paddingVertical: Platform.OS === "web" ? 10 : 12,
+    marginBottom: Platform.OS === "web" ? 8 : 10,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.1)",
   },
@@ -1040,9 +1305,9 @@ const styles = StyleSheet.create({
   },
   resend: { textAlign: "center", color: "#facc15", marginBottom: 8, fontWeight: "600" },
   button: {
-    paddingVertical: 14,
-    borderRadius: 16,
-    marginTop: 14,
+    paddingVertical: Platform.OS === "web" ? 10 : 12,
+    borderRadius: 14,
+    marginTop: 12,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.35,
@@ -1051,18 +1316,30 @@ const styles = StyleSheet.create({
     backgroundColor: "#facc15",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.35)",
+    ...Platform.select({
+      web: { cursor: "pointer" },
+      default: {},
+    }),
   },
   authActionBtn: { marginTop: 2 },
+  buttonContent: { flexDirection: "row", alignItems: "center", justifyContent: "center" },
   buttonText: {
     textAlign: "center",
     fontWeight: "800",
-    fontSize: 14,
+    fontSize: 13,
     color: "#000",
     textTransform: "uppercase",
-    letterSpacing: 1,
+    letterSpacing: 0.85,
   },
-  extraActions: { alignItems: "center", marginTop: 12, gap: 10 },
-  forgotBtn: { marginTop: 0, marginBottom: 0 },
+  extraActions: { alignItems: "center", marginTop: Platform.OS === "web" ? 10 : 12, gap: 10 },
+  forgotBtn: {
+    marginTop: 0,
+    marginBottom: 0,
+    ...Platform.select({
+      web: { cursor: "pointer" },
+      default: {},
+    }),
+  },
   forgotText: { color: "#aaa", fontSize: 13 },
   retrieveBtn: {
     flexDirection: "row",
@@ -1073,6 +1350,10 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1,
     borderColor: "rgba(250, 204, 21, 0.3)",
+    ...Platform.select({
+      web: { cursor: "pointer" },
+      default: {},
+    }),
   },
   retrieveText: { color: "#facc15", marginLeft: 5, fontSize: 11, fontWeight: "bold" },
   modalOverlay: {
@@ -1107,4 +1388,6 @@ const styles = StyleSheet.create({
   modalCancel: { padding: 10 },
   modalCancelText: { color: "#666", fontWeight: "600" },
   opacity: { opacity: 0.6 },
+  mobilePickerWrapper: { backgroundColor: "rgba(255,255,255,0.18)", borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.24)", marginVertical: 8, overflow: 'hidden' },
+  mobilePicker: { color: "#fff", height: 50 },
 });

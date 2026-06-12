@@ -24,6 +24,9 @@ import * as XLSX from "xlsx";
 import firebase from "../firebase";
 import { APPWRITE_CONFIG, client, databases, Query } from "./appwrite";
 import { AuthContext } from "./AuthContext";
+import MemberReportsScreen from "./MemberReportsScreen";
+import MonthEndReportScreen from "./MonthEndReportScreen";
+import { FINE_CONFIG, getCaseFineInfo } from "./utils/fines";
 
 // --- CONSTANTS & CONFIGURATION ---
 const APP_VERSION = "1.0.4 (Build 203)";
@@ -71,10 +74,13 @@ const TABS = [
   { id: "alerts", label: "Alerts", icon: "warning-outline" },
   { id: "control_center", label: "Control Center", icon: "speedometer-outline" },
   { id: "status", label: "Status", icon: "swap-horizontal-outline" },
+  { id: "fines_test", label: "Fines Test", icon: "cash-outline" },
   { id: "reconciliation", label: "Reconciliation", icon: "git-compare-outline" },
   { id: "manual_audit", label: "Manual Audit", icon: "create-outline" },
   { id: "firebase", label: "Firebase DB", icon: "server-outline" },
   { id: "monthly_firebase_clearance", label: "Monthly Firebase Clearance", icon: "trash-bin-outline" },
+  { id: "month_end_report", label: "Month End Report", icon: "document-text-outline" },
+  { id: "member_reports", label: "Member Reports", icon: "people-outline" },
   { id: "cloudinary", label: "Cloudinary", icon: "cloud-circle-outline" },
   { id: "tickets", label: "Tickets", icon: "ticket-outline" },
   { id: "users", label: "Users", icon: "people-outline" },
@@ -457,7 +463,7 @@ export default function DevDashboardScreen({ navigation }) {
   const renderContent = () => {
     switch (activeTab) {
       case "overview":
-        return <OverviewTab featureFlags={featureFlags} toggleFeatureFlag={toggleFeatureFlag} navigation={navigation} cases={cases} users={users} alerts={alerts} tickets={tickets} />;
+        return <OverviewTab featureFlags={featureFlags} toggleFeatureFlag={toggleFeatureFlag} onOpenMonthEndReport={() => setActiveTab("month_end_report")} navigation={navigation} cases={cases} users={users} alerts={alerts} tickets={tickets} />;
       case "alerts":
         return <AlertsTab currentUser={user} />;
       case "status":
@@ -470,6 +476,10 @@ export default function DevDashboardScreen({ navigation }) {
         return <FirebaseTab />;
       case "monthly_firebase_clearance":
         return <MonthlyFirebaseClearanceTab canManage={user?.role === "admin" || user?.role === "dev"} cases={cases} />;
+      case "month_end_report":
+        return <MonthEndReportScreen embedded navigation={navigation} cases={cases} users={users} />;
+      case "member_reports":
+        return <MemberReportsScreen navigation={navigation} />;
       case "cloudinary":
         return <CloudinaryTab />;
       case "tickets":
@@ -494,6 +504,8 @@ export default function DevDashboardScreen({ navigation }) {
         return <ContentManagementTab canManage={user?.role === "admin" || user?.role === "dev"} cases={cases} />;
       case "settings":
         return <AppConfigTab featureFlags={featureFlags} toggleFeatureFlag={toggleFeatureFlag} canManage={user?.role === "admin" || user?.role === "dev"} cases={cases} users={users} currentUser={user} />;
+      case "fines_test":
+        return <FinesTestingTab canManage={user?.role === "admin" || user?.role === "dev"} cases={cases} users={users} />;
       case "analytics_hub":
         return <AnalyticsInsightsTab cases={cases} users={users} tickets={tickets} />;
       case "logs_monitoring":
@@ -624,7 +636,7 @@ export default function DevDashboardScreen({ navigation }) {
 // --- TAB COMPONENTS ---
 
 
-function OverviewTab({ featureFlags = {}, toggleFeatureFlag = () => {}, navigation, cases = [], users = [], alerts = [], tickets = [] }) {
+function OverviewTab({ featureFlags = {}, toggleFeatureFlag = () => {}, onOpenMonthEndReport, navigation, cases = [], users = [], alerts = [], tickets = [] }) {
   const { logout } = useContext(AuthContext);
   const screenWidth = Dimensions.get("window").width;
   const isWide = screenWidth >= 980;
@@ -864,6 +876,16 @@ function OverviewTab({ featureFlags = {}, toggleFeatureFlag = () => {}, navigati
         <TouchableOpacity style={styles.dsQuickBtn} onPress={() => Object.keys(featureFlags).forEach((key) => toggleFeatureFlag(key))}>
           <Ionicons name="git-compare-outline" size={16} color="#4ade80" />
           <Text style={styles.dsQuickBtnText}>Flip Flags</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.dsQuickBtn}
+          onPress={() => {
+            if (typeof onOpenMonthEndReport === "function") onOpenMonthEndReport();
+            else navigation?.navigate?.("MonthEndReportScreen");
+          }}
+        >
+          <Ionicons name="document-text-outline" size={16} color="#c084fc" />
+          <Text style={styles.dsQuickBtnText}>Month End PDF</Text>
         </TouchableOpacity>
       </View>
     </ScrollView>
@@ -1176,6 +1198,24 @@ function ManualAuditTab() {
       return (c.matrixRefNo || c.id).toLowerCase().includes(s) || (c.assigneeName || "").toLowerCase().includes(s);
   });
 
+  const selectedSet = new Set(selectedCases);
+  const allFilteredSelected = filtered.length > 0 && filtered.every((c) => selectedSet.has(c.id));
+
+  const toggleSelectAllFiltered = () => {
+    if (filtered.length === 0) return;
+    const filteredIds = filtered.map((c) => c.id);
+    setSelectedCases((prev) => {
+      const prevSet = new Set(prev);
+      if (allFilteredSelected) {
+        // Unselect only the currently filtered rows (keep any hidden selections)
+        filteredIds.forEach((id) => prevSet.delete(id));
+      } else {
+        filteredIds.forEach((id) => prevSet.add(id));
+      }
+      return Array.from(prevSet);
+    });
+  };
+
   return (
       <View style={styles.flexContainer}>
           <View style={styles.searchContainer}>
@@ -1189,18 +1229,26 @@ function ManualAuditTab() {
               />
           </View>
 
-          {selectedCases.length > 0 && (
-            <View style={{flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 10, justifyContent: 'space-between'}}>
-                <Text style={{color: '#fff', fontWeight: 'bold'}}>{selectedCases.length} Selected</Text>
-                <GradientButton 
-                    colors={['#11998e', '#38ef7d']}
-                    label={`Complete Selected (${selectedCases.length})`}
-                    small
-                    onPress={handleBulkComplete}
-                    loading={loadingMap['bulk']}
-                />
-            </View>
-          )}
+          <View style={{flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 10, justifyContent: 'space-between', gap: 10, flexWrap: 'wrap'}}>
+              <GradientButton
+                  colors={allFilteredSelected ? ['#6c757d', '#495057'] : ['#1d4ed8', '#38bdf8']}
+                  label={allFilteredSelected ? `Unselect All (${filtered.length})` : `Select All (${filtered.length})`}
+                  small
+                  onPress={toggleSelectAllFiltered}
+              />
+              {selectedCases.length > 0 && (
+                <View style={{flexDirection: 'row', alignItems: 'center', gap: 10}}>
+                    <Text style={{color: '#fff', fontWeight: 'bold'}}>{selectedCases.length} Selected</Text>
+                    <GradientButton 
+                        colors={['#11998e', '#38ef7d']}
+                        label={`Complete Selected (${selectedCases.length})`}
+                        small
+                        onPress={handleBulkComplete}
+                        loading={loadingMap['bulk']}
+                    />
+                </View>
+              )}
+          </View>
 
           <View style={styles.tableHeader}>
               <Text style={[styles.tableHeaderText, { flex: 0.4 }]}>#</Text>
@@ -1248,8 +1296,10 @@ function ManualAuditTab() {
 function FirebaseTab() {
   const [cases, setCases] = useState([]);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("pending");
   const [dateFilter, setDateFilter] = useState("all");
+  const [selectedCaseIds, setSelectedCaseIds] = useState([]);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   useEffect(() => {
     const ref = firebase.database().ref("cases");
@@ -1260,36 +1310,124 @@ function FirebaseTab() {
     return () => ref.off("value", onValue);
   }, []);
 
+  useEffect(() => {
+    // Selecting is per-category (pending/assigned/reverted/etc.)
+    setSelectedCaseIds([]);
+  }, [statusFilter]);
+
+  const toggleSelect = (id) => {
+    setSelectedCaseIds((prev) => (prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]));
+  };
+
+  const handleBulkDelete = async () => {
+    if (bulkDeleting) return;
+    if (selectedCaseIds.length === 0) return;
+
+    const count = selectedCaseIds.length;
+    const filterLabel = String(statusFilter || "all").toUpperCase();
+    const message =
+      `This will permanently delete ${count} case(s) from Firebase Realtime Database (/cases).` +
+      `\n\nCurrent filter: ${filterLabel}` +
+      `\n\nThis cannot be undone. Continue?`;
+
+    const execute = async () => {
+      setBulkDeleting(true);
+      try {
+        const casesRef = firebase.database().ref("cases");
+        const chunkSize = 250;
+        let deleted = 0;
+
+        for (let i = 0; i < selectedCaseIds.length; i += chunkSize) {
+          const chunk = selectedCaseIds.slice(i, i + chunkSize);
+          const updates = {};
+          chunk.forEach((id) => {
+            updates[id] = null;
+          });
+          await casesRef.update(updates);
+          deleted += chunk.length;
+        }
+
+        setSelectedCaseIds([]);
+        Alert.alert("Deleted", `Deleted ${deleted} case(s) from Firebase.`);
+      } catch (e) {
+        const msg = String(e?.message || e);
+        Alert.alert("Error", `Bulk delete failed: ${msg}`);
+      } finally {
+        setBulkDeleting(false);
+      }
+    };
+
+    if (Platform.OS === "web") {
+      // eslint-disable-next-line no-restricted-globals
+      if (confirm(message)) execute();
+    } else {
+      Alert.alert("Confirm Bulk Delete", message, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete", style: "destructive", onPress: execute },
+      ]);
+    }
+  };
+
   const handleDelete = (id) => {
     if (Platform.OS === 'web') {
         if (confirm("Delete this case from Firebase permanently?")) {
              firebase.database().ref(`cases/${id}`).remove();
+             setSelectedCaseIds((prev) => prev.filter((x) => x !== id));
         }
     } else {
         Alert.alert("Delete Case", "Are you sure? This cannot be undone.", [
             { text: "Cancel", style: "cancel" },
-            { text: "Delete", style: "destructive", onPress: () => firebase.database().ref(`cases/${id}`).remove() }
+            { text: "Delete", style: "destructive", onPress: () => { firebase.database().ref(`cases/${id}`).remove(); setSelectedCaseIds((prev) => prev.filter((x) => x !== id)); } }
         ]);
     }
   };
 
-  const filtered = cases.filter(c => {
-      const s = search.toLowerCase();
-      const matchesSearch = (c.matrixRefNo || c.id).toLowerCase().includes(s) || (c.assigneeName || "").toLowerCase().includes(s);
-      const matchesStatus = statusFilter ? c.status === statusFilter : true;
-      
-      let matchesDate = true;
-      if (dateFilter === '>3m') {
-          const dateToCheck = c.completedAt || c.assignedAt;
-          if (dateToCheck) {
-              const d = new Date(dateToCheck);
-              const threeMonthsAgo = new Date();
-              threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-              matchesDate = d < threeMonthsAgo;
-          } else matchesDate = false;
-      }
-      return matchesSearch && matchesStatus && matchesDate;
+  const filtered = cases.filter((c) => {
+    const query = String(search || "").trim().toLowerCase();
+    const refText = String(c?.matrixRefNo || c?.id || "").toLowerCase();
+    const assigneeText = String(c?.assigneeName || c?.assignedTo || "").toLowerCase();
+    const matchesSearch = !query || refText.includes(query) || assigneeText.includes(query);
+
+    const status = String(c?.status || "").toLowerCase();
+    // Show only the team's "in-progress" bucket + a few relevant terminal statuses.
+    // Hide completed/audit/closed noise from this tab.
+    const allowedStatuses = new Set(["pending", "open", "assigned", "reverted", "fired"]);
+    if (!allowedStatuses.has(status)) return false;
+
+    const matchesStatus = (() => {
+      if (statusFilter === "all") return true;
+      if (statusFilter === "pending") return ["pending", "open", "assigned"].includes(status);
+      return status === statusFilter;
+    })();
+
+    let matchesDate = true;
+    if (dateFilter === ">3m") {
+      const dateToCheck = c?.completedAt || c?.assignedAt || c?.updatedAt || c?.dateInitiated;
+      if (dateToCheck) {
+        const d = new Date(dateToCheck);
+        const threeMonthsAgo = new Date();
+        threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+        matchesDate = d < threeMonthsAgo;
+      } else matchesDate = false;
+    }
+
+    return matchesSearch && matchesStatus && matchesDate;
   });
+
+  const selectedSet = new Set(selectedCaseIds);
+  const allFilteredSelected = filtered.length > 0 && filtered.every((c) => selectedSet.has(c.id));
+
+  const toggleSelectAllFiltered = () => {
+    if (filtered.length === 0) return;
+    const filteredIds = filtered.map((c) => c.id);
+    setSelectedCaseIds((prev) => {
+      const prevSet = new Set(prev);
+      const isAllSelected = filteredIds.every((id) => prevSet.has(id));
+      if (isAllSelected) filteredIds.forEach((id) => prevSet.delete(id));
+      else filteredIds.forEach((id) => prevSet.add(id));
+      return Array.from(prevSet);
+    });
+  };
 
   return (
       <View style={styles.flexContainer}>
@@ -1304,16 +1442,46 @@ function FirebaseTab() {
               />
           </View>
           <View style={{flexDirection: 'row', paddingHorizontal: 16, paddingBottom: 10, flexWrap: 'wrap', gap: 8}}>
-              {['', 'assigned', 'completed', 'audit', 'reverted'].map(st => (
-                  <TouchableOpacity key={st} onPress={() => setStatusFilter(st)} style={[styles.filterChip, statusFilter === st && styles.activeFilterChip]}>
-                      <Text style={[styles.filterText, statusFilter === st && styles.activeFilterText]}>{st ? st.toUpperCase() : 'ALL'}</Text>
+              {[
+                { key: "pending", label: "PENDING" },
+                { key: "assigned", label: "ASSIGNED" },
+                { key: "reverted", label: "REVERTED" },
+                { key: "fired", label: "FIRED" },
+                { key: "all", label: "ALL" },
+              ].map(({ key, label }) => (
+                  <TouchableOpacity key={key} onPress={() => setStatusFilter(key)} style={[styles.filterChip, statusFilter === key && styles.activeFilterChip]}>
+                      <Text style={[styles.filterText, statusFilter === key && styles.activeFilterText]}>{label}</Text>
                   </TouchableOpacity>
               ))}
               <TouchableOpacity onPress={() => setDateFilter(dateFilter === 'all' ? '>3m' : 'all')} style={[styles.filterChip, dateFilter === '>3m' && {backgroundColor: '#ff9800'}]}>
                   <Text style={[styles.filterText, dateFilter === '>3m' && {color: '#fff'}]}>{dateFilter === '>3m' ? '> 3 Months' : 'Date Filter'}</Text>
               </TouchableOpacity>
           </View>
+          <View style={{flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 10, justifyContent: 'space-between', gap: 10, flexWrap: 'wrap'}}>
+              <GradientButton
+                  colors={allFilteredSelected ? ['#6c757d', '#495057'] : ['#1d4ed8', '#38bdf8']}
+                  label={allFilteredSelected ? `Unselect All (${filtered.length})` : `Select All (${filtered.length})`}
+                  small
+                  onPress={toggleSelectAllFiltered}
+                  disabled={filtered.length === 0}
+              />
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                {selectedCaseIds.length > 0 && (
+                  <Text style={{color: '#fff', fontWeight: 'bold'}}>{selectedCaseIds.length} Selected</Text>
+                )}
+                <GradientButton
+                  colors={['#ef4444', '#b91c1c']}
+                  icon="trash-outline"
+                  label={`Delete Selected (${selectedCaseIds.length})`}
+                  small
+                  onPress={handleBulkDelete}
+                  disabled={selectedCaseIds.length === 0 || bulkDeleting}
+                  loading={bulkDeleting}
+                />
+              </View>
+          </View>
           <View style={styles.tableHeader}>
+              <Text style={[styles.tableHeaderText, { flex: 0.4 }]}>#</Text>
               <Text style={[styles.tableHeaderText, { flex: 1.5 }]}>Ref No</Text>
               <Text style={[styles.tableHeaderText, { flex: 1 }]}>Assigned To</Text>
               <Text style={[styles.tableHeaderText, { flex: 0.8 }]}>Status</Text>
@@ -1326,6 +1494,12 @@ function FirebaseTab() {
               contentContainerStyle={{paddingBottom: 20}}
               renderItem={({item}) => (
                   <View style={styles.tableRow}>
+                      <TouchableOpacity
+                        style={{flex: 0.4, justifyContent: 'center'}}
+                        onPress={() => toggleSelect(item.id)}
+                      >
+                        <Ionicons name={selectedSet.has(item.id) ? "checkbox" : "square-outline"} size={20} color={selectedSet.has(item.id) ? "#4caf50" : "#888"} />
+                      </TouchableOpacity>
                       <Text style={[styles.tableCell, { flex: 1.5, fontWeight: 'bold' }]} numberOfLines={1}>{item.matrixRefNo || item.id}</Text>
                       <Text style={[styles.tableCell, { flex: 1 }]} numberOfLines={1}>{item.assigneeName || item.assignedTo || '-'}</Text>
                       <Text style={[styles.tableCell, { flex: 0.8, color: getStatusColor(item.status) }]}>{item.status?.toUpperCase()}</Text>
@@ -1581,6 +1755,7 @@ function TicketsTab() {
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [commentMap, setCommentMap] = useState({});
+  const [sendingMap, setSendingMap] = useState({});
 
   const fetchTickets = async () => {
     setLoading(true);
@@ -1591,6 +1766,14 @@ function TicketsTab() {
         [Query.orderDesc("$createdAt")]
       );
       setTickets(response.documents);
+      // Prime the comment input with last saved comment (without overwriting in-progress edits)
+      setCommentMap((prev) => {
+        const next = { ...prev };
+        for (const t of response.documents || []) {
+          if (next[t.$id] === undefined) next[t.$id] = t.devComments || "";
+        }
+        return next;
+      });
     } catch (error) {
       console.error("Error fetching tickets:", error);
     } finally {
@@ -1613,11 +1796,38 @@ function TicketsTab() {
       );
       // Optimistic update
       setTickets(prev => prev.map(t => t.$id === id ? { ...t, status, devComments: comment || t.devComments } : t));
-      setCommentMap(prev => ({ ...prev, [id]: "" }));
       if (Platform.OS === 'web') alert(`Ticket marked as ${status}`);
       else Alert.alert("Success", `Ticket marked as ${status}`);
     } catch (error) {
       Alert.alert("Error", error.message);
+    }
+  };
+
+  const handleSendComment = async (ticket) => {
+    const id = ticket?.$id;
+    const comment = (commentMap[id] || "").trim();
+    if (!id) return;
+    if (!comment) {
+      Alert.alert("Empty comment", "Type a developer comment first.");
+      return;
+    }
+
+    setSendingMap((prev) => ({ ...prev, [id]: true }));
+    try {
+      await databases.updateDocument(
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.ticketsCollectionId,
+        id,
+        { devComments: comment }
+      );
+      setTickets((prev) => prev.map((t) => (t.$id === id ? { ...t, devComments: comment } : t)));
+      setCommentMap((prev) => ({ ...prev, [id]: comment }));
+      if (Platform.OS === "web") alert("Comment sent to ticket raiser.");
+      else Alert.alert("Sent", "Comment sent to ticket raiser.");
+    } catch (error) {
+      Alert.alert("Error", error.message);
+    } finally {
+      setSendingMap((prev) => ({ ...prev, [id]: false }));
     }
   };
 
@@ -1634,24 +1844,40 @@ function TicketsTab() {
         keyExtractor={item => item.$id}
         contentContainerStyle={{ padding: 16 }}
         renderItem={({ item }) => (
-          <View style={[styles.card, { marginBottom: 10, borderLeftWidth: 4, borderLeftColor: item.status === 'open' ? '#ff9800' : item.status === 'closed' ? '#4caf50' : '#2196f3' }]}>
+          <View style={[styles.card, { marginBottom: 10, borderLeftWidth: 4, borderLeftColor: item.status === 'open' ? '#ff9800' : (item.status === 'closed' || item.status === 'verified') ? '#4caf50' : '#2196f3' }]}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 }}>
               <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>{item.subject}</Text>
               <Text style={{ color: '#aaa', fontSize: 12 }}>{new Date(item.$createdAt).toLocaleDateString()}</Text>
             </View>
             <Text style={{ color: '#ccc', marginBottom: 10 }}>{item.message}</Text>
             <Text style={{ color: '#888', fontSize: 12, marginBottom: 10 }}>From: {item.userName}</Text>
+
+            {!!item.devComments && (
+              <View style={{ backgroundColor: 'rgba(33, 150, 243, 0.12)', padding: 10, borderRadius: 8, marginBottom: 10, borderLeftWidth: 3, borderLeftColor: '#2196f3' }}>
+                <Text style={{ color: '#90caf9', fontSize: 12, fontWeight: 'bold', marginBottom: 4 }}>Last reply sent:</Text>
+                <Text style={{ color: '#e3f2fd', fontSize: 12 }}>{item.devComments}</Text>
+              </View>
+            )}
             
             <TextInput
                 style={{ backgroundColor: 'rgba(255,255,255,0.1)', color: '#fff', padding: 8, borderRadius: 6, marginBottom: 10, fontSize: 12 }}
-                placeholder="Add developer comment..."
+                placeholder="Type reply to ticket raiser..."
                 placeholderTextColor="#666"
                 value={commentMap[item.$id] || ""}
                 onChangeText={text => setCommentMap(prev => ({ ...prev, [item.$id]: text }))}
+                multiline
             />
             
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
-              {item.status !== 'closed' && (
+              <GradientButton
+                colors={['#6c757d', '#495057']}
+                label="Send Comment"
+                small
+                loading={!!sendingMap[item.$id]}
+                disabled={!!sendingMap[item.$id] || !(commentMap[item.$id] || "").trim() || ((commentMap[item.$id] || "").trim() === (item.devComments || "").trim())}
+                onPress={() => handleSendComment(item)}
+              />
+              {item.status !== 'closed' && item.status !== 'verified' && (
                 <GradientButton 
                   colors={['#11998e', '#38ef7d']}
                   label="Close Ticket"
@@ -2947,6 +3173,139 @@ function AppConfigTab({ featureFlags = {}, toggleFeatureFlag = () => {}, canMana
   );
 }
 
+function FinesTestingTab({ cases = [], users = [], canManage }) {
+  const nowMs = Date.now();
+  const limitDays = FINE_CONFIG.limitDays;
+  const dayMs = 24 * 60 * 60 * 1000;
+  const [modeByCase, setModeByCase] = useState({});
+  const [valueByCase, setValueByCase] = useState({});
+
+  const eligible = cases
+    .map((c) => {
+      const status = String(c?.status || "").toLowerCase();
+      if (status === "completed" || status === "closed") return null;
+      const fineInfo = getCaseFineInfo(c, nowMs, FINE_CONFIG);
+      if (!fineInfo.hasBaseTime) return null;
+      const isDue = fineInfo.delayDays === 0;
+      const isDelayed = fineInfo.delayDays > 0;
+      if (!isDue && !isDelayed) return null;
+      const refNo = c.matrixRefNo || c.RefNo || c.id;
+      const assignee = c.assigneeName || users.find((u) => u.id === c.assignedTo)?.name || c.assignedTo || "-";
+      return { ...c, refNo, assignee, fineInfo, isDue, isDelayed };
+    })
+    .filter(Boolean)
+    .sort((a, b) => (b.fineInfo.delayDays || 0) - (a.fineInfo.delayDays || 0) || (a.fineInfo.dueInDays || 0) - (b.fineInfo.dueInDays || 0));
+
+  const delayedCount = eligible.filter((c) => c.isDelayed).length;
+  const totalPenalized = eligible.filter((c) => (c.fineInfo.penaltyPercent || 0) > 0).length;
+
+  const setAssignedAtForCase = async (caseId, assignedAtIso) => {
+    if (!canManage) {
+      Alert.alert("Access Denied", "Only admin/dev can change assignedAt for testing.");
+      return;
+    }
+    try {
+      await firebase.database().ref(`cases/${caseId}`).update({ assignedAt: assignedAtIso, updatedAt: new Date().toISOString() });
+    } catch (e) {
+      Alert.alert("Error", "Failed to update case: " + e.message);
+    }
+  };
+
+  const applyOffset = (c) => {
+    const mode = modeByCase[c.id] || "due_in";
+    const raw = valueByCase[c.id];
+    const n = Math.floor(Number(raw));
+    if (!Number.isFinite(n) || n < 0) {
+      Alert.alert("Invalid Input", "Enter a valid non-negative number of days.");
+      return;
+    }
+
+    // We only tweak assignedAt to simulate "Due in X" or "Delayed by X"
+    // based on the same limitDays used in Dashboard calculations.
+    const targetDiffDays = mode === "delayed_by" ? limitDays + n : Math.max(0, limitDays - n);
+
+    // Dashboard uses Math.ceil((now - assignedAt)/dayMs).
+    // To land exactly on a desired `targetDiffDays`, set assignedAt to the middle of that day interval:
+    // ceil(x) === d when x in (d-1, d]. Using (d - 0.5) keeps us safely inside the bucket.
+    const now = Date.now();
+    const ms =
+      targetDiffDays <= 0 ? now : now - (targetDiffDays - 0.5) * dayMs;
+    setAssignedAtForCase(c.id, new Date(ms).toISOString());
+  };
+
+  return (
+    <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+      <View style={styles.card}>
+        <Text style={[styles.sectionTitle, { marginBottom: 8 }]}>Fines Testing</Text>
+        <InfoRow label="Eligible (Due/Delay)" value={String(eligible.length)} />
+        <InfoRow label="Delayed Cases" value={String(delayedCount)} />
+        <InfoRow label="Penalized Cases" value={String(totalPenalized)} />
+        {!canManage && <Text style={{ color: "#ffbb33", marginTop: 8 }}>Read-only mode for this account.</Text>}
+      </View>
+
+      <View style={[styles.card, { marginTop: 12 }]}>
+        <Text style={[styles.sectionTitle, { marginBottom: 8 }]}>Cases (Due/Delayed)</Text>
+        {eligible.length === 0 ? (
+          <Text style={{ color: "#94a3b8" }}>No eligible cases found.</Text>
+        ) : (
+          eligible.map((c) => (
+            <View key={c.id} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: "rgba(148,163,184,0.18)" }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <Text style={{ color: "#e2e8f0", fontWeight: "800", flex: 1, paddingRight: 10 }} numberOfLines={1}>
+                  {c.refNo}
+                </Text>
+                <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: c.isDelayed ? "rgba(239,68,68,0.18)" : "rgba(34,197,94,0.18)" }}>
+                  <Text style={{ color: c.isDelayed ? "#fecaca" : "#bbf7d0", fontWeight: "800", fontSize: 11 }}>
+                    {c.isDelayed ? `DELAY +${c.fineInfo.delayDays}d` : `DUE IN ${c.fineInfo.dueInDays}d`}
+                  </Text>
+                </View>
+              </View>
+              <Text style={{ color: "#94a3b8", marginTop: 6, fontSize: 12 }} numberOfLines={2}>
+                Assignee: {c.assignee} • Status: {String(c.status || "-")}
+              </Text>
+              <Text style={{ color: "#94a3b8", marginTop: 4, fontSize: 12 }}>
+                Penalty: {c.fineInfo.penaltyPercent || 0}% {c.fineInfo.reason ? `• ${c.fineInfo.reason}` : ""}
+              </Text>
+              <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
+                <View style={{ flex: 1, backgroundColor: "rgba(15,23,42,0.55)", borderWidth: 1, borderColor: "rgba(148,163,184,0.22)", borderRadius: 12, overflow: "hidden" }}>
+                  <Picker
+                    enabled={canManage}
+                    selectedValue={modeByCase[c.id] || "due_in"}
+                    onValueChange={(v) => setModeByCase((prev) => ({ ...prev, [c.id]: v }))}
+                    style={{ color: "#e2e8f0" }}
+                    dropdownIconColor="#94a3b8"
+                  >
+                    <Picker.Item label="Due in" value="due_in" />
+                    <Picker.Item label="Delayed by" value="delayed_by" />
+                  </Picker>
+                </View>
+                <View style={{ flex: 1, backgroundColor: "rgba(15,23,42,0.55)", borderWidth: 1, borderColor: "rgba(148,163,184,0.22)", borderRadius: 12, paddingHorizontal: 12, justifyContent: "center" }}>
+                  <TextInput
+                    editable={canManage}
+                    value={valueByCase[c.id] ?? ""}
+                    onChangeText={(t) => setValueByCase((prev) => ({ ...prev, [c.id]: t.replace(/[^0-9]/g, "") }))}
+                    placeholder="Days"
+                    placeholderTextColor="#64748b"
+                    keyboardType="numeric"
+                    style={{ color: "#e2e8f0", height: 42 }}
+                  />
+                </View>
+                <GradientButton
+                  colors={["#2563eb", "#60a5fa"]}
+                  icon="checkmark-circle-outline"
+                  label="Apply"
+                  onPress={() => applyOffset(c)}
+                  disabled={!canManage}
+                />
+              </View>
+            </View>
+          ))
+        )}
+      </View>
+    </ScrollView>
+  );
+}
+
 function AnalyticsInsightsTab({ cases = [], users = [], tickets = [] }) {
   const statusCounts = cases.reduce((acc, c) => {
     const key = String(c.status || "unknown").toLowerCase();
@@ -3174,7 +3533,11 @@ const getStatusColor = (status) => {
     case 'suspended': return '#ff9800';
     case 'completed': return '#4caf50';
     case 'assigned': return '#ff9800';
+    case 'open': return '#ff9800';
+    case 'pending': return '#ff9800';
     case 'audit': return '#2196f3';
+    case 'reverted': return '#ef4444';
+    case 'fired': return '#a855f7';
     default: return '#9e9e9e';
   }
 };

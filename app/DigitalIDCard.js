@@ -28,7 +28,11 @@ export default function DigitalIDCard({ navigation, route }) {
                  {user?.photoURL ? (
                     <Image source={{ uri: user.photoURL }} style={styles.photo} />
                  ) : (
-                    <Ionicons name="person-circle-outline" size={100} color="#ccc" />
+                    <Ionicons 
+                        name={user?.gender === 'female' ? "woman" : user?.gender === 'male' ? "man" : "person"} 
+                        size={80} 
+                        color="#ccc" 
+                    />
                  )}
             </View>
 

@@ -60,6 +60,7 @@
     "firebase": "^12.7.0",
     "firebase-admin": "^13.6.0",
     "googleapis": "^169.0.0",
+    "html2canvas": "^1.4.1",
     "jszip": "^3.10.1",
     "multer": "^2.0.2",
     "node-cron": "^4.2.1",

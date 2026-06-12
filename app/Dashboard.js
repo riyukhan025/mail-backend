@@ -19,6 +19,7 @@ import {
 } from "react-native";
 import firebase from "../firebase";
 import { AuthContext } from "./AuthContext";
+import { FINE_CONFIG, getCaseFineInfo } from "./utils/fines";
 
 const TRANSLATIONS = {
   en: {
@@ -88,6 +89,15 @@ export default function Dashboard({ navigation }) {
   const [showAppreciationBurst, setShowAppreciationBurst] = useState(false);
 
   const t = (key) => TRANSLATIONS[language]?.[key] || TRANSLATIONS['en'][key] || key;
+
+  const profilePhotoUri =
+    currentUserProfile?.photoURL ||
+    currentUserProfile?.photoUrl ||
+    currentUserProfile?.avatar ||
+    currentUserProfile?.profilePhoto ||
+    user?.photoURL ||
+    user?.photoUrl ||
+    null;
 
   useEffect(() => {
     if (!user?.uid) return;
@@ -502,14 +512,18 @@ export default function Dashboard({ navigation }) {
           </Text>
         </LinearGradient>
         <TouchableOpacity onPress={() => setProfileMenuOpen((prev) => !prev)}>
-          <View style={styles.profilePhoto}>
-            {user?.photoURL ? (
+          <View style={[styles.profilePhoto, !profilePhotoUri && styles.profilePhotoPlaceholder]}>
+            {profilePhotoUri ? (
               <Image
-                source={{ uri: user.photoURL }}
+                source={{ uri: profilePhotoUri }}
                 style={{ width: 40, height: 40, borderRadius: 20 }}
               />
             ) : (
-              <Ionicons name="person-circle" size={40} color="#fff" />
+              <Ionicons 
+                name={currentUserProfile?.gender === 'female' ? "woman" : currentUserProfile?.gender === 'male' ? "man" : "person"} 
+                size={28} 
+                color="#fff" 
+              />
             )}
           </View>
         </TouchableOpacity>
@@ -810,8 +824,15 @@ export default function Dashboard({ navigation }) {
         renderItem={({ item }) => {
           const statusText = computeStatusText(item);
           const memberStatus = computeMemberStatus(item);
-          const isDelayed = statusText.includes("Delay");
+          const fineInfo = getCaseFineInfo(item, Date.now(), FINE_CONFIG);
+          const isDelayed = fineInfo.delayDays > 0;
           const isCES = (item.client || item.company || "").toUpperCase().includes("CES");
+
+          const clientRaw = String(item?.client || item?.company || "").trim();
+          const chkTypeRaw = String(item?.chkType || item?.checkType || item?.caseType || "").trim();
+          const groupText = `${clientRaw} ${chkTypeRaw}`.toLowerCase();
+          const caseGroup = groupText.includes("matrix") ? "MATRIX" : groupText.includes("dhi") ? "DHI" : groupText.includes("ces") ? "CES" : (clientRaw || "N/A");
+          const caseColor = caseGroup === "MATRIX" ? "#2563eb" : caseGroup === "CES" ? "#f97316" : caseGroup === "DHI" ? "#7c3aed" : "#4e0360";
 
           return (
             <View style={[styles.caseCard, item.highPriority && styles.highPriorityCard]}>
@@ -848,7 +869,9 @@ export default function Dashboard({ navigation }) {
                 <View style={styles.metaRow}>
                   <View style={styles.metaItem}>
                     <Ionicons name="business" size={14} color="#888" style={{ marginRight: 4 }} />
-                    <Text style={styles.metaText}>{item.client || "N/A"}</Text>
+                    <View style={[styles.clientPill, { borderColor: caseColor + "66", backgroundColor: caseColor + "14" }]}>
+                      <Text style={[styles.clientPillText, { color: caseColor }]}>{caseGroup}</Text>
+                    </View>
                   </View>
                   <View style={styles.metaItem}>
                     <Ionicons name="navigate" size={14} color="#888" style={{ marginRight: 4 }} />
@@ -860,6 +883,21 @@ export default function Dashboard({ navigation }) {
                   <View style={[styles.statusContainer, isDelayed ? styles.statusDelayed : styles.statusOnTime]}>
                     <Ionicons name={isDelayed ? "alert-circle" : "time"} size={14} color={isDelayed ? "#d32f2f" : "#2e7d32"} style={{ marginRight: 4 }} />
                     <Text style={[styles.statusText, { color: isDelayed ? "#d32f2f" : "#2e7d32" }]}>{statusText}</Text>
+                  </View>
+                ) : null}
+
+                {fineInfo.penaltyPercent > 0 ? (
+                  <View style={[styles.fineBox, { borderColor: "#d32f2f" }]}>
+                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                      <Text style={styles.fineAmountText}>Penalty: {fineInfo.penaltyPercent}%</Text>
+                      <View style={styles.fineBadge}>
+                        <Ionicons name="warning" size={12} color="#fff" style={{ marginRight: 4 }} />
+                        <Text style={styles.fineBadgeText}>PENALTY APPLIED</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.fineReasonText}>
+                      Penalty is calculated due to delay ({fineInfo.delayDays} day{fineInfo.delayDays === 1 ? "" : "s"}).
+                    </Text>
                   </View>
                 ) : null}
               </View>
@@ -1169,7 +1207,8 @@ const styles = StyleSheet.create({
   headerText: { fontSize: 18, fontWeight: "bold", color: "#fff", letterSpacing: 0.5 },
   betaBadge: { position: 'absolute', top: -5, right: -5, backgroundColor: '#ff9800', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 },
   betaText: { fontSize: 8, fontWeight: 'bold', color: '#000' },
-  profilePhoto: { marginLeft: 10, borderRadius: 20, overflow: "hidden" },
+  profilePhoto: { marginLeft: 10, borderRadius: 20, overflow: "hidden", width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
+  profilePhotoPlaceholder: { backgroundColor: 'rgba(255,255,255,0.2)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' },
   profileMenu: { position: "absolute", top: 60, right: 20, backgroundColor: "#fff", padding: 15, borderRadius: 8, shadowColor: "#000", shadowOpacity: 0.2, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4, elevation: 5, zIndex: 1100 },
   fullScreenTouchable: {
     position: "absolute",
@@ -1216,10 +1255,22 @@ const styles = StyleSheet.create({
   metaRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 10 },
   metaItem: { flexDirection: "row", alignItems: "center" },
   metaText: { color: "#666", fontSize: 13 },
+  clientPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  clientPillText: { fontSize: 12, fontWeight: "900", letterSpacing: 0.4 },
   statusContainer: { flexDirection: "row", alignItems: "center", alignSelf: "flex-start", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, backgroundColor: "#f5f5f5" },
   statusDelayed: { backgroundColor: "#ffebee" },
   statusOnTime: { backgroundColor: "#e8f5e9" },
   statusText: { fontSize: 12, fontWeight: "600" },
+  fineBox: { marginTop: 10, padding: 10, borderRadius: 12, backgroundColor: "#fff5f5", borderWidth: 1 },
+  fineAmountText: { color: "#b91c1c", fontWeight: "900", fontSize: 13 },
+  fineReasonText: { marginTop: 6, color: "#7f1d1d", fontSize: 12, lineHeight: 16 },
+  fineBadge: { flexDirection: "row", alignItems: "center", backgroundColor: "#d32f2f", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999 },
+  fineBadgeText: { color: "#fff", fontSize: 10, fontWeight: "900", letterSpacing: 0.3 },
   actionRow: { flexDirection: "row", gap: 10 },
   openButton: {
     flex: 1,

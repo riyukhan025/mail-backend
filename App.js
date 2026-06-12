@@ -37,8 +37,12 @@ import MemberChatScreen from "./app/MemberChatScreen";
 import MemberDetailScreen from "./app/MemberDetailScreen";
 import MemberDSRDetailScreen from "./app/MemberDSRDetailScreen";
 import MemberDSRScreen from "./app/MemberDSRScreen";
+import MemberReportDetailScreen from "./app/MemberReportDetailScreen";
+import MemberReportsScreen from "./app/MemberReportsScreen";
+import MemberReportSendScreen from "./app/MemberReportSendScreen";
 import MemberViewScreen from "./app/MemberViewScreen";
 import MyTicketsScreen from "./app/MyTicketsScreen";
+import MonthEndReportScreen from "./app/MonthEndReportScreen";
 import PlanYourDayScreen from "./app/PlanYourDayScreen";
 import RaiseTicketScreen from "./app/RaiseTicketScreen";
 import RevertedCasesScreen from "./app/RevertedCasesScreen";
@@ -122,6 +126,9 @@ function AdminStack() {
         component={MemberDSRDetailScreen}
       />
       <Stack.Screen name="MemberDSRScreen" component={MemberDSRScreen} />
+      <Stack.Screen name="MemberReportsScreen" component={MemberReportsScreen} />
+      <Stack.Screen name="MemberReportDetailScreen" component={MemberReportDetailScreen} />
+      <Stack.Screen name="MemberReportSendScreen" component={MemberReportSendScreen} />
       <Stack.Screen
         name="AdminEmailScreen"
         component={AdminEmailScreen}
@@ -131,6 +138,7 @@ function AdminStack() {
       <Stack.Screen name="StatisticsScreen" component={StatisticsScreen} />
       <Stack.Screen name="AllTicketsScreen" component={AllTicketsScreen} />
       <Stack.Screen name="RaiseTicketScreen" component={RaiseTicketScreen} />
+      <Stack.Screen name="MonthEndReportScreen" component={MonthEndReportScreen} />
     </Stack.Navigator>
   );
 }
@@ -142,6 +150,10 @@ function DevStack() {
       <Stack.Screen name="DevDashboardScreen" component={DevDashboardScreen} />
       <Stack.Screen name="AllTicketsScreen" component={AllTicketsScreen} />
       <Stack.Screen name="AuditCaseScreen" component={AuditCaseScreen} />
+      <Stack.Screen name="MonthEndReportScreen" component={MonthEndReportScreen} />
+      <Stack.Screen name="MemberReportsScreen" component={MemberReportsScreen} />
+      <Stack.Screen name="MemberReportDetailScreen" component={MemberReportDetailScreen} />
+      <Stack.Screen name="MemberReportSendScreen" component={MemberReportSendScreen} />
     </Stack.Navigator>
   );
 }

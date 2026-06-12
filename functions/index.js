@@ -172,3 +172,146 @@ exports.sendDigitalVerificationEmail = onCall(
   const failCount = results.length - okCount;
   return { ok: failCount === 0, okCount, failCount, results };
 });
+
+exports.sendMonthEndReportEmail = onCall(
+  {
+    region: "us-central1",
+    cors: [
+      "http://localhost:8081",
+      "http://127.0.0.1:8081",
+      "https://yourdomain.com",
+    ],
+  },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Login required.");
+    }
+    await assertCallerIsAdminOrDev(request.auth.uid);
+
+    const gmailFrom = mustGetConfig("gmail.email", "Missing config gmail.email.");
+    const transport = buildTransport();
+
+    const recipientsRaw = request.data?.recipients;
+    const recipients = Array.isArray(recipientsRaw)
+      ? recipientsRaw.map(String).map((s) => s.trim()).filter(Boolean)
+      : String(recipientsRaw || "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+    if (recipients.length === 0) {
+      throw new HttpsError("invalid-argument", "recipients is required.");
+    }
+
+    const filename = String(request.data?.filename || "MonthEndReport.pdf").slice(0, 140);
+    const pdfBase64 = String(request.data?.pdfBase64 || "");
+    if (!pdfBase64) {
+      throw new HttpsError("invalid-argument", "pdfBase64 is required.");
+    }
+
+    // Keep a conservative limit to avoid callable payload issues.
+    // Base64 expands by ~33%; 6.5MB base64 ≈ 4.8MB binary.
+    if (pdfBase64.length > 6_500_000) {
+      throw new HttpsError("invalid-argument", "pdfBase64 too large for callable request.");
+    }
+
+    const subject = String(request.data?.subject || "Space Solutions - Month End Report").slice(0, 200);
+    const text = String(request.data?.body || "Hi,\n\nPlease find the month end report attached.\n\nRegards,\nSpace Solutions");
+
+    try {
+      const info = await transport.sendMail({
+        from: gmailFrom,
+        to: recipients.join(","),
+        subject,
+        text,
+        attachments: [
+          {
+            filename,
+            content: pdfBase64,
+            encoding: "base64",
+            contentType: "application/pdf",
+          },
+        ],
+      });
+      return { ok: true, messageId: info?.messageId || null };
+    } catch (e) {
+      throw new HttpsError("internal", String(e?.message || e));
+    }
+  }
+);
+
+exports.sendMemberReportEmail = onCall(
+  {
+    region: "us-central1",
+    cors: [
+      "http://localhost:8081",
+      "http://127.0.0.1:8081",
+      "https://yourdomain.com",
+    ],
+  },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Login required.");
+    }
+    await assertCallerIsAdminOrDev(request.auth.uid);
+
+    const gmailFrom = mustGetConfig("gmail.email", "Missing config gmail.email.");
+    const transport = buildTransport();
+
+    const recipient = String(request.data?.recipient || "").trim();
+    if (!recipient || !recipient.includes("@")) {
+      throw new HttpsError("invalid-argument", "recipient is required.");
+    }
+
+    const filename = String(request.data?.filename || "IndividualReport.pdf").slice(0, 140);
+    const pdfBase64 = String(request.data?.pdfBase64 || "");
+    if (!pdfBase64) {
+      throw new HttpsError("invalid-argument", "pdfBase64 is required.");
+    }
+    if (pdfBase64.length > 6_500_000) {
+      throw new HttpsError("invalid-argument", "pdfBase64 too large for callable request.");
+    }
+
+    const subject = String(request.data?.subject || "Space Solutions - Individual Report").slice(0, 200);
+    const text = String(request.data?.body || "Hi,\n\nPlease find your individual report attached.\n\nRegards,\nSpace Solutions");
+
+    try {
+      const info = await transport.sendMail({
+        from: gmailFrom,
+        to: recipient,
+        subject,
+        text,
+        attachments: [
+          {
+            filename,
+            content: pdfBase64,
+            encoding: "base64",
+            contentType: "application/pdf",
+          },
+        ],
+      });
+
+      // Lightweight audit trail (best-effort).
+      try {
+        const now = Date.now();
+        const entry = {
+          type: "member_report",
+          recipient,
+          subject,
+          filename,
+          memberUid: String(request.data?.memberUid || ""),
+          monthKey: String(request.data?.monthKey || ""),
+          sentBy: request.auth.uid,
+          sentAt: now,
+          messageId: info?.messageId || null,
+        };
+        await admin.database().ref("mailLogs/memberReports").push(entry);
+      } catch (e) {
+        // ignore audit log failures
+      }
+
+      return { ok: true, messageId: info?.messageId || null };
+    } catch (e) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+  }
+);

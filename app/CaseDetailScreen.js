@@ -1,12 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
 import { decode as atob, encode as btoa } from "base-64";
+import { BlurView } from "expo-blur";
 import Constants from "expo-constants";
 import * as FileSystem from "expo-file-system/legacy";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
-import { useContext, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -61,6 +62,25 @@ const PHOTO_REQUIREMENTS = [
 const OPTIONAL_PHOTO_CATEGORIES = [
     { id: 'other', label: 'Other', max: 2 },
 ];
+
+const CHECKLIST_ICON_BY_ID = {
+    house: "home-outline",
+    selfie: "person-outline",
+    proof: "card-outline",
+    landmark: "location-outline",
+    other: "images-outline",
+};
+
+function GlassCard({ style, innerStyle, children }) {
+    return (
+        <View style={[styles.glassOuter, style]}>
+            <BlurView intensity={24} tint="dark" style={[styles.glassInner, innerStyle]}>
+                {children}
+            </BlurView>
+            <View pointerEvents="none" style={[styles.glassHighlight, innerStyle]} />
+        </View>
+    );
+}
 
 const TRANSLATIONS = {
   en: {
@@ -156,10 +176,30 @@ export default function CaseDetailScreen({ navigation, route }) {
     const [progressMessage, setProgressMessage] = useState("");
     const [showProgressModal, setShowProgressModal] = useState(false);
 
+    // --- NEW: Initial Route Redirection ---
+    // If this screen was opened as the initial route (no caseId), redirect to Dashboard.
+    useEffect(() => {
+        if (!caseId && authChecked) {
+            console.log("⚠️ CaseDetailScreen opened without caseId, redirecting...");
+            handleBackToHome();
+        }
+    }, [caseId, authChecked, handleBackToHome]);
+
     const t = (key) => TRANSLATIONS[language]?.[key] || TRANSLATIONS['en'][key] || key;
 
     const displayStatus = role === "member" && status === "assigned" ? "open" : status;
     console.log(`[RENDER] status=${status}, role=${role}, displayStatus=${displayStatus}`);
+
+    const handleBackToHome = useCallback(() => {
+        // Force reset the navigation stack to the appropriate dashboard.
+        // This prevents the user from going "back" into the Auth screen.
+        const targetRoute = role === "admin" ? "AdminPanel" : role === "dev" ? "DevDashboardScreen" : "Dashboard";
+        navigation.reset({
+            index: 0,
+            routes: [{ name: targetRoute }],
+        });
+        return true;
+    }, [navigation, role]);
     // --- NEW: Calculate total photos and if all requirements are met ---
     
     const isAuditFail = (caseData?.auditFeedback || (caseData?.photosToRedo && caseData?.photosToRedo.length > 0)) && displayStatus === 'open';
@@ -235,8 +275,47 @@ export default function CaseDetailScreen({ navigation, route }) {
             return updated;
         });
 
+        // Background upload to Cloudinary + persist to Firebase (avoid passing callbacks in navigation params)
+        (async () => {
+            try {
+                setIsUploadingPhotos(true);
+
+                const photosByCat = {};
+                newPhotosArray.forEach(p => {
+                    if (!p?.category) return;
+                    if (!photosByCat[p.category]) photosByCat[p.category] = [];
+                    photosByCat[p.category].push(p);
+                });
+
+                for (const cat in photosByCat) {
+                    const currentFirebaseList =
+                        (await firebase.database().ref(`cases/${caseId}/photosFolder/${cat}`).once('value')).val() || [];
+
+                    const uploadedPhotos = [];
+                    for (let i = 0; i < photosByCat[cat].length; i++) {
+                        const p = photosByCat[cat][i];
+                        const cloudUrl = await uploadImageToCloudinary(p, cat, i);
+                        if (cloudUrl) {
+                            uploadedPhotos.push({ ...p, uri: cloudUrl, id: `${Date.now()}-${Math.random()}` });
+                        }
+                    }
+
+                    if (uploadedPhotos.length > 0) {
+                        const finalList = [...currentFirebaseList, ...uploadedPhotos];
+                        await firebase.database().ref(`cases/${caseId}/photosFolder/${cat}`).set(finalList);
+                        console.log(`[UPLOAD] Synced ${uploadedPhotos.length} new photos to Firebase for category ${cat}.`);
+                    }
+                }
+            } catch (error) {
+                console.error("[UPLOAD] Background upload failed:", error);
+                Alert.alert("Upload Failed", "Some photos could not be uploaded. Please try again.");
+            } finally {
+                setIsUploadingPhotos(false);
+            }
+        })();
+
         // Clear params to prevent re-adding
-        navigation.setParams({ newPhotos: null });
+        setTimeout(() => navigation.setParams({ newPhotos: null }), 100);
     }, [route.params?.newPhotos, navigation]);
 
     // Fetch case data using a real-time listener
@@ -304,19 +383,12 @@ export default function CaseDetailScreen({ navigation, route }) {
     // Hardware back button
     useEffect(() => {
         const backAction = () => {
-            if (navigation.canGoBack()) {
-                navigation.goBack();
-                console.log("↩️ Navigating back in stack");
-            } else { // If it's the first screen in the stack
-                // Replace the current screen with the appropriate dashboard to prevent stacking
-                role === "admin" ? navigation.replace("AdminPanel") : navigation.replace("Dashboard");
-                console.log("🏠 No back history, replacing with dashboard for role:", role);
-            }
-            return true;
+            console.log("🏠 BackHandler: Back pressed");
+            return handleBackToHome();
         };
         const backHandler = BackHandler.addEventListener("hardwareBackPress", backAction);
         return () => backHandler.remove();
-    }, [role]);
+    }, [handleBackToHome]);
 
     // Form completed listener (NEW)
     useEffect(() => {
@@ -391,6 +463,49 @@ export default function CaseDetailScreen({ navigation, route }) {
         );
     };
 
+    const clearCategoryPhotos = (category) => {
+        if (checkMaintenance()) return;
+
+        const currentList = photos[category] || [];
+        if (currentList.length === 0) return;
+
+        Alert.alert(
+            "Delete Photos",
+            "Delete all photos in this category?",
+            [
+                { text: "Cancel", style: "cancel" },
+                {
+                    text: "Delete",
+                    style: "destructive",
+                    onPress: async () => {
+                        const removedList = [...currentList];
+
+                        // Optimistic update (UI immediately)
+                        setPhotos(prev => ({ ...prev, [category]: [] }));
+
+                        try {
+                            await firebase.database().ref(`cases/${caseId}/photosFolder/${category}`).set([]);
+
+                            // Best-effort Cloudinary cleanup
+                            removedList
+                                .filter(p => p?.uri?.includes("cloudinary"))
+                                .forEach((p) => {
+                                    fetch(`${SERVER_URL}/cloudinary/destroy-from-url`, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ url: p.uri, resource_type: 'image' }),
+                                    }).catch(() => {});
+                                });
+                        } catch (e) {
+                            console.error("Clear category sync failed:", e);
+                            Alert.alert("Error", "Failed to sync deletion with server.");
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
     // --- NEW: Helper to download remote image to temp file for migration ---
     const downloadToTemp = async (uri) => {
         try {
@@ -412,7 +527,7 @@ export default function CaseDetailScreen({ navigation, route }) {
             // Add random component to filename to prevent overwriting on retries
             formData.append("file", { uri: uri, type: "image/jpeg", name: `${category}_${Date.now()}_${Math.floor(Math.random() * 10000)}_${index}.jpg` });
             formData.append("upload_preset", UPLOAD_PRESET);
-            const rawRefNo = caseData.matrixRefNo || caseData.RefNo || caseId;
+            const rawRefNo = caseData?.matrixRefNo || caseData?.RefNo || caseId;
             const safeRefNo = rawRefNo.replace(/[^a-zA-Z0-9-_]/g, '_');
             formData.append("folder", `cases/${safeRefNo}`);
             console.log(`[UPLOAD-SINGLE] Target Folder: cases/${safeRefNo} (Ref: ${rawRefNo})`);
@@ -555,6 +670,12 @@ export default function CaseDetailScreen({ navigation, route }) {
     const showPhotoOptions = (category) => {
         if (checkMaintenance()) return;
 
+        // On web, Alert.alert action sheets are unreliable; open the file picker directly.
+        if (Platform.OS === "web") {
+            openCamera(category);
+            return;
+        }
+
         const options = [
             {
                 text: "Take Photo with GPS",
@@ -630,62 +751,8 @@ export default function CaseDetailScreen({ navigation, route }) {
             return;
         }
 
-        // --- MODIFIED: Navigate to the dedicated GPS Camera Screen with callback ---
-        navigation.navigate("CameraGPSScreen", {
-            caseId,
-            category,
-            onPhotosCapture: (newPhotos) => {
-                console.log('[CaseDetailScreen] Received photos from callback with local URIs:', newPhotos);
-
-                // 1. Immediately update local state to show photos with local URIs
-                setPhotos(prevPhotos => {
-                    const updated = { ...prevPhotos };
-                    for (const photo of newPhotos) {
-                        const cat = photo.category;
-                        if (!updated[cat]) updated[cat] = [];
-                        updated[cat].push({ ...photo, id: `local-${Date.now()}-${Math.random()}` });
-                    }
-                    console.log('[CaseDetailScreen] ✅ Photos state updated for immediate display.');
-                    return updated;
-                });
-
-                // 2. Start background upload and Firebase update process
-                (async () => {
-                    setIsUploadingPhotos(true); // Show a non-blocking loading indicator
-                    try {
-                        const photosByCat = {};
-                        newPhotos.forEach(p => {
-                            if (!photosByCat[p.category]) photosByCat[p.category] = [];
-                            photosByCat[p.category].push(p);
-                        });
-
-                        for (const cat in photosByCat) {
-                            const currentFirebaseList = (await firebase.database().ref(`cases/${caseId}/photosFolder/${cat}`).once('value')).val() || [];
-                            
-                            const uploadedPhotos = [];
-                            for (let i = 0; i < photosByCat[cat].length; i++) {
-                                const p = photosByCat[cat][i];
-                                const cloudUrl = await uploadImageToCloudinary(p, cat, i);
-                                if (cloudUrl) {
-                                    uploadedPhotos.push({ ...p, uri: cloudUrl, id: `${Date.now()}-${Math.random()}` });
-                                }
-                            }
-
-                            if (uploadedPhotos.length > 0) {
-                                const finalList = [...currentFirebaseList, ...uploadedPhotos];
-                                await firebase.database().ref(`cases/${caseId}/photosFolder/${cat}`).set(finalList);
-                                console.log(`[UPLOAD] Synced ${uploadedPhotos.length} new photos to Firebase for category ${cat}.`);
-                            }
-                        }
-                    } catch (error) {
-                        console.error("[UPLOAD] Background upload failed:", error);
-                        Alert.alert("Upload Failed", "Some photos could not be uploaded. Please try again.");
-                    } finally {
-                        setIsUploadingPhotos(false);
-                    }
-                })();
-            }
-        });
+        // Navigate to the dedicated GPS Camera Screen (results returned via serializable route params)
+        navigation.navigate("CameraGPSScreen", { caseId, category });
     };
     // Take photo with camera + geotag
     const takePhoto = async () => {
@@ -1301,16 +1368,35 @@ const handleCloseCase = async () => {
 
 
 
-    if (!authChecked || !caseData) {
+    // If user is null (logged out) or auth isn't checked yet, don't show details.
+    // This prevents the screen from staying visible after sign-out.
+    if (!user || !authChecked || !caseData) {
+        if (!user && authChecked) {
+            // If we are definitely logged out, return null to avoid flickering old data.
+            return null;
+        }
+
         console.log("⏳ Waiting for auth or case data...");
         return (
             <LinearGradient colors={["#4e0360", "#1a1a1a", "#4e0360"]} style={styles.container}>
-                <Text style={styles.infoText}>Loading case data...</Text>
+                <ActivityIndicator size="large" color="#fff" />
+                <Text style={[styles.centerInfoText, { marginTop: 10 }]}>Loading case data...</Text>
             </LinearGradient>
         );
     }
 
     console.log("✅ Rendering CaseDetailScreen with status:", displayStatus);
+
+    const checklistStats = (() => {
+        try {
+            const targets = (allDisplayedCategories || []).reduce((sum, req) => sum + Number(req.min || req.max || 0), 0);
+            const taken = (allDisplayedCategories || []).reduce((sum, req) => sum + Math.min((photos?.[req.id]?.length || 0), Number(req.min || req.max || 0)), 0);
+            const pct = targets > 0 ? Math.round((taken / targets) * 100) : 0;
+            return { targets, taken, pct };
+        } catch (e) {
+            return { targets: 0, taken: 0, pct: 0 };
+        }
+    })();
 
     return (
         <LinearGradient colors={["#0f0c29", "#302b63", "#24243e"]} style={styles.container}>
@@ -1325,8 +1411,8 @@ const handleCloseCase = async () => {
                 <TouchableOpacity
                     onPress={() => {
                         console.log("🔙 Back button pressed");
-                        if (navigation.canGoBack()) navigation.goBack();
-                        else role === "admin" ? navigation.replace("AdminPanel") : navigation.replace("Dashboard");
+                        console.log("🏠 HeaderBack: Back pressed");
+                        handleBackToHome();
                     }}
                     style={styles.iconButton}
                 >
@@ -1343,11 +1429,14 @@ const handleCloseCase = async () => {
                 contentContainerStyle={styles.scrollContent}
             >
                 {/* Case Info Card */}
-                <View style={styles.card}>
+                <GlassCard style={styles.caseCardOuter} innerStyle={styles.caseCardInner}>
                     <View style={styles.cardHeader}>
                         <View style={{ flex: 1, paddingRight: 110 }}>
                             <Text style={styles.caseRef}>{caseData.matrixRefNo || caseData.RefNo || caseId}</Text>
-                            <Text style={styles.companyName}>{caseData.company || "Unknown Company"}</Text>
+                            <Text style={styles.companyName}>
+                                {(caseData.client || caseData.company || "Unknown Company")}
+                                {":"}
+                            </Text>
                         </View>
                         <View style={[styles.statusBadge, { position: 'absolute', top: 0, right: 0, backgroundColor: isAuditFail ? '#ff4444' : (displayStatus === 'completed' ? '#4caf50' : '#ff9800') }]}>
                             <Text style={styles.statusText}>{isAuditFail ? "AUDIT FAIL" : displayStatus.toUpperCase()}</Text>
@@ -1356,35 +1445,39 @@ const handleCloseCase = async () => {
 
                     <View style={styles.divider} />
 
-                    <View style={styles.infoRow}>
-                        <Ionicons name="location-outline" size={18} color="#aaa" style={styles.infoIcon} />
-                        <Text style={styles.infoText}>{caseData.address || "No address provided"}</Text>
-                    </View>
-                    
-                    <View style={styles.infoRow}>
-                         <Ionicons name="map-outline" size={18} color="#aaa" style={styles.infoIcon} />
-                         <Text style={styles.infoText}>{caseData.city || caseData.state ? `${caseData.city || ''}, ${caseData.state || ''}` : "Location N/A"} - {caseData.pincode || ""}</Text>
-                    </View>
-
-                    <View style={styles.infoRow}>
-                        <Ionicons name="call-outline" size={18} color="#aaa" style={styles.infoIcon} />
-                        <Text style={styles.infoText}>{caseData.contactNumber || "No contact"}</Text>
-                        {caseData.contactNumber && (
-                            <TouchableOpacity onPress={() => Linking.openURL(`tel:${caseData.contactNumber}`)} style={styles.callButton}>
-                                <Text style={styles.callButtonText}>Call</Text>
-                            </TouchableOpacity>
-                        )}
-                    </View>
-
                     <View style={styles.metaContainer}>
                         <View style={styles.metaItem}>
                             <Text style={styles.metaLabel}>{t("initiated")}</Text>
                             <Text style={styles.metaValue}>{caseData.dateInitiated ? new Date(caseData.dateInitiated).toLocaleDateString() : "-"}</Text>
                         </View>
-                        <View style={styles.metaItem}>
+                        <View style={styles.metaDivider} />
+                        <View style={[styles.metaItem, { alignItems: 'flex-end' }]}>
                             <Text style={styles.metaLabel}>{t("assignedTo")}</Text>
                             <Text style={styles.metaValue}>{assignedEmail.split('@')[0]}</Text>
                         </View>
+                    </View>
+
+                    <View style={styles.dividerSoft} />
+
+                    <View style={styles.infoRow}>
+                        <Ionicons name="location-outline" size={18} color="#f43f5e" style={styles.infoIcon} />
+                        <Text style={styles.infoText}>{caseData.address || "No address provided"}</Text>
+                    </View>
+                    
+                    <View style={styles.infoRow}>
+                         <Ionicons name="map-outline" size={18} color="#38bdf8" style={styles.infoIcon} />
+                         <Text style={styles.infoText}>{caseData.city || caseData.state ? `${caseData.city || ''}, ${caseData.state || ''}` : "Location N/A"} - {caseData.pincode || ""}</Text>
+                    </View>
+
+                    <View style={styles.infoRow}>
+                        <Ionicons name="call-outline" size={18} color="#fbbf24" style={styles.infoIcon} />
+                        <Text style={styles.infoText}>{caseData.contactNumber || "No contact"}</Text>
+                        {caseData.contactNumber && (
+                            <TouchableOpacity onPress={() => Linking.openURL(`tel:${caseData.contactNumber}`)} style={styles.callButton}>
+                                <Ionicons name="call" size={14} color="#fff" />
+                                <Text style={styles.callButtonText}>Call</Text>
+                            </TouchableOpacity>
+                        )}
                     </View>
 
                     {displayStatus === "closed" && caseData.photosFolderLink && (
@@ -1396,21 +1489,28 @@ const handleCloseCase = async () => {
                             <Text style={styles.downloadText}>{t("downloadReport")}</Text>
                         </TouchableOpacity>
                     )}
-                </View>
+                </GlassCard>
 
                 {/* Audit Feedback */}
                 {caseData.auditFeedback && displayStatus === 'open' && (
-                  <View style={styles.feedbackCard}>
+                  <GlassCard style={styles.feedbackCardOuter} innerStyle={styles.feedbackCardInner}>
                     <View style={styles.feedbackHeader}>
                         <Ionicons name="warning" size={20} color="#ffd700" />
                         <Text style={styles.feedbackTitle}>{t("actionRequired")}</Text>
                     </View>
                     <Text style={styles.feedbackText}>{caseData.auditFeedback}</Text>
-                  </View>
+                  </GlassCard>
                 )}
 
                 {/* Photo Checklist */}
                 <Text style={styles.sectionHeader}>{t("photoChecklist")}</Text>
+
+                <View style={styles.progressRow}>
+                    <View style={styles.progressBarContainerSmall}>
+                        <View style={[styles.progressBarFillSmall, { width: `${Math.min(checklistStats.pct, 100)}%` }]} />
+                    </View>
+                    <Text style={styles.progressTextSmall}>{checklistStats.taken} / {checklistStats.targets} • {checklistStats.pct}%</Text>
+                </View>
                 
                 {allDisplayedCategories.map((req) => {
                     const taken = photos[req.id]?.length || 0;
@@ -1418,9 +1518,10 @@ const handleCloseCase = async () => {
                     const isComplete = taken >= target;
                     // For CES No, we allow more than min, so we don't hide add button based on max unless it's reached
                     const showAddButton = (displayStatus === "open" || forceEdit) && taken < req.max;
+                    const canClearCategory = (displayStatus === "open" || forceEdit) && taken > 0;
                     
                     return (
-                        <View key={req.id} style={styles.checklistCard}>
+                        <GlassCard key={req.id} style={styles.checklistCardOuter} innerStyle={styles.checklistCardInner}>
                             <View style={styles.checklistHeader}>
                                 <View style={styles.checklistInfo}>
                                     <Text style={styles.checklistTitle}>{language === 'ta' ? t(req.id) : req.label}</Text>
@@ -1428,14 +1529,22 @@ const handleCloseCase = async () => {
                                         {taken} / {req.min ? `${req.min}+` : req.max}
                                     </Text>
                                 </View>
-                                {showAddButton && (
-                                    <View>
-                                        <TouchableOpacity style={styles.cameraButton} onPress={() => showPhotoOptions(req.id)}>
-                                            <Ionicons name="camera" size={20} color="#fff" />
-                                            <Text style={styles.cameraButtonText}>{t("add")}</Text>
-                                        </TouchableOpacity>
+                                <View style={styles.checklistActions}>
+                                    <TouchableOpacity
+                                        style={[
+                                            styles.checklistActionBtn,
+                                            styles.checklistDeleteBtn,
+                                            !canClearCategory ? { opacity: 0.35 } : null
+                                        ]}
+                                        disabled={!canClearCategory}
+                                        onPress={() => clearCategoryPhotos(req.id)}
+                                    >
+                                        <Ionicons name="trash-outline" size={18} color="#fff" />
+                                    </TouchableOpacity>
+                                    <View style={[styles.checklistStatusBtn, isComplete ? styles.checklistStatusBtnDone : null]}>
+                                        <Ionicons name={isComplete ? "checkmark" : "ellipsis-horizontal"} size={16} color="#fff" />
                                     </View>
-                                )}
+                                </View>
                             </View>
 
                             {isUploadingPhotos && (
@@ -1463,7 +1572,24 @@ const handleCloseCase = async () => {
                             ) : (
                                 <Text style={styles.emptyPhotoText}>No photos yet</Text>
                             )}
-                        </View>
+
+                            {(displayStatus === "open" || forceEdit) && (
+                                <TouchableOpacity
+                                    style={[styles.addPhotosLink, !showAddButton ? { opacity: 0.45 } : null]}
+                                    disabled={!showAddButton}
+                                    onPress={() => showPhotoOptions(req.id)}
+                                >
+                                    <Ionicons
+                                        name={CHECKLIST_ICON_BY_ID[req.id] || "images-outline"}
+                                        size={16}
+                                        color="#cbd5e1"
+                                    />
+                                    <Text style={styles.addPhotosLinkText}>
+                                        Add Photos
+                                    </Text>
+                                </TouchableOpacity>
+                            )}
+                        </GlassCard>
                     );
                 })}
 
@@ -1657,24 +1783,47 @@ const styles = StyleSheet.create({
     headerTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff' },
     iconButton: { padding: 8, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 12 },
     scrollContent: { padding: 20, paddingBottom: 120 },
+
+    // Glass (shared)
+    glassOuter: {
+        borderRadius: 20,
+        overflow: "hidden",
+        borderWidth: 1,
+        borderColor: "rgba(255,255,255,0.14)",
+        backgroundColor: "rgba(255,255,255,0.05)",
+    },
+    glassInner: { borderRadius: 20, padding: 18 },
+    glassHighlight: {
+        ...StyleSheet.absoluteFillObject,
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: "rgba(255,255,255,0.08)",
+        backgroundColor: "rgba(255,255,255,0.02)",
+    },
     
     // Case Card
+    caseCardOuter: { marginBottom: 18, borderRadius: 22, shadowColor: "#000", shadowOpacity: 0.25, shadowOffset: { width: 0, height: 10 }, shadowRadius: 22, elevation: 6 },
+    caseCardInner: { borderRadius: 22, padding: 20 },
+
+    // Legacy (kept for compatibility)
     card: { backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 20, padding: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', marginBottom: 20 },
     cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
     caseRef: { fontSize: 22, fontWeight: '800', color: '#fff', marginBottom: 4 },
     companyName: { fontSize: 14, color: '#aaa', fontWeight: '600' },
-    statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+    statusBadge: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: "rgba(255,255,255,0.18)" },
     statusText: { color: '#fff', fontSize: 10, fontWeight: 'bold' },
     divider: { height: 1, backgroundColor: 'rgba(255,255,255,0.1)', marginVertical: 15 },
+    dividerSoft: { height: 1, backgroundColor: 'rgba(255,255,255,0.08)', marginVertical: 12 },
     
     infoRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
     infoIcon: { marginRight: 10, width: 20 },
     infoText: { color: '#eee', fontSize: 14, flex: 1, lineHeight: 20 },
-    callButton: { backgroundColor: '#0ea5e9', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, marginLeft: 10 },
+    callButton: { flexDirection: "row", alignItems: "center", backgroundColor: 'rgba(14,165,233,0.95)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, marginLeft: 10, gap: 6 },
     callButtonText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
     
-    metaContainer: { flexDirection: 'row', marginTop: 10, backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: 12, padding: 12 },
+    metaContainer: { flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.18)', borderRadius: 14, paddingVertical: 10, paddingHorizontal: 12 },
     metaItem: { flex: 1 },
+    metaDivider: { width: 1, backgroundColor: "rgba(255,255,255,0.10)", marginHorizontal: 10 },
     metaLabel: { color: '#888', fontSize: 11, marginBottom: 4, textTransform: 'uppercase' },
     metaValue: { color: '#fff', fontSize: 14, fontWeight: '600' },
     
@@ -1682,6 +1831,10 @@ const styles = StyleSheet.create({
     downloadText: { color: '#fff', fontWeight: 'bold', marginLeft: 8 },
 
     // Feedback
+    feedbackCardOuter: { marginBottom: 18, borderColor: "rgba(255,193,7,0.26)" },
+    feedbackCardInner: { borderRadius: 18, padding: 16 },
+
+    // Legacy (kept for compatibility)
     feedbackCard: { backgroundColor: 'rgba(255, 193, 7, 0.15)', borderRadius: 16, padding: 16, marginBottom: 20, borderWidth: 1, borderColor: 'rgba(255, 193, 7, 0.3)' },
     feedbackHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
     feedbackTitle: { color: '#ffd700', fontWeight: 'bold', fontSize: 16, marginLeft: 8 },
@@ -1689,6 +1842,15 @@ const styles = StyleSheet.create({
 
     // Checklist
     sectionHeader: { fontSize: 18, fontWeight: 'bold', color: '#fff', marginBottom: 15, marginTop: 10 },
+    progressRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: -6, marginBottom: 14, gap: 10 },
+    progressBarContainerSmall: { flex: 1, height: 8, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.08)", overflow: "hidden" },
+    progressBarFillSmall: { height: "100%", borderRadius: 999, backgroundColor: "rgba(99,102,241,0.9)" },
+    progressTextSmall: { color: "#cbd5e1", fontSize: 12, fontWeight: "600" },
+
+    checklistCardOuter: { marginBottom: 14, borderRadius: 18 },
+    checklistCardInner: { borderRadius: 18, padding: 15 },
+
+    // Legacy (kept for compatibility)
     checklistCard: { backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 16, padding: 15, marginBottom: 15 },
     checklistHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
     checklistInfo: { flex: 1 },
@@ -1696,6 +1858,12 @@ const styles = StyleSheet.create({
     checklistCount: { fontSize: 12, fontWeight: 'bold' },
     textSuccess: { color: '#4caf50' },
     textWarning: { color: '#ff9800' },
+    checklistActions: { flexDirection: "row", alignItems: "center", gap: 10, marginLeft: 10 },
+    checklistIconBox: { width: 40, height: 40, borderRadius: 12, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.10)" },
+    checklistActionBtn: { width: 40, height: 40, borderRadius: 12, backgroundColor: "rgba(255,255,255,0.10)", alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)" },
+    checklistDeleteBtn: { backgroundColor: "rgba(239,68,68,0.28)", borderColor: "rgba(239,68,68,0.55)" },
+    checklistStatusBtn: { width: 44, height: 44, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.10)", alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)" },
+    checklistStatusBtnDone: { backgroundColor: "rgba(76, 175, 80, 0.85)", borderColor: "rgba(76, 175, 80, 0.45)" },
     cameraButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#2563eb', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
     cameraButtonText: { color: '#fff', fontSize: 12, fontWeight: 'bold', marginLeft: 6 },
     photoScroll: { marginTop: 5 },
@@ -1709,6 +1877,8 @@ const styles = StyleSheet.create({
         borderRadius: 12,
     },
     emptyPhotoText: { color: '#666', fontSize: 12, fontStyle: 'italic' },
+    addPhotosLink: { alignSelf: "flex-end", marginTop: 10, flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 12, backgroundColor: "rgba(0,0,0,0.18)" },
+    addPhotosLinkText: { color: "#cbd5e1", fontSize: 12, fontWeight: "600" },
 
     // Optional Button
     addOptionalButton: { marginBottom: 20 },
@@ -1731,12 +1901,12 @@ const styles = StyleSheet.create({
     overlayText: { color: "#fff", fontSize: 11 },
     modalContainer: { flex: 1, backgroundColor: "#000" },
     fullscreenPhoto: { width: "100%", height: "100%", justifyContent: "flex-end" },
-    fullscreenOverlay: { backgroundColor: "rgba(0,0,0,0.6)", padding: 10 },
+    fullscreenOverlay: { display: "none" },
     modalClose: { position: "absolute", top: 40, right: 20, zIndex: 10 },
     modalCloseText: { fontSize: 28, color: "#ff5e62" },
     actionButton: { borderRadius: 12, padding: 14, alignItems: "center" },
     buttonText: { color: "#fff", fontWeight: "700" },
-    infoText: { flex: 1, textAlign: "center", textAlignVertical: "center", fontSize: 16, color: "#fff" },
+    centerInfoText: { flex: 1, textAlign: "center", textAlignVertical: "center", fontSize: 16, color: "#fff" },
     detailsModal: { flex: 1, justifyContent: "center", margin: 20, backgroundColor: "#222", borderRadius: 12, padding: 20 },
     modalTitle: { fontSize: 18, fontWeight: "700", marginBottom: 20, color: "#fff", textAlign: "center" },
     

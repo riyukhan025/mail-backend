@@ -4,7 +4,7 @@ import * as ImageManipulator from "expo-image-manipulator";
 import * as Location from "expo-location";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Image, Linking, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { captureRef } from "react-native-view-shot";
+import ViewShot from "react-native-view-shot";
 
 export default function CameraGPSScreen({ navigation, route }) {
   const [permission, requestPermission] = useCameraPermissions();
@@ -13,14 +13,18 @@ export default function CameraGPSScreen({ navigation, route }) {
   const [facing, setFacing] = useState("back");
   const cameraRef = useRef(null);
   const snapshotRef = useRef(null);
+  const captureMetaRef = useRef({ time: null, location: null, address: null });
+  const isCapturingRef = useRef(false);
 
-  const { onPhotosCapture, category } = route.params || {};
+  const { category, caseId } = route.params || {};
 
   const [currentLocation, setCurrentLocation] = useState(null);
   const [currentAddress, setCurrentAddress] = useState("Fetching location...");
   const [currentTime, setCurrentTime] = useState(new Date());
   const [zoom, setZoom] = useState(0); // 👈 ZOOM
   const [previewUri, setPreviewUri] = useState(null);
+  const [isImageLoaded, setIsImageLoaded] = useState(false);
+  const [isLayoutReady, setIsLayoutReady] = useState(false);
   const [processing, setProcessing] = useState(false);
 
   /* ---------------- Permissions ---------------- */
@@ -100,9 +104,24 @@ export default function CameraGPSScreen({ navigation, route }) {
 
   /* ---------------- Capture & Burn Logic ---------------- */
   const takePicture = async () => {
-    if (processing) return;
-    setProcessing(true);
+    if (processing || isCapturingRef.current) { // Check both processing state and ref
+      console.log("Capture already in progress or processing, ignoring.");
+      return;
+    }
+    if (!cameraRef.current) {
+      Alert.alert("Error", "Camera not ready. Please wait.");
+      return;
+    }
+    setProcessing(true); // Show processing overlay immediately
+    console.log("[CameraGPSScreen] Starting picture capture...");
     try {
+      setIsImageLoaded(false);
+      setIsLayoutReady(false);
+      captureMetaRef.current = {
+        time: new Date(),
+        location: currentLocation,
+        address: currentAddress,
+      };
       const photo = await cameraRef.current.takePictureAsync({
         quality: 1,
         skipProcessing: true,
@@ -115,52 +134,65 @@ export default function CameraGPSScreen({ navigation, route }) {
   };
 
   useEffect(() => {
-    if (previewUri) {
+    if (previewUri && isImageLoaded && isLayoutReady && !isCapturingRef.current) {
       const processSnapshot = async () => {
         try {
-          // Wait for render - increased delay for stability
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+          isCapturingRef.current = true;
+          
+          // Small delay to ensure the native layer has finished rendering the image pixels
+          await new Promise((resolve) => setTimeout(resolve, 150));
 
-          const uri = await captureRef(snapshotRef, {
-            format: "jpg",
-            quality: 0.8,
-            result: "tmpfile",
-          });
+          const viewShot = snapshotRef.current;
+          if (!viewShot?.capture) throw new Error("Snapshot view is not ready");
+
+          const uri = await viewShot.capture();
 
           const finalImage = await ImageManipulator.manipulateAsync(
             uri,
-            [{ resize: { width: 1280 } }],
-            { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG }
+            [{ resize: { width: 1024 } }],
+            { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
           );
+
+          const meta = captureMetaRef.current || {};
+          const capturedTime = meta.time ? meta.time : new Date();
+          const capturedLocation = meta.location || null;
+          const capturedAddress = meta.address || "Address unavailable";
 
           const newPhoto = {
             uri: finalImage.uri,
             category: category || "general",
-            geotag: currentLocation
+            geotag: capturedLocation
               ? {
-                  latitude: currentLocation.coords.latitude,
-                  longitude: currentLocation.coords.longitude,
+                  latitude: capturedLocation.coords.latitude,
+                  longitude: capturedLocation.coords.longitude,
                 }
               : null,
-            timestamp: currentTime.toLocaleString(),
-            address: currentAddress,
+            timestamp: capturedTime.toLocaleString(),
+            address: capturedAddress,
           };
+          console.log("[CameraGPSScreen] Photo object prepared:", newPhoto);
 
-          if (onPhotosCapture) await onPhotosCapture([newPhoto]);
-          navigation.goBack();
+          // Return photos via serializable params (avoid functions in navigation state)
+          console.log("[CameraGPSScreen] Navigating back to CaseDetail...");
+          navigation.navigate({
+            name: "CaseDetail",
+            params: { caseId, newPhotos: [newPhoto] },
+            merge: true,
+          });
         } catch (e) {
           console.error("Snapshot failed:", e);
           // Fallback to raw photo if snapshot fails
           setPreviewUri(null);
-          setProcessing(false);
           Alert.alert("Error", "Failed to process photo overlay. Please try again.");
         } finally {
-          // setProcessing(false) is handled by navigation unmount or error reset
+          console.log("[CameraGPPScreen] Resetting processing states.");
+          isCapturingRef.current = false; // Always reset this ref
+          setProcessing(false); // Always hide processing overlay
         }
       };
       processSnapshot();
     }
-  }, [previewUri, category, currentLocation, currentTime, currentAddress, onPhotosCapture, navigation]);
+  }, [previewUri, isImageLoaded, isLayoutReady, category, caseId, navigation]);
 
   /* ---------------- UI helpers ---------------- */
   const toggleFlash = () => setFlash((f) => (f === "off" ? "on" : "off"));
@@ -239,15 +271,24 @@ export default function CameraGPSScreen({ navigation, route }) {
     );
 
   const renderOverlay = () => (
+    (() => {
+      const meta = previewUri ? captureMetaRef.current : null;
+      const overlayTime = meta?.time ? meta.time : currentTime;
+      const overlayLocation = meta?.location ? meta.location : currentLocation;
+      const overlayAddress = meta?.address ? meta.address : currentAddress;
+
+      return (
     <View style={styles.overlay}>
-      <Text style={styles.overlayText}>{currentTime.toLocaleString()}</Text>
+      <Text style={styles.overlayText}>{overlayTime.toLocaleString()}</Text>
       <Text style={styles.overlayText}>
-        {currentLocation
-          ? `${currentLocation.coords.latitude.toFixed(6)}, ${currentLocation.coords.longitude.toFixed(6)}`
+        {overlayLocation
+          ? `${overlayLocation.coords.latitude.toFixed(6)}, ${overlayLocation.coords.longitude.toFixed(6)}`
           : "GPS..."}
       </Text>
-      <Text style={styles.overlayText}>{currentAddress}</Text>
+      <Text style={styles.overlayText}>{overlayAddress}</Text>
     </View>
+      );
+    })()
   );
 
   const renderControls = () => (
@@ -290,14 +331,26 @@ export default function CameraGPSScreen({ navigation, route }) {
 
       {previewUri && (
         <View style={styles.fullScreenCapture}>
-          <View style={{ flex: 1 }} ref={snapshotRef} collapsable={false}>
-            <Image source={{ uri: previewUri }} style={{ flex: 1 }} />
+          <ViewShot
+            ref={snapshotRef}
+            style={{ flex: 1 }}
+            options={{ format: "jpg", quality: 0.7, result: "tmpfile" }}
+            onLayout={() => {
+              setIsLayoutReady(true);
+            }}
+          >
+            <Image source={{ uri: previewUri }} style={{ flex: 1 }} onLoad={() => {
+              console.log("[CameraGPSScreen] Image loaded into ViewShot.");
+              setIsImageLoaded(true);
+            }} />
             {renderOverlay()}
-          </View>
-          <View style={styles.processingOverlay}>
-            <ActivityIndicator size="large" color="#fff" />
-            <Text style={{ color: "white", marginTop: 10, fontWeight: "bold" }}>Processing...</Text>
-          </View>
+          </ViewShot>
+          {processing && ( // Only show processing overlay if processing is true
+            <View style={styles.processingOverlay}>
+              <ActivityIndicator size="large" color="#fff" />
+              <Text style={{ color: "white", marginTop: 10, fontWeight: "bold" }}>Processing...</Text>
+            </View>
+          )}
         </View>
       )}
     </View>
