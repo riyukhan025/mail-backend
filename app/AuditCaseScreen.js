@@ -1,8 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { encode as btoa } from "base-64";
 import Constants from "expo-constants";
+import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
-import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import * as MailComposer from "expo-mail-composer";
 import JSZip from "jszip";
@@ -603,7 +603,7 @@ export default function AuditCaseScreen({ navigation, route }) {
         await firebase.database().ref(`cases/${caseId}`).update({
             status: "completed",
             finalizedAt: Date.now(),
-            finalizedBy: user?.uid || "admin",
+      finalizedBy: user?.uid || user?.id || "admin",
         });
 
         // Record in Appwrite
@@ -617,7 +617,7 @@ export default function AuditCaseScreen({ navigation, route }) {
                     collectionId,
                     ID.unique(),
                     {
-                        subject: `Case Completed: ${caseData.matrixRefNo || caseData.RefNo || caseId}`,
+                        subject: `Case Completed: ${caseData.matrixRefNo || caseData.RefNo || caseId} | ${caseData.chkType || caseData.checkType || ''} | ${caseData.candidateName || ''} | ${caseData.company || caseData.client || ''}`,
                         recipient: selectedTo.join(", "),
                         RefNo: caseData.matrixRefNo || caseData.RefNo || caseId,
                         caseId: caseId,
@@ -645,7 +645,7 @@ export default function AuditCaseScreen({ navigation, route }) {
     setIsSending(true);
     setEmailModalVisible(false);
 
-    const subject = `Case Approved: ${caseData.matrixRefNo || caseData.RefNo || caseId || caseData.chekType}}`;
+    const subject = `Case Approved: ${caseData.matrixRefNo || caseData.RefNo || caseId} | ${caseData.checkType || ''} | ${caseData.candidateName || ''} | ${caseData.company || caseData.client || ''}`;
     const safeRef = (caseData.matrixRefNo || caseData.RefNo || caseId).replace(/[^a-zA-Z0-9-_]/g, '_');
 
     if (selectedTo.length === 0) {
@@ -864,25 +864,59 @@ Spacesolutions Team
     }
   };
 
-  const openManualUploadModal = () => {
-      setManualPhotos([]);
-      setManualUploadModalVisible(true);
-  };
+  const openManualUploadModal = async () => {
+    setManualPhotos([]);
+    
+    // If a report already exists, ask the user what to do
+    if (caseData.photosFolderLink) {
+        const message = "A combined PDF report already exists for this case. Do you want to proceed with a NEW upload (clears previous report) or keep the OLD one?";
+        
+        const startFresh = async () => {
+            const updates = {
+              photosFolderLink: null,
+              manualUpload: true,
+              manualPdfGenerated: false,
+              mergedAt: null,
+              filledForm: null
+            };
+            
+            // Optionally clear photos if starting truly fresh
+            if (window.confirm("Do you also want to DELETE all existing manual photos for this case?")) {
+              updates.photosFolder = null;
+            }
+
+            await firebase.database().ref(`cases/${caseId}`).update(updates);
+            setManualUploadModalVisible(true);
+        };
+
+        if (Platform.OS === 'web') {
+            if (window.confirm(message + "\n\nClick OK for NEW upload, Cancel to keep existing.")) {
+                await startFresh();
+            }
+        } else {
+            Alert.alert("Existing Report Found", message, [
+                { text: "Keep Old", style: "cancel" },
+                { text: "New Upload", style: "destructive", onPress: startFresh }
+            ]);
+        }
+    } else {
+        setManualUploadModalVisible(true);
+    }
+};
 
   const pickManualPhotos = async () => {
       try {
-          const mediaTypes = ImagePicker.MediaType 
-              ? ImagePicker.MediaType.Images 
-              : ImagePicker.MediaTypeOptions.Images;
-
-          const result = await ImagePicker.launchImageLibraryAsync({
-              mediaTypes: mediaTypes,
-              allowsMultipleSelection: true,
-              quality: 0.8,
-              base64: Platform.OS === 'web',
+          const result = await DocumentPicker.getDocumentAsync({
+              type: ['image/*', 'application/pdf'], // Allow both images and PDFs
+              multiple: true, // Standard for newer Expo DocumentPicker multi-select
+              allowsMultipleSelection: true, // For backward compatibility
+              copyToCacheDirectory: true,
           });
           if (!result.canceled) {
-              setManualPhotos(result.assets || [result]);
+              // DocumentPicker returns assets in result.assets
+              setManualPhotos(result.assets || []);
+          } else {
+              setManualPhotos([]);
           }
       } catch (err) {
           console.error("Pick Photos Error:", err);
@@ -898,51 +932,62 @@ Spacesolutions Team
       
       setIsUploadingManual(true);
       try {
-          const uploadedPhotos = [];
+          // Fetch existing manual photos first to append
+          const snapshot = await firebase.database().ref(`cases/${caseId}/photosFolder/manual`).once('value');
+          const existingManualPhotos = snapshot.val() || [];
+          
+          const newUploadedPhotos = [];
           const safeRef = (caseData.matrixRefNo || caseData.RefNo || caseId).replace(/[^a-zA-Z0-9-_]/g, '_');
 
           for (let i = 0; i < manualPhotos.length; i++) {
               const photo = manualPhotos[i];
               const formData = new FormData();
+              const fileName = photo.name || `manual_${Date.now()}_${i}${photo.mimeType === 'application/pdf' ? '.pdf' : '.jpg'}`;
+              const fileType = photo.mimeType || 'application/octet-stream';
+              const resourceType = fileType.startsWith('image/') ? 'image' : 'raw';
               
               if (Platform.OS === 'web') {
-                  if (photo.base64) {
-                      formData.append("file", `data:${photo.mimeType || 'image/jpeg'};base64,${photo.base64}`);
-                  } else {
-                      const res = await fetch(photo.uri);
-                      const blob = await res.blob();
-                      formData.append("file", blob);
-                  }
+                  const res = await fetch(photo.uri);
+                  const blob = await res.blob();
+                  // Ensure the blob has the correct name for Cloudinary to detect extension
+                  const fileToUpload = new File([blob], fileName, { type: fileType });
+                  formData.append("file", fileToUpload);
               } else {
                   formData.append("file", {
                       uri: photo.uri,
-                      type: "image/jpeg",
-                      name: `manual_${Date.now()}_${i}.jpg`,
+                      type: resourceType === 'image' ? 'image/jpeg' : 'application/pdf',
+                      name: fileName,
                   });
               }
 
               formData.append("upload_preset", UPLOAD_PRESET);
               formData.append("folder", `cases/${safeRef}`);
-
-              const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`;
+              
+              // Use specific endpoint based on resource type
+              const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/${resourceType}/upload`;
               const response = await fetch(uploadUrl, { method: "POST", body: formData });
               const data = await response.json();
               if (data.error) throw new Error(data.error.message);
               
               if (data.secure_url) {
-                  uploadedPhotos.push({
+                  newUploadedPhotos.push({
                       uri: data.secure_url,
                       category: 'manual',
-                      timestamp: new Date().toLocaleString()
+                      timestamp: new Date().toLocaleString(),
+                      name: fileName
                   });
               }
           }
 
+          // Merge old and new
+          const combinedManual = [...existingManualPhotos, ...newUploadedPhotos];
+
           const updates = {
-              status: "audit",
-              manualUpload: true,
-              completedAt: Date.now(),
-              photosFolder: { manual: uploadedPhotos } // Store in 'manual' category
+            status: "audit",
+            manualUpload: true,
+            manualPdfGenerated: false,
+            completedAt: Date.now(),
+            "photosFolder/manual": combinedManual
           };
 
           await firebase.database().ref(`cases/${caseId}`).update(updates);
@@ -1058,21 +1103,31 @@ Spacesolutions Team
               </View>
           )}
 
-          {/* --- NEW: Maintenance / Raw Photos View / CES View --- */}
-          {(caseData.maintenanceSubmission || (!caseData.photosFolderLink && caseData.photosFolder) || (isCES && caseData.photosFolder)) && (
+          {/* --- Maintenance / Raw Photos View / CES / Manual Upload Previews --- */}
+          {(caseData.maintenanceSubmission || (!caseData.photosFolderLink && caseData.photosFolder) || (isCES && caseData.photosFolder) || caseData.manualUpload) && (
              <View style={styles.maintenanceBox}>
-                 <Text style={styles.maintenanceHeader}>⚠️ {isCES ? "CES Audit Assets" : "Maintenance Submission"}</Text>
-                 <Text style={styles.maintenanceText}>Raw photos available. Download zip to audit.</Text>
+                 <Text style={styles.maintenanceHeader}>⚠️ {isCES ? "CES Audit Assets" : caseData.manualUpload ? "Manual Upload Assets" : "Maintenance Submission"}</Text>
+                 <Text style={styles.maintenanceText}>Assets available for preview. Download zip for full quality.</Text>
                  
                  {Object.entries(caseData.photosFolder || {}).map(([cat, photos]) => (
                      <View key={cat} style={{marginTop: 10}}>
                          <Text style={{fontWeight:'bold', fontSize:12, color:'#555', marginBottom:5}}>{cat.toUpperCase()}</Text>
                          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                             {Array.isArray(photos) && photos.map((p, i) => (
-                                 <TouchableOpacity key={i} onPress={() => setSelectedPhoto(p)}>
-                                     <Image source={{uri: p.uri}} style={styles.auditThumb} />
-                                 </TouchableOpacity>
-                             ))}
+                             {Array.isArray(photos) && photos.map((p, i) => {
+                                 const isPdf = p.uri?.toLowerCase().includes('.pdf') || p.name?.toLowerCase().endsWith('.pdf');
+                                 return (
+                                     <TouchableOpacity key={i} onPress={() => isPdf ? Linking.openURL(p.uri) : setSelectedPhoto(p)}>
+                                         {isPdf ? (
+                                             <View style={[styles.auditThumb, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#fce4ec' }]}>
+                                                 <Ionicons name="document-text" size={24} color="#d81b60" />
+                                                 <Text style={{fontSize: 8, color: '#d81b60', fontWeight: 'bold', marginTop: 2}}>PDF</Text>
+                                             </View>
+                                         ) : (
+                                             <Image source={{uri: p.uri}} style={styles.auditThumb} />
+                                         )}
+                                     </TouchableOpacity>
+                                 );
+                             })}
                          </ScrollView>
                      </View>
                  ))}

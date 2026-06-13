@@ -718,8 +718,8 @@ export default function AdminPanelScreen({ navigation }) {
 
   // Filtered cases
   const filteredCases = cases.filter((c) => {
-    // Exclude completed and closed cases from the main admin view
-    if (c.status === "completed" || c.status === "closed") return false;
+    // Exclude completed and closed cases from the main admin view UNLESS specifically filtering for them
+    if ((c.status === "completed" || c.status === "closed") && statusFilter !== "completed" && statusFilter !== "closed") return false;
 
     // Separate table views: normal vs digital verification
     const digital = isDigitalVerificationCase(c);
@@ -1424,7 +1424,7 @@ export default function AdminPanelScreen({ navigation }) {
     else Alert.alert("Upload Complete", `Added: ${addedCount}\nSkipped (Exact Duplicates): ${duplicateCount}`);
   };
 
-  const StatCard = ({ label, value, icon, color, change }) => {
+  const StatCard = ({ label, value, icon, color, change, onPress }) => {
     const [isPressed, setIsPressed] = useState(false);
     const [realtimeValue, setRealtimeValue] = useState(0);
     const glowAnim = useRef(new Animated.Value(0)).current;
@@ -1451,6 +1451,7 @@ export default function AdminPanelScreen({ navigation }) {
         activeOpacity={1}
         onPressIn={() => setIsPressed(true)}
         onPressOut={() => setIsPressed(false)}
+        onPress={onPress}
         style={[
           styles.statCardTouchable,
           isMobile ? { width: statCardWidth, minWidth: statCardWidth, flex: 0 } : null,
@@ -2346,15 +2347,15 @@ export default function AdminPanelScreen({ navigation }) {
             
             {/* 3️⃣ METRIC CARDS */}
             <View style={[styles.metricsGrid, isMobile && styles.metricsGridSingleLine]}>
-              <StatCard label={isMobile ? "TOTAL" : "TOTAL CASES"} value={assignedTL} icon="layers-outline" color={theme.primary} />
-              <StatCard label={isMobile ? "ASSIGN" : "ASSIGNED"} value={assignedFE} icon="person-outline" color={theme.warning} />
-              <StatCard label={isMobile ? "REVERT" : "REVERTED"} value={reverted} icon="arrow-undo-outline" color={theme.error} />
-              <StatCard label={isMobile ? "AUDIT" : "AUDIT"} value={audited} icon="eye-outline" color={theme.info} />
-              <StatCard label={isMobile ? "DONE" : "COMPLETED"} value={completed} icon="checkmark-circle-outline" color={theme.success} />
+              <StatCard label={isMobile ? "TOTAL" : "TOTAL CASES"} value={assignedTL} icon="layers-outline" color={theme.primary} onPress={() => setStatusFilter("")} />
+              <StatCard label={isMobile ? "ASSIGN" : "ASSIGNED"} value={assignedFE} icon="person-outline" color={theme.warning} onPress={() => setStatusFilter("assigned")} />
+              <StatCard label={isMobile ? "REVERT" : "REVERTED"} value={reverted} icon="arrow-undo-outline" color={theme.error} onPress={() => setStatusFilter("reverted")} />
+              <StatCard label={isMobile ? "AUDIT" : "AUDIT"} value={audited} icon="eye-outline" color={theme.info} onPress={() => setStatusFilter("audit")} />
+              <StatCard label={isMobile ? "DONE" : "COMPLETED"} value={completed} icon="checkmark-circle-outline" color={theme.success} onPress={() => setStatusFilter("completed")} />
             </View>
 
             {/* 5️⃣ DATA TABLE SECTION */}
-            <View style={[styles.sectionCard, isCompactMobile && styles.sectionCardMobile, { backgroundColor: theme.cardBg, borderColor: theme.border, marginTop: isCompactMobile ? 14 : 24, padding: 0, overflow: 'hidden', shadowColor: theme.primary, shadowOpacity: 0.1, shadowRadius: 20 }]}>
+            <View style={[styles.sectionCard, isCompactMobile && styles.sectionCardMobile, { backgroundColor: theme.cardBg, borderColor: theme.border, marginTop: isCompactMobile ? 14 : 20, padding: 0, overflow: 'hidden', shadowColor: theme.primary, shadowOpacity: 0.1, shadowRadius: 20 }]}>
                 <View style={[styles.sectionHeader, isCompactMobile && styles.sectionHeaderMobile, { padding: isCompactMobile ? 10 : 16, borderBottomWidth: 1, borderBottomColor: theme.border }]}>
                     <Text style={[styles.sectionTitle, isCompactMobile && styles.sectionTitleMobile, { color: theme.text }]}>
                       {showDigitalCases ? "Digital Verification Cases" : "All Cases"}
@@ -2418,6 +2419,7 @@ export default function AdminPanelScreen({ navigation }) {
                             <Picker.Item label="Awaiting Candidate" value="awaiting_candidate" color="#000" style={{fontSize: 12}} />
                             <Picker.Item label="Audit" value="audit" color="#000" style={{fontSize: 12}} />
                             <Picker.Item label="Reverted" value="reverted" color="#000" style={{fontSize: 12}} />
+                            <Picker.Item label="Completed" value="completed" color="#000" style={{fontSize: 12}} />
                             <Picker.Item label="Fired" value="fired" color="#000" style={{fontSize: 12}} />
                         </Picker>
                     </View>
@@ -2894,22 +2896,22 @@ const styles = StyleSheet.create({
   menuText: { fontSize: 15, fontWeight: "500" },
 
   // Page Header
-  pageHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 40, flexWrap: 'wrap', gap: 12 },
+  pageHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: IS_DESKTOP ? 10 : 40, flexWrap: 'wrap', gap: 12 },
   pageHeaderMobile: { marginBottom: 20, alignItems: 'flex-start' },
   pageStatsRowMobile: { width: '100%', justifyContent: 'space-between', gap: 8 },
-  pageTitle: { fontSize: 40, fontWeight: '900', fontStyle: 'italic', letterSpacing: -2 },
+  pageTitle: { fontSize: IS_DESKTOP ? 16 : 36, fontWeight: '900', fontStyle: 'italic', letterSpacing: -1 },
   pageTitleMobile: { fontSize: 28, letterSpacing: -1 },
-  pageSubtitleContainer: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 8 },
+  pageSubtitleContainer: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: IS_DESKTOP ? 2 : 8 },
   pageSubtitle: { color: '#94A3B8', fontSize: 10, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', letterSpacing: 6, textTransform: 'uppercase' },
-  headerStatLabel: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 3, opacity: 0.4, marginBottom: 6 },
-  headerStatValue: { fontSize: 32, fontWeight: '900', fontStyle: 'italic', letterSpacing: -1 },
+  headerStatLabel: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 3, opacity: 0.4, marginBottom: IS_DESKTOP ? 2 : 6 },
+  headerStatValue: { fontSize: IS_DESKTOP ? 18 : 32, fontWeight: '900', fontStyle: 'italic', letterSpacing: -1 },
 
   // Chart
   chartCard: { padding: 40, borderRadius: 40, borderWidth: 1, minHeight: 320, overflow: 'hidden', marginBottom: 40 },
-  chartCardMobile: { padding: 12, borderRadius: 18, minHeight: 280, marginBottom: 20 },
+  chartCardMobile: { padding: 12, borderRadius: 18, minHeight: 280, marginBottom: 16 },
 
   contentOverlay: {
-    position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, zIndex: 999,
+    position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, zIndex: 99,
     backgroundColor: 'transparent'
   },
 
@@ -2919,74 +2921,74 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 24,
-    paddingVertical: 10,
+    paddingHorizontal: IS_DESKTOP ? 16 : 20,
+    paddingVertical: IS_DESKTOP ? 2 : 10,
     borderBottomWidth: 1,
     flexWrap: 'wrap',
     rowGap: 10,
   },
   topBarMobile: { paddingHorizontal: 12, marginTop: Platform.OS === 'ios' ? 8 : 6 },
   topBarSearch: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     paddingHorizontal: 12,
-    height: 40,
+    height: 36,
     borderRadius: 12,
     flex: 1,
     minWidth: 140,
     maxWidth: 360,
   },
-  topBarSearchMobile: { width: '100%', maxWidth: '100%' },
+  topBarSearchMobile: { width: "100%", maxWidth: "100%", height: 32 },
   topActionsRowMobile: { width: '100%', marginHorizontal: 0, justifyContent: 'space-between', flexWrap: 'wrap' },
-  topActionButton: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, gap: 8 },
-  topActionButtonText: { fontSize: 10, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1.3 },
+  topActionButton: { flexDirection: "row", alignItems: "center", paddingHorizontal: IS_DESKTOP ? 8 : 10, paddingVertical: IS_DESKTOP ? 6 : 8, borderRadius: 10, gap: IS_DESKTOP ? 4 : 8 },
+  topActionButtonText: { fontSize: 10, fontWeight: "900", textTransform: "uppercase", letterSpacing: 1.3 },
   topActionButtonTextMobile: { letterSpacing: 0.6, fontSize: 10 },
   topBarActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   badge: { position: 'absolute', top: 8, right: 8, width: 6, height: 6, borderRadius: 3, borderWidth: 1, borderColor: '#020617' },
 
   // Metrics
   statCardTouchable: { flex: 1, minWidth: 180 },
-  metricsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 16, marginBottom: 24 },
-  metricsGridMobile: { gap: 10, marginBottom: 14, flexDirection: "row", flexWrap: "nowrap" },
-  metricsGridSingleLine: { gap: 6, marginBottom: 12, flexDirection: "row", flexWrap: "nowrap", justifyContent: "space-between" },
+  metricsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginBottom: IS_DESKTOP ? 4 : 16 },
+  metricsGridMobile: { gap: 10, marginBottom: 10, flexDirection: "row", flexWrap: "nowrap", paddingBottom: 10 }, 
+  metricsGridScrollable: { gap: 8, marginBottom: 8, flexDirection: "row", flexWrap: "nowrap", paddingBottom: 10 }, 
   metricsRowScroll: { gap: 10, paddingVertical: 4, paddingRight: 4, marginBottom: 14 },
   statCard: {
-    borderRadius: 32,
-    padding: 24,
+    borderRadius: IS_DESKTOP ? 16 : 32,
+    padding: IS_DESKTOP ? 8 : 24,
     borderWidth: 1,
     flex: 1,
-    minWidth: 180,
     shadowOpacity: 0.2,
     shadowRadius: 40,
     elevation: 12,
+    minWidth: 160, 
   },
-  statCardMobile: { borderRadius: 18, padding: 12, minWidth: 0 },
-  statCardLineMobile: { borderRadius: 12, padding: 8 },
-  statCardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 },
+  statCardMobile: { borderRadius: 18, padding: 8, minWidth: 105, flex: 0 }, 
+  statCardLineMobile: { borderRadius: 12, padding: 6, minWidth: 100, flex: 0 }, 
+  statCardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: IS_DESKTOP ? 6 : 12 },
   statCardHeaderMobile: { marginBottom: 4 },
   statIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 18,
+    width: IS_DESKTOP ? 28 : 48,
+    height: IS_DESKTOP ? 28 : 48,
+    borderRadius: IS_DESKTOP ? 10 : 18,
     borderWidth: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  statIconContainerMobile: { width: 24, height: 24, borderRadius: 8, borderWidth: 0.6 },
-  statValue: { fontSize: 24, fontWeight: '800' },
-  statValueMobile: { fontSize: 12, fontWeight: '800' },
-  statLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1.5 },
+  statIconContainerMobile: { width: 22, height: 22, borderRadius: 8, borderWidth: 0.6 },
+  statValue: { fontSize: IS_DESKTOP ? 14 : 22, fontWeight: '800' },
+  statValueMobile: { fontSize: 12, fontWeight: "800" },
+  statLabel: { fontSize: IS_DESKTOP ? 9 : 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1.5 },
   statLabelMobile: { fontSize: 8, letterSpacing: 0.2 },
   
   // Table Section
-  sectionCard: { borderRadius: 48, borderWidth: 1, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
-  sectionCardMobile: { borderRadius: 18 },
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  sectionCard: { borderRadius: IS_DESKTOP ? 24 : 48, borderWidth: 1, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
+  sectionCardMobile: { borderRadius: 18, marginTop: IS_DESKTOP ? 4 : 10 },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: IS_DESKTOP ? 4 : 16 },
   sectionHeaderMobile: { marginBottom: 8 },
-  sectionTitle: { fontSize: 16, fontWeight: '700' },
+  sectionTitle: { fontSize: IS_DESKTOP ? 14 : 16, fontWeight: '700' },
   sectionTitleMobile: { fontSize: 14 },
   filterBtnSmall: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, borderWidth: 1 },
-  tableToolbar: { flexDirection: 'row', padding: 16, gap: 12, flexWrap: 'wrap' },
+  tableToolbar: { flexDirection: 'row', padding: IS_DESKTOP ? 8 : 16, gap: IS_DESKTOP ? 8 : 12, flexWrap: 'wrap' },
   tableToolbarMobile: { padding: 10, gap: 8, flexWrap: 'nowrap', alignItems: 'center' },
   betaToolbar: { marginBottom: 10, padding: 10, backgroundColor: "rgba(100,0,200,0.2)", borderRadius: 8 },
   betaLabel: { color: "#c471ed", fontSize: 10, fontWeight: "bold", marginBottom: 5 },
