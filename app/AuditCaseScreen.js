@@ -100,7 +100,11 @@ export default function AuditCaseScreen({ navigation, route }) {
               "ananth.n@matrixbsindia.com",
               "prasanna.arivazhagan@matrixbsindia.com",
               "spacesolution2017@gmail.com",
-              "chennaioutstation@matrixbsindia.com"
+              "chennaioutstation@matrixbsindia.com",
+              "resi3@matrixbsindia.com",
+              "dharani.e@matrixbsindia.com",
+              "sathyapriya.i@matrixbsindia.com",
+              "monisha.v@matrixbsindia.com"
           ];
       } else if (clientName.includes("dhi")) {
           emails = [
@@ -645,7 +649,7 @@ export default function AuditCaseScreen({ navigation, route }) {
     setIsSending(true);
     setEmailModalVisible(false);
 
-    const subject = `Case Approved: ${caseData.matrixRefNo || caseData.RefNo || caseId} | ${caseData.checkType || ''} | ${caseData.candidateName || ''} | ${caseData.company || caseData.client || ''}`;
+    const subject = `Case Approved: ${caseData.matrixRefNo || caseData.RefNo || caseId} | ${caseData.checkType || caseData.chkType || ''} | ${caseData.candidateName || ''} | ${caseData.company || caseData.client || ''}`;
     const safeRef = (caseData.matrixRefNo || caseData.RefNo || caseId).replace(/[^a-zA-Z0-9-_]/g, '_');
 
     if (selectedTo.length === 0) {
@@ -664,7 +668,7 @@ Case Details:
 --------------------
 Reference No: ${caseData.matrixRefNo || caseData.RefNo || caseId}
 Candidate Name: ${caseData.candidateName || 'N/A'}
-Check Type: ${caseData.chekType || 'N/A'}
+Check Type: ${caseData.checkType || caseData.chkType || 'N/A'}
 City: ${caseData.city || 'N/A'} 
 
 Thank you,

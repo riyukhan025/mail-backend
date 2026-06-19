@@ -14,6 +14,7 @@ import {
   Alert,
   Animated,
   Dimensions,
+  Easing,
   Image,
   Linking,
   Modal,
@@ -74,53 +75,139 @@ const BackgroundDecorations = ({ theme }) => {
   const orbAnim1 = useRef(new Animated.Value(0)).current;
   const orbAnim2 = useRef(new Animated.Value(0)).current;
   const driftAnim = useRef(new Animated.Value(0)).current;
+  const scanAnim = useRef(new Animated.Value(0)).current;
+  const pulseAnim = useRef(new Animated.Value(0.4)).current;
 
   useEffect(() => {
     Animated.loop(
       Animated.sequence([
-        Animated.timing(orbAnim1, { toValue: 1, duration: 4000, useNativeDriver: true }),
-        Animated.timing(orbAnim1, { toValue: 0, duration: 4000, useNativeDriver: true })
+        Animated.timing(orbAnim1, { toValue: 1, duration: 6000, useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(orbAnim1, { toValue: 0, duration: 6000, useNativeDriver: Platform.OS !== 'web' })
       ])
     ).start();
     Animated.loop(
       Animated.sequence([
-        Animated.timing(orbAnim2, { toValue: 1, duration: 5000, useNativeDriver: true }),
-        Animated.timing(orbAnim2, { toValue: 0, duration: 5000, useNativeDriver: true })
+        Animated.timing(orbAnim2, { toValue: 1, duration: 8000, useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(orbAnim2, { toValue: 0, duration: 8000, useNativeDriver: Platform.OS !== 'web' })
       ])
     ).start();
     Animated.loop(
-      Animated.timing(driftAnim, {
-        toValue: 1,
-        duration: 18000,
-        useNativeDriver: true
-      })
+      Animated.timing(driftAnim, { toValue: 1, duration: 30000, useNativeDriver: Platform.OS !== 'web' })
+    ).start();
+    Animated.loop(
+      Animated.timing(scanAnim, { toValue: 1, duration: 8000, easing: Easing.linear, useNativeDriver: Platform.OS !== 'web' })
+    ).start();
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1, duration: 2000, useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(pulseAnim, { toValue: 0.4, duration: 2000, useNativeDriver: Platform.OS !== 'web' })
+      ])
     ).start();
   }, []);
 
-  const driftX = driftAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, 24]
-  });
+  const driftX = driftAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 40] });
+  const scanY = scanAnim.interpolate({ inputRange: [0, 1], outputRange: [-200, SCREEN_HEIGHT + 200] });
+
+  const dataFragments = ["0x4F7DFF", "SYS_UP", "HUD_V6", "AUTH_OK", "PORT_80", "TCP_IP", "B_44", "CMD_ROOT"];
 
   return (
     <View style={[StyleSheet.absoluteFill, { zIndex: 0, pointerEvents: "none" }]}>
       <View style={styles.glow1} />
       <View style={styles.glow2} />
       <View style={styles.glow3} />
+
+      {/* Nebula Clouds */}
+      <View style={[styles.nebula, { top: '15%', left: '5%', backgroundColor: theme.primary + '10' }]} />
+      <View style={[styles.nebula, { bottom: '10%', right: '10%', backgroundColor: theme.info + '08' }]} />
+
+      {/* Perspective Grid */}
+      <View style={styles.perspectiveGridContainer}>
+        <View style={[styles.perspectiveGrid, { borderColor: theme.primary + '15' }]} />
+      </View>
+
       <Animated.View style={[styles.spaceGrid, { transform: [{ translateX: driftX }] }]} />
-      {Array.from({ length: 44 }).map((_, i) => (
-        <View
-          key={`star-${i}`}
+      
+      {/* Active Scanline */}
+      <Animated.View 
+        style={[
+          styles.scanline, 
+          { 
+            backgroundColor: theme.primary + '20', 
+            transform: [{ translateY: scanY }],
+            shadowColor: theme.primary,
+            shadowRadius: 10,
+            shadowOpacity: 0.5
+          }
+        ]} 
+      />
+
+      {/* Backend Data HUD Overlay */}
+      {dataFragments.map((txt, i) => (
+        <Text 
+          key={`data-${i}`} 
           style={[
-            styles.starPoint,
-            {
-              top: `${(i * 19) % 100}%`,
-              left: `${(i * 37) % 100}%`,
-              opacity: 0.16 + ((i % 6) * 0.1),
-            },
+            styles.hudDataText, 
+            { 
+              top: `${(i * 13) % 95}%`, 
+              left: i % 2 === 0 ? '2%' : '90%',
+              color: theme.primary,
+              opacity: 0.15
+            }
           ]}
-        />
+        >
+          {txt}
+        </Text>
       ))}
+
+      {/* Enhanced Star Field & Galaxies */}
+      {Array.from({ length: 150 }).map((_, i) => {
+        const isGalaxy = i % 30 === 0;
+        const isTwinkle = i % 7 === 0;
+        const isSmallDot = i % 2 === 0; 
+        const size = isGalaxy ? 8 : (isSmallDot ? 0.8 : (i % 3 === 0 ? 1.5 : 2.5));
+        const color = i % 7 === 0 ? theme.primary : (i % 11 === 0 ? theme.info : '#cbd5e1');
+
+        if (isTwinkle && !isGalaxy) {
+          return (
+            <Animated.View
+              key={`star-${i}`}
+              style={[
+                styles.starPoint,
+                {
+                  top: `${(i * 23.3) % 100}%`,
+                  left: `${(i * 17.7) % 100}%`,
+                  width: size,
+                  height: size,
+                  backgroundColor: color,
+                  opacity: pulseAnim,
+                },
+              ]}
+            />
+          );
+        }
+
+        return (
+          <View
+            key={`star-${i}`}
+            style={[
+              styles.starPoint,
+              {
+                top: `${(i * 19.3) % 100}%`,
+                left: `${(i * 31.7) % 100}%`,
+                width: size,
+                height: size,
+                borderRadius: size / 2,
+                opacity: isGalaxy ? 0.2 : (isSmallDot ? 0.1 : 0.15 + ((i % 5) * 0.1)),
+                backgroundColor: color,
+                shadowColor: color,
+                shadowRadius: isGalaxy ? 8 : (i % 13 === 0 ? 3 : 0),
+                shadowOpacity: isGalaxy ? 0.6 : 0.4,
+                transform: isGalaxy ? [{ scaleX: 2.5 }, { rotate: '35deg' }] : [],
+              },
+            ]}
+          />
+        );
+      })}
       {/* Threads */}
       <View style={{ position: 'absolute', top: '-20%', left: '10%', width: 1, height: 800, backgroundColor: theme.primary + '1A', transform: [{ rotate: '45deg' }] }} />
       <View style={{ position: 'absolute', top: '20%', left: '80%', width: 1, height: 1000, backgroundColor: theme.primary + '1A', transform: [{ rotate: '-30deg' }] }} />
@@ -149,12 +236,12 @@ const BlinkingDot = ({ color }) => {
     Animated.loop(
       Animated.parallel([
         Animated.sequence([
-          Animated.timing(opacity, { toValue: 1, duration: 800, useNativeDriver: true }),
-          Animated.timing(opacity, { toValue: 0.3, duration: 800, useNativeDriver: true })
+          Animated.timing(opacity, { toValue: 1, duration: 800, useNativeDriver: Platform.OS !== 'web' }),
+          Animated.timing(opacity, { toValue: 0.3, duration: 800, useNativeDriver: Platform.OS !== 'web' })
         ]),
         Animated.sequence([
-          Animated.timing(scale, { toValue: 1.2, duration: 800, useNativeDriver: true }),
-          Animated.timing(scale, { toValue: 1, duration: 800, useNativeDriver: true })
+          Animated.timing(scale, { toValue: 1.2, duration: 800, useNativeDriver: Platform.OS !== 'web' }),
+          Animated.timing(scale, { toValue: 1, duration: 800, useNativeDriver: Platform.OS !== 'web' })
         ])
       ])
     ).start();
@@ -237,8 +324,8 @@ export default function AdminPanelScreen({ navigation }) {
   useEffect(() => {
     const anim = Animated.loop(
       Animated.sequence([
-        Animated.timing(awaitingPulse, { toValue: 1, duration: 900, useNativeDriver: true }),
-        Animated.timing(awaitingPulse, { toValue: 0, duration: 900, useNativeDriver: true }),
+        Animated.timing(awaitingPulse, { toValue: 1, duration: 900, useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(awaitingPulse, { toValue: 0, duration: 900, useNativeDriver: Platform.OS !== 'web' }),
       ])
     );
     anim.start();
@@ -263,9 +350,9 @@ export default function AdminPanelScreen({ navigation }) {
     setToast({ message, type });
     toastAnim.stopAnimation();
     toastAnim.setValue(0);
-    Animated.timing(toastAnim, { toValue: 1, duration: 220, useNativeDriver: true }).start();
+    Animated.timing(toastAnim, { toValue: 1, duration: 220, useNativeDriver: Platform.OS !== 'web' }).start();
     toastTimer.current = setTimeout(() => {
-      Animated.timing(toastAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start(({ finished }) => {
+      Animated.timing(toastAnim, { toValue: 0, duration: 200, useNativeDriver: Platform.OS !== 'web' }).start(({ finished }) => {
         if (finished) setToast(null);
       });
     }, durationMs);
@@ -733,7 +820,7 @@ export default function AdminPanelScreen({ navigation }) {
     const matchesStatus = statusFilter ? c.status === statusFilter : true;
     const matchesRefNo = refNoFilter ? c.matrixRefNo?.includes(refNoFilter) : true;
     const matchesVerification = verificationFilter
-      ? c.checkType?.toUpperCase() === verificationFilter.toUpperCase()
+      ? (c.checkType || c.chkType || "").toUpperCase() === verificationFilter.toUpperCase()
       : true;
     const matchesCity = cityFilter ? (c.city || "").toLowerCase() === cityFilter.toLowerCase() : true;
     let matchesDate = true;
@@ -772,8 +859,8 @@ export default function AdminPanelScreen({ navigation }) {
       else if (key === "ReferenceNo") val = c.matrixRefNo;
       else if (key === "candidateName") val = c.candidateName;
       else if (key === "gmail") val = c.candidateEmail;
-      else if (key === "checkType") val = c.checkType;
-      else if (key === "chkType") val = c.chkType;
+      else if (key === "checkType") val = c.checkType || c.chkType;
+      else if (key === "chkType") val = c.chkType || c.checkType;
       else if (key === "company") val = c.company;
       else if (key === "address") val = c.address;
       else if (key === "city") val = c.city;
@@ -1600,7 +1687,7 @@ export default function AdminPanelScreen({ navigation }) {
               value = "Spacesolutions";
               break;
             case "checkType":
-              value = item.checkType || "-";
+              value = item.checkType || item.chkType || "-";
               break;
             case "company":
               value = item.company || "-";
@@ -1609,7 +1696,7 @@ export default function AdminPanelScreen({ navigation }) {
               value = item.address || "-";
               break;
             case "chkType":
-              value = item.chkType || "-";
+              value = item.chkType || item.checkType || "-";
               break;
             case "city":
               value = item.city || "-";
@@ -2400,7 +2487,7 @@ export default function AdminPanelScreen({ navigation }) {
                             {cityFilter || "City: All"}
                           </Text>
                         )}
-                        <Picker key={isLightTheme ? 'light-city' : 'dark-city'} selectedValue={cityFilter} onValueChange={setCityFilter} style={[styles.picker, { color: Platform.OS === "android" ? "transparent" : theme.text }]} dropdownIconColor={theme.text} useNativeAndroidPickerStyle={false}>
+                        <Picker key={isLightTheme ? 'light-city' : 'dark-city'} selectedValue={cityFilter} onValueChange={setCityFilter} style={[styles.picker, { color: Platform.OS === "android" ? "transparent" : theme.text }]} dropdownIconColor={theme.text} {...(Platform.OS === 'android' ? { useNativeAndroidPickerStyle: false } : {})}>
                             <Picker.Item label="City: All" value="" color="#000" style={{fontSize: 12}} />
                             {uniqueCities.map(city => (
                                 <Picker.Item key={city} label={city} value={city} color="#000" style={{fontSize: 12}} />
@@ -2413,7 +2500,7 @@ export default function AdminPanelScreen({ navigation }) {
                             {statusFilter ? `Status: ${statusFilter}` : "Status: All"}
                           </Text>
                         )}
-                        <Picker key={isLightTheme ? 'light-status' : 'dark-status'} selectedValue={statusFilter} onValueChange={setStatusFilter} style={[styles.picker, { color: Platform.OS === "android" ? "transparent" : theme.text }]} dropdownIconColor={theme.text} useNativeAndroidPickerStyle={false}>
+                        <Picker key={isLightTheme ? 'light-status' : 'dark-status'} selectedValue={statusFilter} onValueChange={setStatusFilter} style={[styles.picker, { color: Platform.OS === "android" ? "transparent" : theme.text }]} dropdownIconColor={theme.text} {...(Platform.OS === 'android' ? { useNativeAndroidPickerStyle: false } : {})}>
                             <Picker.Item label="Status: All" value="" color="#000" style={{fontSize: 12}} />
                             <Picker.Item label="Assigned" value="assigned" color="#000" style={{fontSize: 12}} />
                             <Picker.Item label="Awaiting Candidate" value="awaiting_candidate" color="#000" style={{fontSize: 12}} />
@@ -2846,6 +2933,10 @@ const styles = StyleSheet.create({
   glow1: { position: 'absolute', top: '-20%', left: '-10%', width: 1000, height: 1000, borderRadius: 500, backgroundColor: 'rgba(34, 211, 238, 0.08)', opacity: 0.7 },
   glow2: { position: 'absolute', bottom: '-10%', right: '-10%', width: 800, height: 800, borderRadius: 400, backgroundColor: 'rgba(59, 130, 246, 0.16)', opacity: 0.7 },
   glow3: { position: 'absolute', top: '30%', left: '28%', width: 600, height: 600, borderRadius: 300, backgroundColor: 'rgba(16, 185, 129, 0.06)', opacity: 0.45 },
+  nebula: { position: 'absolute', width: 400, height: 400, borderRadius: 200, filter: Platform.OS === 'web' ? 'blur(80px)' : undefined, opacity: 0.4 },
+  perspectiveGridContainer: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  perspectiveGrid: { width: '120%', height: '120%', borderTopWidth: 1, borderBottomWidth: 1, borderLeftWidth: 1, borderRightWidth: 1, transform: [{ perspective: 1000 }, { rotateX: '60deg' }], opacity: 0.1 },
+  scanline: { position: 'absolute', left: 0, right: 0, height: 2 },
   spaceGrid: {
     ...StyleSheet.absoluteFillObject,
     borderTopWidth: 1,
@@ -2858,6 +2949,7 @@ const styles = StyleSheet.create({
     height: 2,
     borderRadius: 1,
     backgroundColor: '#dbeafe',
+    zIndex: 1,
   },
   cyberCorner: { position: 'absolute', width: 15, height: 15, pointerEvents: 'none' },
   cyberCornerTopLeft: { top: 0, left: 0, borderTopWidth: 2, borderLeftWidth: 2 },
@@ -3023,6 +3115,7 @@ const styles = StyleSheet.create({
   assigneeAvatarText: { fontSize: 10, fontWeight: 'bold' },
 
   statusPill: { borderRadius: 20, paddingVertical: 4, paddingHorizontal: 10, borderWidth: 1, maxWidth: "100%", overflow: "hidden", alignSelf: "flex-start" },
+  hudDataText: { position: 'absolute', fontSize: 8, fontWeight: '900', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
   statusText: { fontSize: 10, fontWeight: '700', textAlign: 'center', textTransform: 'uppercase' },
 
   // Footer
