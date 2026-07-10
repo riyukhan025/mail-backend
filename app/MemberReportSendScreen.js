@@ -1,20 +1,20 @@
 import { Ionicons } from "@expo/vector-icons";
+import * as FileSystem from "expo-file-system/legacy";
 import { LinearGradient } from "expo-linear-gradient";
+import * as MailComposer from "expo-mail-composer";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  Image,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    Image,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
-import * as FileSystem from "expo-file-system/legacy";
-import * as MailComposer from "expo-mail-composer";
 import firebase from "../firebase";
 import { buildMemberReportPdfBytes, uint8ToBase64Safe } from "./reports/memberReportPdf";
 
@@ -35,6 +35,17 @@ function uiAlert(title, message) {
     return;
   }
   Alert.alert(title, message);
+}
+
+function hasCompletedCase(user, cases) {
+  const uid = String(user?.id || user?.uid || "").trim();
+  if (!uid) return false;
+
+  return cases.some((c) => {
+    const assignedTo = String(c?.assignedTo || c?.assigneeId || c?.userId || "").trim();
+    const status = String(c?.status || "").toLowerCase();
+    return assignedTo === uid && ["completed", "closed", "verified", "done"].includes(status);
+  });
 }
 
 export default function MemberReportSendScreen({ navigation, route }) {
@@ -132,6 +143,7 @@ export default function MemberReportSendScreen({ navigation, route }) {
   const resolveMembersToSend = () => {
     if (bulk) {
       const list = users
+        .filter((u) => hasCompletedCase(u, cases))
         .map((u) => ({ ...u, email: safeEmail(u?.email) }))
         .filter((u) => u.email);
       list.sort((a, b) =>
@@ -141,7 +153,7 @@ export default function MemberReportSendScreen({ navigation, route }) {
     }
     if (!member) return [];
     const email = safeEmail(member?.email);
-    if (!email) return [];
+    if (!email || !hasCompletedCase(member, cases)) return [];
     return [{ ...member, email }];
   };
 
@@ -330,10 +342,10 @@ export default function MemberReportSendScreen({ navigation, route }) {
     }
   };
 
-  const headerTitle = bulk ? "Send to all members" : member ? `Send to ${label(member)}` : "Send member report";
+  const headerTitle = bulk ? "Send to eligible members" : member ? `Send to ${label(member)}` : "Send member report";
   const hint = bulk
-    ? "Opens 1 separate email per member (reads `users/<uid>/email`)."
-    : "Opens an email draft to the member email (`users/<uid>/email`).";
+    ? "Opens 1 separate email per eligible member with at least one completed case."
+    : "Opens an email draft to the member email when that member has completed at least one case.";
 
   return (
     <LinearGradient colors={["#05080f", "#090d16", "#05080f"]} style={styles.screen}>

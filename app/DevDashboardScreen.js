@@ -24,6 +24,7 @@ import * as XLSX from "xlsx";
 import firebase from "../firebase";
 import { APPWRITE_CONFIG, client, databases, Query } from "./appwrite";
 import { AuthContext } from "./AuthContext";
+import CustomReportBuilderScreen from "./CustomReportBuilderScreen";
 import DevRewardsScreen from "./DevRewardsScreen";
 import MemberReportsScreen from "./MemberReportsScreen";
 import MonthEndReportScreen from "./MonthEndReportScreen";
@@ -81,6 +82,7 @@ const TABS = [
   { id: "firebase", label: "Firebase DB", icon: "server-outline" },
   { id: "monthly_firebase_clearance", label: "Monthly Firebase Clearance", icon: "trash-bin-outline" },
   { id: "month_end_report", label: "Month End Report", icon: "document-text-outline" },
+  { id: "custom_report_builder", label: "Custom Report Builder", icon: "document-attach-outline" },
   { id: "member_reports", label: "Member Reports", icon: "people-outline" },
   { id: "rewards", label: "Manage Rewards", icon: "gift-outline" },
   { id: "cloudinary", label: "Cloudinary", icon: "cloud-circle-outline" },
@@ -122,6 +124,11 @@ const notifyListeners = () => {
   }, 0);
 };
 
+const isAppwritePausedError = (error) => {
+  const message = error?.message || error?.response?.message || "";
+  return /project is paused|paused due to inactivity|403/i.test(message);
+};
+
 // Patch Console to capture real logs
 if (!global.isConsolePatched) {
   const originalConsole = { log: console.log, info: console.info, warn: console.warn, error: console.error, debug: console.debug };
@@ -135,7 +142,11 @@ if (!global.isConsolePatched) {
         .join(" ");
 
       // Filter out noisy Appwrite Realtime logs
-      if (message.includes("Realtime got disconnected") || message.includes("Reconnect will be attempted")) return;
+      if (
+        message.includes("Realtime got disconnected") ||
+        message.includes("Reconnect will be attempted") ||
+        message.includes("Project is paused due to inactivity")
+      ) return;
       // Filter recurring React/Web warnings from the live log buffer
       if (
         message.includes("Invalid DOM property `transform-origin`") ||
@@ -480,6 +491,8 @@ export default function DevDashboardScreen({ navigation }) {
         return <MonthlyFirebaseClearanceTab canManage={user?.role === "admin" || user?.role === "dev"} cases={cases} />;
       case "month_end_report":
         return <MonthEndReportScreen embedded navigation={navigation} cases={cases} users={users} />;
+      case "custom_report_builder":
+        return <CustomReportBuilderScreen />;
       case "member_reports":
         return <MemberReportsScreen navigation={navigation} />;
       case "rewards":
@@ -1758,11 +1771,13 @@ function CloudinaryTab() {
 function TicketsTab() {
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [serviceMessage, setServiceMessage] = useState("");
   const [commentMap, setCommentMap] = useState({});
   const [sendingMap, setSendingMap] = useState({});
 
   const fetchTickets = async () => {
     setLoading(true);
+    setServiceMessage("");
     try {
       const response = await databases.listDocuments(
         APPWRITE_CONFIG.databaseId,
@@ -1779,7 +1794,12 @@ function TicketsTab() {
         return next;
       });
     } catch (error) {
-      console.error("Error fetching tickets:", error);
+      if (isAppwritePausedError(error)) {
+        setServiceMessage("Appwrite is currently paused. Restore the project in the Appwrite console to resume ticket loading.");
+      } else {
+        console.error("Error fetching tickets:", error);
+        setServiceMessage(error?.message || "Unable to load tickets right now.");
+      }
     } finally {
       setLoading(false);
     }
@@ -1843,6 +1863,11 @@ function TicketsTab() {
           <Ionicons name="refresh" size={20} color="#8e24aa" />
         </TouchableOpacity>
       </View>
+      {serviceMessage ? (
+        <View style={{ marginHorizontal: 16, marginTop: 12, padding: 12, borderRadius: 10, backgroundColor: "#2d1b69" }}>
+          <Text style={{ color: "#f5f3ff", fontSize: 13 }}>{serviceMessage}</Text>
+        </View>
+      ) : null}
       <FlatList
         data={tickets}
         keyExtractor={item => item.$id}

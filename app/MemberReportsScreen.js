@@ -30,6 +30,17 @@ function uiAlert(title, message) {
   Alert.alert(title, message);
 }
 
+function hasCompletedCase(user, cases) {
+  const uid = String(user?.id || user?.uid || "").trim();
+  if (!uid) return false;
+
+  return cases.some((c) => {
+    const assignedTo = String(c?.assignedTo || c?.assigneeId || c?.userId || "").trim();
+    const status = String(c?.status || "").toLowerCase();
+    return assignedTo === uid && ["completed", "closed", "verified", "done"].includes(status);
+  });
+}
+
 async function uiConfirm(title, message) {
   if (Platform.OS === "web" && typeof window !== "undefined") {
     return window.confirm(`${title}\n\n${message}`);
@@ -44,36 +55,53 @@ async function uiConfirm(title, message) {
 
 export default function MemberReportsScreen({ navigation }) {
   const [users, setUsers] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [cases, setCases] = useState([]);
+  const [loadingUsers, setLoadingUsers] = useState(true);
+  const [loadingCases, setLoadingCases] = useState(true);
   const [query, setQuery] = useState("");
 
   useEffect(() => {
-    const ref = firebase.database().ref("users");
-    const listener = ref.on("value", (snapshot) => {
+    const usersRef = firebase.database().ref("users");
+    const usersListener = usersRef.on("value", (snapshot) => {
       const data = snapshot.val() || {};
       const list = Object.keys(data).map((key) => ({ id: key, ...data[key] }));
       list.sort((a, b) =>
         userLabel(a).localeCompare(userLabel(b), undefined, { sensitivity: "base", ignorePunctuation: true })
       );
       setUsers(list);
-      setLoading(false);
+      setLoadingUsers(false);
     });
-    return () => ref.off("value", listener);
+
+    const casesRef = firebase.database().ref("cases");
+    const casesListener = casesRef.on("value", (snapshot) => {
+      const data = snapshot.val() || {};
+      const list = Object.keys(data).map((key) => ({ id: key, ...data[key] }));
+      setCases(list);
+      setLoadingCases(false);
+    });
+
+    return () => {
+      usersRef.off("value", usersListener);
+      casesRef.off("value", casesListener);
+    };
   }, []);
+
+  const eligibleUsers = useMemo(() => users.filter((u) => hasCompletedCase(u, cases)), [users, cases]);
 
   const filtered = useMemo(() => {
     const q = norm(query);
-    if (!q) return users;
-    return users.filter((u) => {
+    const source = eligibleUsers;
+    if (!q) return source;
+    return source.filter((u) => {
       const hay = `${userLabel(u)} ${u?.email || ""} ${u?.phone || ""} ${u?.role || ""}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [query, users]);
+  }, [query, eligibleUsers]);
 
   const sendAll = async () => {
     const ok = await uiConfirm(
       "Send to all?",
-      "This will generate an individual report for each member and open one separate email draft per member. Continue?"
+      "This will generate an individual report for each eligible member who has at least one completed case and open one separate email draft per member. Continue?"
     );
     if (!ok) return;
     if (!navigation?.navigate) {
@@ -130,7 +158,7 @@ export default function MemberReportsScreen({ navigation }) {
         />
       </View>
 
-      {loading ? (
+      {loadingUsers || loadingCases ? (
         <View style={styles.center}>
           <ActivityIndicator color="#93c5fd" />
           <Text style={styles.centerText}>Loading members…</Text>
@@ -143,7 +171,7 @@ export default function MemberReportsScreen({ navigation }) {
           contentContainerStyle={{ paddingBottom: 24 }}
           ListEmptyComponent={
             <View style={styles.center}>
-              <Text style={styles.centerText}>No members found.</Text>
+              <Text style={styles.centerText}>No eligible members with completed cases found.</Text>
             </View>
           }
         />
