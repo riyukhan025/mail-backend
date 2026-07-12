@@ -4,18 +4,18 @@ import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import { useContext, useEffect, useRef, useState } from "react";
 import {
-    Alert,
-    FlatList,
-    Image,
-    Linking,
-    Modal,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  Alert,
+  FlatList,
+  Image,
+  Linking,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from "react-native";
 import firebase from "../firebase";
 import { AuthContext } from "./AuthContext";
@@ -326,13 +326,13 @@ export default function Dashboard({ navigation }) {
   };
 
   const computeMemberStatus = (caseItem) => {
-    return caseItem.status === "assigned" || caseItem.status === "audit"
+    return caseItem.status === "assigned" || caseItem.status === "open"
       ? "open"
       : "closed";
   };
 
   const filteredCases = cases.filter((c) => {
-    const isClosed = c.status === 'completed' || c.status === 'closed';
+    const isClosed = c.status === 'completed' || c.status === 'closed' || c.status === 'audit';
     
     const showClosed = activeFilters.some(f => f.field === 'status' && f.value === 'closed');
     const showCompleted = activeFilters.some(f => f.field === 'completedAt');
@@ -400,8 +400,8 @@ export default function Dashboard({ navigation }) {
   });
 
   const totalCasesCount = cases.length;
-  const completedCasesCount = cases.filter(c => c.status === 'completed' || c.status === 'closed').length;
-  const pendingCasesCount = cases.filter(c => c.status === 'assigned' || c.status === 'audit' || c.status === 'open').length;
+  const completedCasesCount = cases.filter(c => c.status === 'completed' || c.status === 'closed' || c.status === 'audit').length;
+  const pendingCasesCount = cases.filter(c => c.status === 'assigned' || c.status === 'open').length;
 
   if (loading) return null;
 

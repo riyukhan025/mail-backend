@@ -1602,7 +1602,7 @@ export default function AdminPanelScreen({ navigation }) {
       // Digital table has an extra Gmail column; normal table hides it.
       if (!showDigitalCases) hidden.push("gmail", "tracking");
 
-      if (assignMode) hidden.push('tmName', 'checkType', 'chkType', 'state', 'assigneeRole', 'completedAt', 'comments');
+      if (assignMode) hidden.push('tmName', 'checkType', 'chkType', 'state', 'assigneeRole', 'completedAt', 'comments', 'company', 'contactNumber');
 
       const visible = {};
       Object.keys(columnWidths).forEach(key => {

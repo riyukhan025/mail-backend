@@ -5,6 +5,7 @@ import * as Location from "expo-location";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Image, Linking, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import ViewShot from "react-native-view-shot";
+import { WebView } from "react-native-webview";
 
 export default function CameraGPSScreen({ navigation, route }) {
   const [permission, requestPermission] = useCameraPermissions();
@@ -95,6 +96,7 @@ export default function CameraGPSScreen({ navigation, route }) {
         ]
           .filter(Boolean)
           .join(", ");
+        captureMetaRef.current.address = addressStr; // Update ref directly
         setCurrentAddress(addressStr);
       }
     } catch {
@@ -102,6 +104,32 @@ export default function CameraGPSScreen({ navigation, route }) {
     }
   };
 
+  const getMapOverlayHtml = (lat, lon) => `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+        <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+        <style> body, html, #map { margin: 0; padding: 0; width: 100%; height: 100%; background-color: transparent; } </style>
+      </head>
+      <body>
+        <div id="map"></div>
+        <script>
+          var map = L.map('map', {
+            center: [${lat}, ${lon}],
+            zoom: 16,
+            zoomControl: false,
+            dragging: false,
+            scrollWheelZoom: false,
+            doubleClickZoom: false,
+            touchZoom: false,
+          });
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+          L.marker([${lat}, ${lon}]).addTo(map);
+        </script>
+      </body>
+      </html>`;
   /* ---------------- Capture & Burn Logic ---------------- */
   const takePicture = async () => {
     if (processing || isCapturingRef.current) { // Check both processing state and ref
@@ -278,15 +306,27 @@ export default function CameraGPSScreen({ navigation, route }) {
       const overlayAddress = meta?.address ? meta.address : currentAddress;
 
       return (
-    <View style={styles.overlay}>
-      <Text style={styles.overlayText}>{overlayTime.toLocaleString()}</Text>
-      <Text style={styles.overlayText}>
-        {overlayLocation
-          ? `${overlayLocation.coords.latitude.toFixed(6)}, ${overlayLocation.coords.longitude.toFixed(6)}`
-          : "GPS..."}
-      </Text>
-      <Text style={styles.overlayText}>{overlayAddress}</Text>
-    </View>
+        <View style={styles.overlayContainer}>
+          <View style={styles.overlay}>
+            <Text style={styles.overlayText}>{overlayTime.toLocaleString()}</Text>
+            <Text style={styles.overlayText}>
+              {overlayLocation
+                ? `${overlayLocation.coords.latitude.toFixed(6)}, ${overlayLocation.coords.longitude.toFixed(6)}`
+                : "GPS..."}
+            </Text>
+            <Text style={styles.overlayText}>{overlayAddress}</Text>
+          </View>
+          {overlayLocation && (
+            <View style={styles.mapOverlay}>
+              <WebView
+                originWhitelist={['*']}
+                style={{ flex: 1, backgroundColor: 'transparent' }}
+                scrollEnabled={false}
+                source={{ html: getMapOverlayHtml(overlayLocation.coords.latitude, overlayLocation.coords.longitude) }}
+              />
+            </View>
+          )}
+        </View>
       );
     })()
   );
@@ -371,11 +411,18 @@ const styles = StyleSheet.create({
   },
   permissionButtonText: { color: "#fff", fontWeight: "800" },
 
-  overlay: {
+  overlayContainer: {
     position: "absolute",
     top: 40,
-    left: 20,
-    right: 20,
+    left: 10,
+    right: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  overlay: {
+    flex: 1,
     backgroundColor: "rgba(0,0,0,0.35)",
     padding: 10,
     borderRadius: 6,
@@ -387,6 +434,16 @@ const styles = StyleSheet.create({
     marginBottom: 3,
   },
 
+  mapOverlay: {
+    width: 120,
+    height: 120,
+    borderRadius: 6,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    opacity: 0.85,
+  },
   controlsContainer: {
     position: "absolute",
     bottom: 25,

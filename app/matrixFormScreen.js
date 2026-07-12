@@ -54,8 +54,8 @@ const CHECKBOX_FIELDS = {
 
 /* ================= SIGNATURE POSITIONS ================= */
   const SIGNATURE_COORDS = {
-    respondent: { x: 305, y: 240, width: 160, height: 30 },
-    matrixRep: { x: 305, y: 215, width: 160, height: 28 },
+    respondent: { x: 305, y: 230, width: 160, height: 30 },
+    matrixRep: { x: 395, y: 247, width: 160, height: 28 },
   };
 
 /* ================= CLOUDINARY CONFIG ================= */
@@ -112,6 +112,7 @@ export default function MatrixFormScreen() {
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState("");
   const [signingField, setSigningField] = useState(null);
+  const [invalidFields, setInvalidFields] = useState([]);
   const canGoBack = useRef(false);
 
   const [form, setForm] = useState({
@@ -127,7 +128,7 @@ export default function MatrixFormScreen() {
     addressProofDetails: "",
 
     /* ✅ NEW */
-    neighbourConfirmation: "",
+    neighbourConfirmation: "No",
 
     landmark: "",
     policeStation: "",
@@ -163,7 +164,7 @@ export default function MatrixFormScreen() {
           respondentRelationship: data.respondentRelationship || "",
           residenceStatus: data.residenceStatus || "",
           addressProofDetails: data.addressProofDetails || "",
-          neighbourConfirmation: data.neighbourConfirmation || "",
+          neighbourConfirmation: data.neighbourConfirmation || "No",
           landmark: data.landmark || "",
           policeStation: data.policeStation || "",
           verificationComments: data.verificationComments || "",
@@ -185,6 +186,15 @@ export default function MatrixFormScreen() {
       });
     }
   }, [caseId, route.params]);
+
+  // Auto-fill verification date/time when opening a fresh form (keeps manual edits allowed)
+  useEffect(() => {
+    if (!loading && (!form.verificationDateTime || String(form.verificationDateTime).trim() === "")) {
+      const now = new Date();
+      const str = `${now.getDate().toString().padStart(2, '0')}/${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getFullYear()} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+      setForm(prev => ({ ...prev, verificationDateTime: str }));
+    }
+  }, [loading]);
 
   /* ================= BACK HANDLER ================= */
   useEffect(() => {
@@ -228,20 +238,135 @@ export default function MatrixFormScreen() {
     setSigningField(null);
   };
 
+  // Read PNG width/height from base64 PNG (big-endian at offset 16)
+  const getPngDimensionsFromBase64 = (b64) => {
+    try {
+      const bin = atob(b64);
+      const len = bin.length;
+      if (len < 24) return null;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+      const view = new DataView(bytes.buffer);
+      const width = view.getUint32(16);
+      const height = view.getUint32(20);
+      return { width, height };
+    } catch (e) {
+      return null;
+    }
+  };
+
+  const normalizeSignatureBase64 = async (base64, coords) => {
+    const dims = getPngDimensionsFromBase64(base64);
+    if (!dims) return base64;
+
+    const shouldRotate = dims.width < dims.height && coords.width > coords.height;
+    if (!shouldRotate) return base64;
+
+    const uri = `data:image/png;base64,${base64}`;
+    try {
+      const result = await ImageManipulator.manipulateAsync(
+        uri,
+        [{ rotate: 90 }],
+        { compress: 1, format: ImageManipulator.SaveFormat.PNG, base64: true }
+      );
+      return result.base64 || base64;
+    } catch (e) {
+      console.warn('Signature normalize failed:', e.message);
+      return base64;
+    }
+  };
+
   const embedSignature = async (pdfDoc, base64, coords) => {
     if (!base64) return;
-    const png = await pdfDoc.embedPng(
-      Uint8Array.from(atob(base64), c => c.charCodeAt(0))
-    );
+    const normalizedBase64 = await normalizeSignatureBase64(base64, coords);
+    const png = await pdfDoc.embedPng(Uint8Array.from(atob(normalizedBase64), c => c.charCodeAt(0)));
     const dims = png.scaleToFit(coords.width, coords.height);
     const x = coords.x + (coords.width - dims.width) / 2;
     const y = coords.y + (coords.height - dims.height) / 2;
     pdfDoc.getPages()[0].drawImage(png, { x, y, width: dims.width, height: dims.height });
   };
 
+  const getValidationErrors = () => {
+    const errors = [];
+    const keys = [];
+    const requireText = [
+      { key: 'candidateName', label: 'Candidate Name' },
+      { key: 'verificationDateTime', label: 'Verification Date/Time' },
+      { key: 'candidateAddressPeriod', label: 'Candidate Address / Period' },
+      { key: 'respondentPeriodStay', label: 'Respondent Period of Stay' },
+      { key: 'modeOfConfirmation', label: 'Mode of Confirmation' },
+      { key: 'respondentName', label: 'Respondent Name' },
+      { key: 'respondentRelationship', label: 'Respondent Relationship' },
+      { key: 'addressProofDetails', label: 'Address Proof Details' },
+      { key: 'neighbourConfirmation', label: 'Neighbour Confirmation' },
+      { key: 'landmark', label: 'Landmark' },
+      { key: 'policeStation', label: 'Police Station' },
+      { key: 'verificationComments', label: 'Verification Comments' },
+      { key: 'matrixRepNameDate', label: 'Matrix Representative Name / Date' },
+    ];
+
+    requireText.forEach(({ key, label }) => {
+      const value = form[key];
+      if (!value || String(value).trim() === '') {
+        errors.push(label);
+        keys.push(key);
+      }
+    });
+
+    if (!form.residenceStatus || String(form.residenceStatus).trim() === '') {
+      errors.push('Residence Status');
+      keys.push('residenceStatus');
+    } else if (form.residenceStatus === 'Other' && (!form.residenceStatusOther || String(form.residenceStatusOther).trim() === '')) {
+      errors.push('Residence Status (Other)');
+      keys.push('residenceStatusOther');
+    }
+
+    if (!form.addressProofDetails || String(form.addressProofDetails).trim() === '') {
+      errors.push('Address Proof Details');
+      keys.push('addressProofDetails');
+    }
+
+    const proofSelected = Object.values(form.addressProof || {}).some(Boolean);
+    if (!proofSelected) {
+      errors.push('At least one Address Proof checkbox');
+      keys.push('addressProof');
+    }
+
+    if (!form.respondentSignature) {
+      errors.push('Respondent Signature');
+      keys.push('respondentSignature');
+    }
+
+    if (!form.matrixRepSignature) {
+      errors.push('Matrix Representative Signature');
+      keys.push('matrixRepSignature');
+    }
+
+    if (form.respondentRelationship === 'Others') {
+      errors.push('Respondent Relationship (Specify other)');
+      keys.push('respondentRelationship');
+    }
+
+    return {
+      errors: [...new Set(errors)],
+      keys: [...new Set(keys)]
+    };
+  };
+
   /* ================= PDF GENERATION ================= */
 
   const generatePdf = async () => {
+    const validation = getValidationErrors();
+    if (validation.errors.length > 0) {
+      setInvalidFields(validation.keys);
+      Alert.alert(
+        'Missing Fields',
+        `Please fill the following fields before generating the report:\n\n- ${validation.errors.join('\n- ')}`
+      );
+      return;
+    }
+    setInvalidFields([]);
+
     try {
       setSaving(true);
       setProgress(0.1);
@@ -418,7 +543,7 @@ export default function MatrixFormScreen() {
               <Text style={styles.label}>{label}</Text>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <TextInput
-                  style={[styles.textInput, { flex: 1 }]}
+                  style={[styles.textInput, invalidFields.includes(k) && styles.invalidInput, { flex: 1 }]}
                   value={form[k]}
                   onChangeText={v => setForm({ ...form, [k]: v })}
                   placeholder="DD/MM/YYYY HH:mm"
@@ -445,7 +570,7 @@ export default function MatrixFormScreen() {
           return (
             <View key={k} style={styles.fieldContainer}>
               <Text style={styles.label}>{label}</Text>
-              <View style={styles.pickerContainer}>
+              <View style={[styles.pickerContainer, invalidFields.includes(k) && styles.invalidInput]}>
                 <Picker
                   selectedValue={pickerVal}
                   onValueChange={(v) => {
@@ -471,7 +596,7 @@ export default function MatrixFormScreen() {
               {(pickerVal === "Others") && (
                 <TextInput
                   placeholder="Enter Relationship"
-                  style={[styles.textInput, { marginTop: 10 }]}
+                  style={[styles.textInput, invalidFields.includes(k) && styles.invalidInput, { marginTop: 10 }]}
                   value={isCustom ? currentVal : ""}
                   onChangeText={v => setForm({ ...form, [k]: v })}
                 />
@@ -482,24 +607,34 @@ export default function MatrixFormScreen() {
 
         // 3. Residence Status (Dropdown)
         if (k === "residenceStatus") {
+          const val = form[k];
           return (
             <View key={k} style={styles.fieldContainer}>
               <Text style={styles.label}>{label}</Text>
-              <View style={styles.pickerContainer}>
+              <View style={[styles.pickerContainer, invalidFields.includes(k) && styles.invalidInput]}>
                 <Picker
-                  selectedValue={form[k]}
+                  selectedValue={val}
                   onValueChange={(v) => setForm({ ...form, [k]: v })}
                   style={styles.picker}
                 >
                   <Picker.Item label="Select Status..." value="" />
                   <Picker.Item label="Owned" value="Owned" />
                   <Picker.Item label="Rented" value="Rented" />
+                  <Picker.Item label="Lease" value="Lease" />
                   <Picker.Item label="PG" value="PG" />
                   <Picker.Item label="Hostel" value="Hostel" />
                   <Picker.Item label="Relative" value="Relative" />
                   <Picker.Item label="Other" value="Other" />
                 </Picker>
               </View>
+              {(val === "Other") && (
+                <TextInput
+                  placeholder="Enter other residence status"
+                  style={[styles.textInput, invalidFields.includes('residenceStatusOther') && styles.invalidInput, { marginTop: 10 }]}
+                  value={form.residenceStatusOther || ""}
+                  onChangeText={v => setForm(prev => ({ ...prev, residenceStatusOther: v }))}
+                />
+              )}
             </View>
           );
         }
@@ -514,7 +649,7 @@ export default function MatrixFormScreen() {
           return (
             <View key={k} style={styles.fieldContainer}>
               <Text style={styles.label}>{label}</Text>
-              <View style={styles.pickerContainer}>
+              <View style={[styles.pickerContainer, invalidFields.includes(k) && styles.invalidInput]}>
                 <Picker
                   selectedValue={pickerVal}
                   onValueChange={(v) => {
@@ -530,7 +665,7 @@ export default function MatrixFormScreen() {
               {(pickerVal === "Other") && (
                 <TextInput
                   placeholder="Enter Other Proof Details"
-                  style={[styles.textInput, { marginTop: 10 }]}
+                  style={[styles.textInput, invalidFields.includes(k) && styles.invalidInput, { marginTop: 10 }]}
                   value={isCustom ? currentVal : ""}
                   onChangeText={v => setForm({ ...form, [k]: v })}
                 />
@@ -544,7 +679,7 @@ export default function MatrixFormScreen() {
           return (
             <View key={k} style={styles.fieldContainer}>
               <Text style={styles.label}>{label}</Text>
-              <View style={styles.pickerContainer}>
+              <View style={[styles.pickerContainer, invalidFields.includes(k) && styles.invalidInput]}>
                 <Picker
                   selectedValue={form[k]}
                   onValueChange={(v) => setForm({ ...form, [k]: v })}
@@ -564,7 +699,7 @@ export default function MatrixFormScreen() {
             <Text style={styles.label}>{label}</Text>
             <TextInput
               placeholder={k === "neighbourConfirmation" ? "Address confirmed with Neighbours? (Yes / No / NA)" : `Enter ${label}`}
-              style={styles.textInput}
+              style={[styles.textInput, invalidFields.includes(k) && styles.invalidInput]}
               value={form[k]}
               onChangeText={v => setForm({ ...form, [k]: v })}
             />
@@ -601,18 +736,23 @@ export default function MatrixFormScreen() {
 
       {/* SIGNATURES */}
       {[
-        { key: "respondentSignature", label: "Matrix Representative Signature" },
-        { key: "matrixRepSignature", label: "Respondent Signature" }
+        { key: "respondentSignature", label: "Respondent Signature" },
+        { key: "matrixRepSignature", label: "Matrix Representative Signature" }
       ].map(item => (
         <View key={item.key} style={{ marginBottom: 12 }}>
           <Text style={{ fontWeight: 'bold', marginBottom: 5 }}>{item.label}</Text>
           <TouchableOpacity style={styles.sig} onPress={() => setSigningField(item.key)}>
-            {form[item.key] ? (
-              <Image
-                source={{ uri: `data:image/png;base64,${form[item.key]}` }}
-                style={styles.sigImg}
-              />
-            ) : (
+            {form[item.key] ? (() => {
+              const dims = getPngDimensionsFromBase64(form[item.key]);
+              const needsRotate = dims && dims.width < dims.height;
+              const imgStyle = [styles.sigImg, needsRotate ? { transform: [{ rotate: '90deg' }] } : {}];
+              return (
+                <Image
+                  source={{ uri: `data:image/png;base64,${form[item.key]}` }}
+                  style={imgStyle}
+                />
+              );
+            })() : (
               <Text>Tap to Sign</Text>
             )}
           </TouchableOpacity>
@@ -624,7 +764,15 @@ export default function MatrixFormScreen() {
       </TouchableOpacity>
 
       <Modal visible={!!signingField} animationType="slide">
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, backgroundColor: '#fff' }}>
+          <View style={{ padding: 16, backgroundColor: '#fff' }}>
+            <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }}>
+              Sign between the lines
+            </Text>
+            <Text style={{ color: '#6b7280', marginTop: 4 }}>
+              Keep your signature inside the two horizontal guides.
+            </Text>
+          </View>
           {Platform.OS === "web" ? (
             <WebSignaturePad onOK={handleSignature} onCancel={() => setSigningField(null)} />
           ) : (
@@ -638,7 +786,43 @@ export default function MatrixFormScreen() {
               trimWhitespace={true}
               minWidth={3}
               maxWidth={5}
-              webStyle={`.m-signature-pad--footer { display: flex !important; bottom: 60px; width: 100%; position: absolute; } .m-signature-pad--body { margin-bottom: 100px; } .m-signature-pad--footer .button { background-color: #007AFF; color: #FFF; }`}
+              webStyle={`
+                .m-signature-pad { background-color: #fff; }
+                .m-signature-pad--body {
+                  border: 1px dashed #cbd5e1 !important;
+                  margin: 16px !important;
+                  border-radius: 12px !important;
+                  height: calc(100% - 118px) !important;
+                  position: relative !important;
+                }
+                .m-signature-pad--body:before,
+                .m-signature-pad--body:after {
+                  content: "";
+                  position: absolute;
+                  left: 16px;
+                  right: 16px;
+                  height: 1px;
+                  background: #cbd5e1;
+                }
+                .m-signature-pad--body:before { top: 30%; }
+                .m-signature-pad--body:after { top: 70%; }
+                .m-signature-pad--footer {
+                  display: flex !important;
+                  bottom: 16px;
+                  width: 100%;
+                  position: absolute;
+                  justify-content: center;
+                  gap: 12px;
+                }
+                .m-signature-pad--footer .button {
+                  background-color: #007AFF;
+                  color: #FFF;
+                  min-width: 100px;
+                }
+                .m-signature-pad--footer .button.clear {
+                  background-color: #ef4444 !important;
+                }
+              `}
             />
           )}
           <TouchableOpacity
@@ -676,6 +860,7 @@ const styles = StyleSheet.create({
   inputRow: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#ccc', borderRadius: 5, backgroundColor: '#fff' },
   input: { flex: 1, padding: 10 },
   textInput: { borderWidth: 1, borderColor: "#ccc", borderRadius: 5, padding: 10, backgroundColor: "#fff", fontSize: 16 },
+  invalidInput: { borderColor: '#FF3B30', backgroundColor: '#FDEDEB' },
   icon: { paddingHorizontal: 10 },
 
   title: { fontSize: 16, fontWeight: "bold", marginTop: 10, marginBottom: 10 },
@@ -686,8 +871,8 @@ const styles = StyleSheet.create({
   radioBtnSelected: { backgroundColor: '#007AFF', borderColor: '#007AFF' },
   radioText: { color: '#000' },
   radioTextSelected: { color: '#fff' },
-  sig: { height: 100, borderWidth: 1, marginBottom: 20, justifyContent: "center", alignItems: "center" },
-  sigImg: { width: "100%", height: "100%", resizeMode: "contain" },
+  sig: { minHeight: 120, height: 140, borderWidth: 1, marginBottom: 20, justifyContent: "center", alignItems: "center", overflow: 'hidden' },
+  sigImg: { width: "100%", height: "100%", resizeMode: "contain", alignSelf: 'center' },
   submit: { backgroundColor: "#007AFF", padding: 15, alignItems: "center", borderRadius: 5 },
   close: { backgroundColor: "#FF3B30", padding: 10, alignItems: "center", margin: 20, borderRadius: 5 },
   pickerContainer: { borderWidth: 1, borderColor: '#ccc', borderRadius: 5, backgroundColor: '#fff', overflow: 'hidden' },

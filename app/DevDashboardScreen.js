@@ -19,7 +19,6 @@ import {
   TouchableOpacity,
   View
 } from "react-native";
-import { BarChart, LineChart, PieChart } from "react-native-chart-kit";
 import * as XLSX from "xlsx";
 import firebase from "../firebase";
 import { APPWRITE_CONFIG, client, databases, Query } from "./appwrite";
@@ -30,6 +29,13 @@ import MemberReportsScreen from "./MemberReportsScreen";
 import MonthEndReportScreen from "./MonthEndReportScreen";
 import { FINE_CONFIG, getCaseFineInfo } from "./utils/fines";
 
+let BarChart, LineChart, PieChart;
+if (Platform.OS !== 'web') {
+  const chartKit = require("react-native-chart-kit");
+  BarChart = chartKit.BarChart;
+  LineChart = chartKit.LineChart;
+  PieChart = chartKit.PieChart;
+}
 // --- CONSTANTS & CONFIGURATION ---
 const APP_VERSION = "1.0.4 (Build 203)";
 const API_URL = "https://api.production.example.com";
@@ -2775,28 +2781,38 @@ function AlertsTab({ currentUser }) {
     }
   };
 
-  const retriggerAlert = async (baseAlert) => {
-    const selected = selectedTargetIds.filter(Boolean);
-    if (selected.length === 0) return Alert.alert("Select Targets", "Pick one or more users from the list first.");
+  const retriggerAlert = async (alertToRetrigger) => {
+    const confirmMsg = `Retrigger this alert?
+Message: ${alertToRetrigger.message}
+Target: ${alertToRetrigger.targetType === 'user' ? alertToRetrigger.targetUid : 'ALL'}`;
+
+    if (Platform.OS === 'web') {
+      if (!confirm(confirmMsg)) return;
+    } else {
+      const confirmed = await new Promise(resolve => 
+        Alert.alert("Confirm Retrigger", confirmMsg, [
+          { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+          { text: "Retrigger", onPress: () => resolve(true) }
+        ])
+      );
+      if (!confirmed) return;
+    }
+
     try {
       setSending(true);
-      await Promise.all(
-        selected.map((uid) =>
-          firebase.database().ref("memberAlerts").push({
-            message: baseAlert.message,
-            severity: baseAlert.severity || "warning",
-            templateId: baseAlert.templateId || null,
-            active: true,
-            targetType: "user",
-            targetUid: uid,
-            targetQuery: uid,
-            createdAt: Date.now(),
-            createdBy: currentUser?.email || currentUser?.uid || "dev",
-            retriggerOf: baseAlert.id,
-          })
-        )
-      );
-      Alert.alert("Retriggered", `Alert retriggered to ${selected.length} user(s).`);
+      await firebase.database().ref("memberAlerts").push({
+        message: alertToRetrigger.message,
+        severity: alertToRetrigger.severity || "warning",
+        templateId: alertToRetrigger.templateId || null,
+        active: true,
+        targetType: alertToRetrigger.targetType || "all",
+        targetUid: alertToRetrigger.targetUid || null,
+        targetQuery: alertToRetrigger.targetQuery || null,
+        createdAt: Date.now(),
+        createdBy: currentUser?.email || currentUser?.uid || "dev",
+        retriggerOf: alertToRetrigger.id,
+      });
+      Alert.alert("Success", "Alert has been re-queued and will be sent again.");
     } catch (e) {
       Alert.alert("Error", "Retrigger failed: " + e.message);
     } finally {
@@ -2804,11 +2820,35 @@ function AlertsTab({ currentUser }) {
     }
   };
 
+
+
   const setActive = async (id, active) => {
     try {
       await firebase.database().ref("memberAlerts/" + id).update({ active });
     } catch (e) {
       Alert.alert("Error", "Failed to update alert: " + e.message);
+    }
+  };
+
+  const deleteAlert = async (alertId) => {
+    const confirmMsg = "Are you sure you want to permanently delete this alert from the database?";
+    
+    const executeDelete = async () => {
+      try {
+        await firebase.database().ref(`memberAlerts/${alertId}`).remove();
+        Alert.alert("Success", "Alert deleted permanently.");
+      } catch (e) {
+        Alert.alert("Error", "Failed to delete alert: " + e.message);
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      if (confirm(confirmMsg)) executeDelete();
+    } else {
+      Alert.alert("Confirm Deletion", confirmMsg, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete", style: "destructive", onPress: executeDelete }
+      ]);
     }
   };
 
@@ -2915,6 +2955,9 @@ function AlertsTab({ currentUser }) {
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => retriggerAlert(a)} style={[styles.alertQueueActionBtn, { marginLeft: 6 }]}>
                   <Text style={styles.alertQueueActionText}>Retrigger</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => deleteAlert(a.id)} style={[styles.alertQueueActionBtn, { marginLeft: 6, borderColor: '#ef4444' }]}>
+                  <Ionicons name="trash-outline" size={14} color="#f87171" />
                 </TouchableOpacity>
               </View>
             ))
@@ -4157,7 +4200,3 @@ const styles = StyleSheet.create({
   },
   dsQuickBtnText: { color: "#cbd5e1", fontSize: 12, fontWeight: "700" },
 });
-
-
-
-

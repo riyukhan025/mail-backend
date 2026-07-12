@@ -5,6 +5,23 @@ export default function WebSignaturePad({ onOK, onCancel, title = "Sign Above" }
   const canvasRef = useRef(null);
   const drawingRef = useRef({ drawing: false });
 
+  const drawGuides = (ctx, width, height) => {
+    ctx.save();
+    ctx.strokeStyle = "#cbd5e1";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([6, 4]);
+
+    const top = height * 0.28;
+    const bottom = height * 0.72;
+    ctx.beginPath();
+    ctx.moveTo(12, top);
+    ctx.lineTo(width - 12, top);
+    ctx.moveTo(12, bottom);
+    ctx.lineTo(width - 12, bottom);
+    ctx.stroke();
+    ctx.restore();
+  };
+
   const setup = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -16,11 +33,14 @@ export default function WebSignaturePad({ onOK, onCancel, title = "Sign Above" }
     const cssHeight = canvas.clientHeight || 300;
     canvas.width = Math.floor(cssWidth * dpr);
     canvas.height = Math.floor(cssHeight * dpr);
+    canvas.cssWidth = cssWidth;
+    canvas.cssHeight = cssHeight;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     ctx.lineWidth = 3;
     ctx.lineCap = "round";
     ctx.strokeStyle = "#111827";
+    drawGuides(ctx, cssWidth, cssHeight);
   };
 
   useEffect(() => {
@@ -69,6 +89,7 @@ export default function WebSignaturePad({ onOK, onCancel, title = "Sign Above" }
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawGuides(ctx, canvas.cssWidth || canvas.clientWidth, canvas.cssHeight || canvas.clientHeight);
   };
 
   const save = () => {
@@ -86,6 +107,8 @@ export default function WebSignaturePad({ onOK, onCancel, title = "Sign Above" }
     <View style={styles.wrap}>
       <Text style={styles.title}>{title}</Text>
       <View style={styles.box}>
+        <View style={styles.guideLineTop} pointerEvents="none" />
+        <View style={styles.guideLineBottom} pointerEvents="none" />
         <canvas
           ref={canvasRef}
           style={{ width: "100%", height: 260, touchAction: "none" }}
@@ -121,5 +144,21 @@ const styles = StyleSheet.create({
   btnPrimary: { backgroundColor: "#2563eb" },
   btnDanger: { backgroundColor: "#ef4444" },
   btnPrimaryText: { color: "#fff", fontWeight: "900" },
+  guideLineTop: {
+    position: 'absolute',
+    top: '28%',
+    left: 12,
+    right: 12,
+    height: 1,
+    backgroundColor: '#cbd5e1',
+  },
+  guideLineBottom: {
+    position: 'absolute',
+    top: '72%',
+    left: 12,
+    right: 12,
+    height: 1,
+    backgroundColor: '#cbd5e1',
+  },
 });
 

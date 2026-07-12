@@ -1,12 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
-import { decode as atob, encode as btoa } from "base-64";
+import { encode as btoa } from "base-64";
 import { BlurView } from "expo-blur";
 import Constants from "expo-constants";
 import * as FileSystem from "expo-file-system/legacy";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
-import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
@@ -796,7 +795,7 @@ const handleCloseCase = async () => {
         setProgressMessage("Preparing submission...");
 
         // Calculate total operations for progress bar
-        let totalOps = 2; // 1 for PDF Upload + 1 for Firebase Update
+        let totalOps = 1; // 1 for Firebase Update
         for (const cat in photos) {
             totalOps += photos[cat].filter(p => !p.uri.startsWith("http")).length;
         }
@@ -982,354 +981,37 @@ const handleCloseCase = async () => {
             return; // Exit the function here
         }
 
-        // --- NEW: Generate PDF on the client ---
-        console.log('[PDF-LOG] 🚀 Starting PDF generation...');
-        console.log('[PDF-LOG] Input photo object keys:', Object.keys(photoUrls || {}));
-
-        const pdfDoc = await PDFDocument.create();
-        const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-
-        // --- NEW: Title Page (Page 1) ---
-        const titlePage = pdfDoc.addPage();
-        const { width: tWidth, height: tHeight } = titlePage.getSize();
-
-        const titleText = "Audit Report";
-        const dateText = new Date().toLocaleDateString();
-        const refText = `Ref No: ${rawRefNo}`;
-
-        const titleWidth = font.widthOfTextAtSize(titleText, 30);
-        const dateWidth = font.widthOfTextAtSize(dateText, 18);
-        const refWidth = font.widthOfTextAtSize(refText, 24);
-        
-        titlePage.drawText(titleText, {
-            x: (tWidth - titleWidth) / 2,
-            y: tHeight / 2 + 50,
-            size: 30,
-            font,
-            color: rgb(0, 0, 0)
-        });
-        titlePage.drawText(dateText, {
-            x: (tWidth - dateWidth) / 2,
-            y: tHeight / 2,
-            size: 18,
-            font,
-            color: rgb(0, 0, 0)
-        });
-        titlePage.drawText(refText, {
-            x: (tWidth - refWidth) / 2,
-            y: tHeight / 2 - 50,
-            size: 24,
-            font,
-            color: rgb(0, 0, 0)
-        });
-        // --------------------------------
-
-        let page;
-
-        // Subsequent pages: Photos
-        console.log('[PDF-LOG] ⚙️ Preparing to add photos...');
-        let totalPhotosAdded = 0;
-
-        for (const category of currentRequirements) {
-            const photosInCategory = photoUrls[category.id] || [];
-            if (photosInCategory.length === 0) continue;
-
-            console.log(`[PDF-LOG] --- Processing Category: ${category.id} (${photosInCategory.length} photos) ---`);
-
-            // Add a new page for each new category
-            page = pdfDoc.addPage();
-            let y = page.getHeight() - 50;
-            
-            // Draw category heading
-            page.drawText(category.label, { x: 50, y, font, size: 18, color: rgb(0, 0, 0) });
-            y -= 40; // Leave space for heading
-
-            for (let i = 0; i < photosInCategory.length; i++) {
-                const photo = photosInCategory[i];
-                totalPhotosAdded++;
-                console.log(`[PDF-LOG]   - Adding photo ${i + 1}/${photosInCategory.length} (Total: ${totalPhotosAdded}). URI: ${photo.uri}`);
-                tick(`Generating Report (${Math.round((currentOp/totalOps)*100)}%)...`);
-
-                try {
-                    let imgBytes;
-                    let isPng = false;
-
-                    // Helper to fetch buffer with retry logic for network resilience
-                    const fetchBuffer = async (u, retries = 3) => {
-                        // Force HTTPS
-                        let url = u;
-                        if (url && url.startsWith("http://")) url = url.replace("http://", "https://");
-
-                        for (let i = 0; i < retries; i++) {
-                            try {
-                                const r = await fetch(url);
-                                if (!r.ok) throw new Error(`Status ${r.status}`);
-                                return await r.arrayBuffer();
-                            } catch (e) {
-                                console.warn(`[PDF-FETCH] Attempt ${i + 1} failed for ${url}: ${e.message}`);
-                                if (i === retries - 1) {
-                                    // Fallback: Try FileSystem download (better for large files/Android)
-                                    try {
-                                        const fileUri = FileSystem.cacheDirectory + `temp_pdf_${Date.now()}.jpg`;
-                                        const dl = await FileSystem.downloadAsync(url, fileUri);
-                                        if (dl.status !== 200) throw new Error(`FS Status ${dl.status}`);
-                                        const b64 = await FileSystem.readAsStringAsync(dl.uri, { encoding: FileSystem.EncodingType.Base64 });
-                                        const binaryString = atob(b64);
-                                        const bytes = new Uint8Array(binaryString.length);
-                                        for (let k = 0; k < binaryString.length; k++) bytes[k] = binaryString.charCodeAt(k);
-                                        return bytes;
-                                    } catch (fsErr) { throw e; }
-                                }
-                                await new Promise(res => setTimeout(res, 1000 * (i + 1))); // Exponential backoff
-                            }
-                        }
-                    };
-
-                    // 1. Try Optimized (Fastest & Best for PDF)
-                    let optimizedUrl = photo.uri;
-                    // Check if URL is signed (contains /s--) to avoid breaking signature with transformations
-                    const isSigned = photo.uri.includes("/s--");
-                    if (!isSigned && photo.uri.includes("cloudinary.com") && photo.uri.includes("/upload/") && !photo.uri.includes("f_jpg")) {
-                        optimizedUrl = photo.uri.replace("/upload/", "/upload/w_600,q_50,f_jpg/");
-                    }
-
-                    try {
-                        imgBytes = await fetchBuffer(optimizedUrl);
-                        isPng = false; 
-                    } catch (e1) {
-                        // 2. Try Original
-                        try {
-                            imgBytes = await fetchBuffer(photo.uri);
-                            isPng = photo.uri.toLowerCase().endsWith('.png');
-                        } catch (e2) {
-                            // 3. Try appending .jpg (Fix for missing extension)
-                            if (!isSigned) {
-                                imgBytes = await fetchBuffer(photo.uri + ".jpg");
-                                isPng = false;
-                            } else {
-                                throw e2;
-                            }
-                        }
-                    }
-
-                    let image;
-                    try {
-                        if (imgBytes) {
-                            image = isPng ? await pdfDoc.embedPng(imgBytes) : await pdfDoc.embedJpg(imgBytes);
-                        } else {
-                            throw new Error("No image data fetched");
-                        }
-                    } catch (embedErr) {
-                        // If embedding failed, try the other format just in case extension was wrong
-                        try {
-                            image = isPng ? await pdfDoc.embedJpg(imgBytes) : await pdfDoc.embedPng(imgBytes);
-                        } catch (finalErr) {
-                            console.error(`[PDF-LOG] Final embed failed for ${photo.uri}`);
-                            throw finalErr;
-                        }
-                    }
-
-                    // Reduce max height to leave space for heading and metadata
-                    const dims = image.scaleToFit(page.getWidth() - 100, 300);
-
-                    // --- PAGE BREAK CHECK: Prevent Overlap ---
-                    if (y - dims.height < 200) { // Increased margin to prevent overlap
-                        page = pdfDoc.addPage();
-                        y = page.getHeight() - 50;
-                    }
-
-                    const imageX = 50;
-                    const imageY = y - dims.height;
-                    page.drawImage(image, { x: imageX, y: imageY, width: dims.width, height: dims.height });
-
-                    // Update y-position for the next element
-                    y = imageY - 20; // Reduced padding since overlay is gone
-
-                } catch (imgErr) {
-                    console.error(`[PDF-LOG] ❌ FAILED to embed image ${photo.uri}:`, imgErr);
-                    // REMOVED: Error placeholder drawing. 
-                    // If image fails, we simply skip drawing it in the PDF to avoid error messages appearing in the report.
-                }
-            }
-        }
-
-        console.log(`[PDF-LOG] ✅ Total photos processed for PDF: ${totalPhotosAdded}`);
-        const pdfBytes = await pdfDoc.save();
-        console.log("[PDF-LOG] 💾 PDF generated, size:", pdfBytes.length, "bytes.");
-
-        // --- FIX: Explicitly delete the old PDF before uploading a new one ---
-        if (caseData.photosFolderLink) {
-            console.log('[PDF-CLEANUP] Deleting old PDF before new upload:', caseData.photosFolderLink);
-            try {
-                await fetch(`${SERVER_URL}/cloudinary/destroy-from-url`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url: caseData.photosFolderLink, resource_type: 'raw' }),
-                });
-                console.log('[PDF-CLEANUP] ✅ Old PDF deletion request sent.');
-            } catch (pdfDelErr) {
-                console.warn('[PDF-CLEANUP] ⚠️ Failed to delete old PDF, proceeding with upload anyway:', pdfDelErr);
-            }
-        }
-
-        // --- Upload generated PDF to Cloudinary (with retry logic) ---
-        console.log('[PDF-LOG] ☁️ Uploading PDF to Cloudinary...');
-        tick("Uploading PDF Report...");
-        const pdfBase64 = uint8ToBase64Safe(pdfBytes);
-        const uniquePdfPublicId = `CaseReport_${safeRefNo}_${Date.now()}`;
-        let finalPdfUrl = null;
-        let uploadSuccess = false;
-
-        // Try server-side upload first (more reliable with API keys)
-        const uploadViaServer = async (retries = 3) => {
-            for (let attempt = 1; attempt <= retries; attempt++) {
-                try {
-                    console.log(`[PDF-UPLOAD] Attempt ${attempt}/${retries} via server at ${SERVER_URL}/cloudinary/upload-pdf`);
-                    const pdfResp = await Promise.race([
-                        fetch(`${SERVER_URL}/cloudinary/upload-pdf`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ base64: pdfBase64, public_id: uniquePdfPublicId, folder: `cases/${safeRefNo}` }),
-                        }),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('Server upload timeout')), 30000))
-                    ]);
-                    
-                    if (!pdfResp.ok) {
-                        console.warn(`[PDF-UPLOAD] Server returned status ${pdfResp.status}`);
-                        throw new Error(`Server error: ${pdfResp.status}`);
-                    }
-                    
-                    const pdfJson = await pdfResp.json();
-                    console.log('[PDF-UPLOAD] Server response:', pdfJson);
-                    
-                    if (pdfJson && pdfJson.result && pdfJson.result.secure_url) {
-                        console.log('[PDF-LOG] ✅ Server upload successful:', pdfJson.result.secure_url);
-                        return pdfJson.result.secure_url;
-                    }
-                    throw new Error('Invalid response: ' + JSON.stringify(pdfJson));
-                } catch (err) {
-                    console.warn(`[PDF-UPLOAD] Attempt ${attempt} failed: ${err.message}`);
-                    if (attempt < retries) {
-                        const delay = Math.pow(2, attempt - 1) * 1000; // 1s, 2s, 4s
-                        console.log(`[PDF-UPLOAD] Retrying in ${delay}ms...`);
-                        await new Promise(r => setTimeout(r, delay));
-                    }
-                }
-            }
-            console.warn('[PDF-UPLOAD] All server attempts exhausted');
-            return null;
-        };
-
-        // Fallback: direct client-side upload to Cloudinary (uses upload preset)
-        const uploadViaClientDirect = async () => {
-            try {
-                console.log('[PDF-UPLOAD] Attempting direct client-side upload to Cloudinary...');
-                console.log('[PDF-UPLOAD] Cloud name:', CLOUD_NAME, 'Upload preset:', UPLOAD_PRESET);
-                
-                const formData = new FormData();
-                formData.append('file', {
-                    uri: `data:application/pdf;base64,${pdfBase64}`,
-                    type: 'application/pdf',
-                    name: `${uniquePdfPublicId}.pdf`
-                });
-                formData.append('upload_preset', UPLOAD_PRESET);
-                formData.append('folder', `cases/${safeRefNo}`);
-                formData.append('public_id', uniquePdfPublicId);
-                formData.append('resource_type', 'raw');
-
-                const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/raw/upload`;
-                console.log('[PDF-UPLOAD] Uploading to:', uploadUrl);
-                
-                const resp = await Promise.race([
-                    fetch(uploadUrl, {
-                        method: 'POST',
-                        body: formData,
-                    }),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error('Direct upload timeout')), 30000))
-                ]);
-                
-                if (!resp.ok) {
-                    const text = await resp.text();
-                    console.error('[PDF-UPLOAD] Server error:', resp.status, text);
-                    throw new Error(`Cloudinary error: ${resp.status} ${text}`);
-                }
-                
-                const json = await resp.json();
-                console.log('[PDF-UPLOAD] Cloudinary response:', JSON.stringify(json, null, 2));
-                
-                if (json.secure_url) {
-                    console.log('[PDF-UPLOAD] ✅ Direct upload successful:', json.secure_url);
-                    return json.secure_url;
-                }
-                
-                if (json.error) {
-                    throw new Error(`Cloudinary error: ${json.error.message}`);
-                }
-                
-                throw new Error('No secure_url in response: ' + JSON.stringify(json));
-            } catch (err) {
-                console.error('[PDF-UPLOAD] Direct upload error:', err.message, err.stack);
-                return null;
-            }
-        };
-
-        // Execute upload strategy: try server first, fallback to direct
-        try {
-            finalPdfUrl = await uploadViaServer(3);
-            if (!finalPdfUrl) {
-                console.log('[PDF-UPLOAD] Server upload failed, trying direct Cloudinary upload...');
-                finalPdfUrl = await uploadViaClientDirect();
-            }
-            if (!finalPdfUrl) {
-                throw new Error('All PDF upload methods failed');
-            }
-            uploadSuccess = true;
-            console.log('[PDF-LOG] 🎉 PDF generation and upload complete. URL:', finalPdfUrl);
-        } catch (err) {
-            console.error('[PDF-LOG] 💥 PDF upload failed, proceeding with partial submission:', err);
-            Alert.alert("PDF Warning", "The PDF report could not be generated due to network issues. The case will be submitted with photos only.");
-        }
-
-        // --- FINAL: Update Firebase with the correct PDF link ---
-        console.log('[DB-UPDATE] Saving final data to Firebase...');
+        // --- NEW: Submit raw photos for audit only; delay PDF generation until report is explicitly requested ---
+        console.log('[SUBMISSION] Skipping immediate PDF generation and saving photos for audit preview.');
         tick("Finalizing Case...");
-        console.log('[DB-UPDATE] Photo URLs object:', photoUrls);
-        
-        // Save sanitized photos to Firebase
+
         await firebase.database().ref(`cases/${caseId}/photosFolder`).set(photoUrls);
         await firebase.database().ref(`cases/${caseId}`).update({
-            photosFolderLink: finalPdfUrl || null, // Handle null if PDF failed
-            status: "audit", // Always go to audit for submission
+            photosFolderLink: null,
+            status: "audit",
             completedAt: Date.now(),
             closedBy: user.uid,
-            pdfGenerationFailed: !finalPdfUrl // Flag for admin
+            pdfGenerationFailed: false,
         });
-        // Remove any photosToRedo marker now that we've regenerated files
+
+        // Remove any photosToRedo marker now that the case is resubmitted for audit
         try {
             await firebase.database().ref(`cases/${caseId}/photosToRedo`).remove();
             console.log('[DB-UPDATE] photosToRedo cleared from Firebase.');
         } catch (e) {
             console.warn('[DB-UPDATE] Failed to clear photosToRedo:', e);
         }
-        console.log('[DB-UPDATE] ✅ Firebase updated with final PDF link and photos.');
 
+        console.log('[DB-UPDATE] ✅ Firebase updated with raw photos and audit status.');
         setPhotos(uploadedPhotosByCategory);
         setStatus("audit");
-
-        console.log("🔒 Case successfully submitted to audit!");
         setShowProgressModal(false);
-        
-        Alert.alert("Success", "Case marked as submitted for audit!", [
+
+        Alert.alert("Success", "Case submitted for audit. Photos are available for preview and the report will be generated only when requested.", [
             {
-                text: "View PDF Report",
-                onPress: () => Linking.openURL(finalPdfUrl),
-            },
-            {
-                text: "OK", 
+                text: "OK",
                 onPress: () => {
-                    // Force refresh by navigating away and back
-                    console.log('[REFRESH] Forcing UI refresh after submission');
-                    // This will trigger the Firebase listener to update all state
+                    console.log('[REFRESH] Case submitted for audit.');
                 }
             }
         ]);

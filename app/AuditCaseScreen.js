@@ -48,6 +48,18 @@ function uint8ToBase64Safe(u8) {
 
 
 const PHOTO_CATEGORIES = ['selfie', 'proof', 'street', 'house', 'landmark'];
+const PHOTO_CATEGORY_LABELS = {
+  selfie: 'Selfie',
+  proof: 'ID Proof',
+  street: 'Street View',
+  house: 'House / Building View',
+  landmark: 'Nearest Landmark',
+};
+
+const getPhotoCategoryLabel = (category) => {
+  if (!category) return 'Photo';
+  return PHOTO_CATEGORY_LABELS[category] || category.charAt(0).toUpperCase() + category.slice(1);
+};
 
 export default function AuditCaseScreen({ navigation, route }) {
   const { caseId, caseData: initialCaseData, user, manualMode } = route.params || {};
@@ -248,110 +260,184 @@ export default function AuditCaseScreen({ navigation, route }) {
     }
   };
 
+  const deletePhotoFromPreview = async (category, index) => {
+    if (!caseData.photosFolder || !Array.isArray(caseData.photosFolder[category])) return;
+    const categoryPhotos = [...caseData.photosFolder[category]];
+    if (index < 0 || index >= categoryPhotos.length) return;
+
+    categoryPhotos.splice(index, 1);
+
+    const updates = {
+      [`photosFolder/${category}`]: categoryPhotos.length ? categoryPhotos : null,
+      photosFolderLink: null,
+      mergedAt: null,
+      manualPdfGenerated: false,
+    };
+
+    try {
+      await firebase.database().ref(`cases/${caseId}`).update(updates);
+      setCaseData(prev => {
+        const updatedFolder = { ...(prev.photosFolder || {}) };
+        if (categoryPhotos.length) {
+          updatedFolder[category] = categoryPhotos;
+        } else {
+          delete updatedFolder[category];
+        }
+        return {
+          ...prev,
+          photosFolder: Object.keys(updatedFolder).length ? updatedFolder : null,
+          photosFolderLink: null,
+          mergedAt: null,
+          manualPdfGenerated: false,
+        };
+      });
+    } catch (error) {
+      console.error("Delete Photo Error:", error);
+      Alert.alert("Error", "Failed to delete photo: " + error.message);
+    }
+  };
+
   const handleFinalizeReport = async () => {
     setIsFinalizing(true);
     const originalFormUrl = caseData.filledForm?.url;
     const originalPhotosUrl = caseData.photosFolderLink;
+    const rawPhotos = caseData.photosFolder;
+    const photoPdfAlreadyContainsForm = !!caseData.manualPdfGenerated || !!caseData.manualUpload;
+    const reportAlreadyCombined = !!caseData.mergedAt && !!caseData.photosFolderLink;
 
     try {
-        if (!originalFormUrl && !originalPhotosUrl) {
-            Alert.alert("Error", "No documents available to merge.");
-            setIsFinalizing(false);
-            return;
+      if (reportAlreadyCombined) {
+        if (caseData.photosFolderLink) {
+          Linking.openURL(caseData.photosFolderLink);
+          return;
+        }
+      }
+
+      if (!originalFormUrl && !originalPhotosUrl && !rawPhotos) {
+        Alert.alert("Error", "No documents available to merge.");
+        return;
+      }
+
+      const mergedPdf = await PDFDocument.create();
+      const font = await mergedPdf.embedFont(StandardFonts.HelveticaBold);
+
+      // --- NEW: Title Page (Page 1) ---
+      const titlePage = mergedPdf.addPage();
+      const { width, height } = titlePage.getSize();
+
+      const titleText = "Audit Report";
+      const dateText = new Date().toLocaleDateString();
+      const refText = `Ref No: ${caseData.matrixRefNo || caseData.RefNo || caseId}`;
+
+      const titleWidth = font.widthOfTextAtSize(titleText, 30);
+      const dateWidth = font.widthOfTextAtSize(dateText, 18);
+      const refWidth = font.widthOfTextAtSize(refText, 24);
+
+      titlePage.drawText(titleText, {
+        x: (width - titleWidth) / 2,
+        y: height / 2 + 50,
+        size: 30,
+        font,
+        color: rgb(0, 0, 0)
+      });
+      titlePage.drawText(dateText, {
+        x: (width - dateWidth) / 2,
+        y: height / 2,
+        size: 18,
+        font,
+        color: rgb(0, 0, 0)
+      });
+      titlePage.drawText(refText, {
+        x: (width - refWidth) / 2,
+        y: height / 2 - 50,
+        size: 24,
+        font,
+        color: rgb(0, 0, 0)
+      });
+      // --------------------------------
+
+      if (originalFormUrl && !photoPdfAlreadyContainsForm) {
+        let fetchUrl = originalFormUrl;
+        if (fetchUrl.includes("cloudinary") && fetchUrl.endsWith(".jpg")) {
+          fetchUrl = fetchUrl.replace(".jpg", ".pdf");
         }
 
-        const mergedPdf = await PDFDocument.create();
-        const font = await mergedPdf.embedFont(StandardFonts.HelveticaBold);
+        try {
+          const formBytes = await fetch(fetchUrl).then(r => {
+            if (!r.ok) throw new Error("Fetch failed");
+            return r.arrayBuffer();
+          });
 
-        // --- NEW: Title Page (Page 1) ---
-        const titlePage = mergedPdf.addPage();
-        const { width, height } = titlePage.getSize();
-        
-        const titleText = "Audit Report";
-        const dateText = new Date().toLocaleDateString();
-        const refText = `Ref No: ${caseData.matrixRefNo || caseData.RefNo || caseId}`;
+          const header = new Uint8Array(formBytes.slice(0, 5));
+          const headerStr = String.fromCharCode(...header);
 
-        const titleWidth = font.widthOfTextAtSize(titleText, 30);
-        const dateWidth = font.widthOfTextAtSize(dateText, 18);
-        const refWidth = font.widthOfTextAtSize(refText, 24);
-
-        titlePage.drawText(titleText, {
-            x: (width - titleWidth) / 2,
-            y: height / 2 + 50,
-            size: 30,
-            font,
-            color: rgb(0, 0, 0)
-        });
-        titlePage.drawText(dateText, {
-            x: (width - dateWidth) / 2,
-            y: height / 2,
-            size: 18,
-            font,
-            color: rgb(0, 0, 0)
-        });
-        titlePage.drawText(refText, {
-            x: (width - refWidth) / 2,
-            y: height / 2 - 50,
-            size: 24,
-            font,
-            color: rgb(0, 0, 0)
-        });
-        // --------------------------------
-        
-        if (originalFormUrl) {
-            // Attempt to switch to PDF for better merging quality if it's a Cloudinary JPG
-            let fetchUrl = originalFormUrl;
-            if (fetchUrl.includes("cloudinary") && fetchUrl.endsWith(".jpg")) {
-                fetchUrl = fetchUrl.replace(".jpg", ".pdf");
-            }
-
-            try {
-                const formBytes = await fetch(fetchUrl).then(r => {
-                    if (!r.ok) throw new Error("Fetch failed");
-                    return r.arrayBuffer();
-                });
-                
-                // Simple PDF signature check (%PDF)
-                const header = new Uint8Array(formBytes.slice(0, 5));
-                const headerStr = String.fromCharCode(...header);
-                
-                if (headerStr.startsWith('%PDF')) {
-                    const formPdf = await PDFDocument.load(formBytes);
-                    const pages = await mergedPdf.copyPages(formPdf, formPdf.getPageIndices());
-                    pages.forEach(p => mergedPdf.addPage(p));
-                } else {
-                    // Fallback: Embed as Image (if the swap failed or it really is an image)
-                    const image = await mergedPdf.embedJpg(formBytes);
-                    const page = mergedPdf.addPage([image.width, image.height]);
-                    page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
-                }
-            } catch (e) {
-                console.warn("Failed to merge form PDF/Image:", e);
-                // Proceeding without form if it fails, or you could alert user
-            }
-        }
-
-        if (originalPhotosUrl) {
-            const photoBytes = await fetch(originalPhotosUrl).then(r => r.arrayBuffer());
-            const photoPdf = await PDFDocument.load(photoBytes);
-            
-            let pagesToCopy = photoPdf.getPageIndices();
-            // Skip the first page (Title Page) if it comes from the standard member flow
-            // to avoid duplicate title pages (since we just added one).
-            if (!caseData.manualPdfGenerated && !caseData.manualUpload && pagesToCopy.length > 0) {
-                 pagesToCopy = pagesToCopy.slice(1);
-            }
-
-            const pages = await mergedPdf.copyPages(photoPdf, pagesToCopy);
+          if (headerStr.startsWith('%PDF')) {
+            const formPdf = await PDFDocument.load(formBytes);
+            const pages = await mergedPdf.copyPages(formPdf, formPdf.getPageIndices());
             pages.forEach(p => mergedPdf.addPage(p));
+          } else {
+            const image = await mergedPdf.embedJpg(formBytes);
+            const page = mergedPdf.addPage([image.width, image.height]);
+            page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
+          }
+        } catch (e) {
+          console.warn("Failed to merge form PDF/Image:", e);
+        }
+      }
+
+      if (originalPhotosUrl) {
+        const photoBytes = await fetch(originalPhotosUrl).then(r => r.arrayBuffer());
+        const photoPdf = await PDFDocument.load(photoBytes);
+
+        let pagesToCopy = photoPdf.getPageIndices();
+        if (!photoPdfAlreadyContainsForm && pagesToCopy.length > 0) {
+          pagesToCopy = pagesToCopy.slice(1);
         }
 
-        const pdfBytes = await mergedPdf.save();
-        const safeRef = (caseData.matrixRefNo || caseData.RefNo || caseId).replace(/[^a-zA-Z0-9-_]/g, '_');
-        const publicId = `FinalReport_${safeRef}_${Date.now()}`;
+        const pages = await mergedPdf.copyPages(photoPdf, pagesToCopy);
+        pages.forEach(p => mergedPdf.addPage(p));
+      } else if (rawPhotos) {
+        const allPhotos = [];
+        Object.entries(rawPhotos).forEach(([category, list]) => {
+          if (Array.isArray(list)) {
+            list.forEach(photo => allPhotos.push({ ...photo, category }));
+          }
+        });
 
-        // Direct Cloudinary Upload
-        const formData = new FormData();
+        for (const photo of allPhotos) {
+          if (!photo.uri) continue;
+          try {
+            const response = await fetch(photo.uri);
+            if (!response.ok) throw new Error(`Failed to fetch photo ${photo.uri}`);
+            const photoBytes = await response.arrayBuffer();
+            let image;
+            try {
+              image = await mergedPdf.embedJpg(photoBytes);
+            } catch (jpgError) {
+              image = await mergedPdf.embedPng(photoBytes);
+            }
+
+            const page = mergedPdf.addPage();
+            const { width, height } = page.getSize();
+            const dims = image.scaleToFit(width - 40, height - 40);
+            page.drawImage(image, {
+              x: (width - dims.width) / 2,
+              y: (height - dims.height) / 2,
+              width: dims.width,
+              height: dims.height,
+            });
+          } catch (e) {
+            console.warn("Failed to embed raw photo:", photo.uri, e);
+          }
+        }
+      }
+
+      const pdfBytes = await mergedPdf.save();
+      const safeRef = (caseData.matrixRefNo || caseData.RefNo || caseId).replace(/[^a-zA-Z0-9-_]/g, '_');
+      const publicId = `FinalReport_${safeRef}_${Date.now()}`;
+
+      // Direct Cloudinary Upload
+      const formData = new FormData();
         formData.append("upload_preset", UPLOAD_PRESET);
         formData.append("public_id", publicId);
         formData.append("folder", `cases/${safeRef}`);
@@ -391,11 +477,9 @@ export default function AuditCaseScreen({ navigation, route }) {
         // --- DELETION LOGIC REMOVED PER REQUEST ---
         // Photos and original forms will be kept in Cloudinary.
 
-        // Update Firebase
+        // Update Firebase. Preserve raw form and photo assets so admin can still preview them after report generation.
         await firebase.database().ref(`cases/${caseId}`).update({
-            photosFolderLink: newPdfUrl, // This now holds the merged report
-            photosFolder: null, // Clear individual photo links
-            filledForm: null, // Clear the old form link
+            photosFolderLink: newPdfUrl,
             mergedAt: Date.now(),
         });
 
@@ -423,6 +507,48 @@ export default function AuditCaseScreen({ navigation, route }) {
             return cleaned.replace(/[^\x00-\xFF]/g, "?");
         };
 
+        // Add title page first
+        const titlePage = pdfDoc.addPage();
+        const { width: titleWidthPage, height: titleHeightPage } = titlePage.getSize();
+        const titleText = "Audit Report";
+        const dateText = new Date().toLocaleDateString();
+        const refText = `Ref No: ${caseData.matrixRefNo || caseData.RefNo || caseId}`;
+        const nameText = `Name: ${caseData.candidateName || caseData.client || caseData.company || ""}`;
+
+        const titleWidth = font.widthOfTextAtSize(titleText, 30);
+        const dateWidth = font.widthOfTextAtSize(dateText, 18);
+        const refWidth = font.widthOfTextAtSize(refText, 18);
+        const nameWidth = font.widthOfTextAtSize(nameText, 18);
+
+        titlePage.drawText(titleText, {
+            x: (titleWidthPage - titleWidth) / 2,
+            y: titleHeightPage - 120,
+            size: 30,
+            font,
+            color: rgb(0, 0, 0),
+        });
+        titlePage.drawText(refText, {
+            x: (titleWidthPage - refWidth) / 2,
+            y: titleHeightPage - 170,
+            size: 18,
+            font,
+            color: rgb(0, 0, 0),
+        });
+        titlePage.drawText(nameText, {
+            x: (titleWidthPage - nameWidth) / 2,
+            y: titleHeightPage - 200,
+            size: 18,
+            font,
+            color: rgb(0, 0, 0),
+        });
+        titlePage.drawText(dateText, {
+            x: (titleWidthPage - dateWidth) / 2,
+            y: titleHeightPage - 230,
+            size: 18,
+            font,
+            color: rgb(0, 0, 0),
+        });
+
         // 1. Embed Form if exists
         if (caseData.filledForm?.url) {
             try {
@@ -447,11 +573,19 @@ export default function AuditCaseScreen({ navigation, route }) {
                     
                     const page = pdfDoc.addPage();
                     const { width, height } = page.getSize();
-                    const dims = image.scaleToFit(width - 40, height - 40);
+                    page.drawText("Form", {
+                        x: 40,
+                        y: height - 50,
+                        size: 18,
+                        font,
+                        color: rgb(0, 0, 0),
+                    });
+                    const maxHeight = height - 100;
+                    const dims = image.scaleToFit(width - 40, maxHeight);
                     
                     page.drawImage(image, {
                         x: (width - dims.width) / 2,
-                        y: (height - dims.height) / 2,
+                        y: 40,
                         width: dims.width,
                         height: dims.height,
                     });
@@ -527,10 +661,19 @@ export default function AuditCaseScreen({ navigation, route }) {
 
                     page = pdfDoc.addPage();
                     const { width, height } = page.getSize();
-                    const dims = image.scaleToFit(width - 40, height - 40);
+                    const categoryLabel = getPhotoCategoryLabel(photo.category);
+                    page.drawText(categoryLabel, {
+                        x: 40,
+                        y: height - 50,
+                        size: 18,
+                        font,
+                        color: rgb(0, 0, 0),
+                    });
+                    const maxHeight = height - 100;
+                    const dims = image.scaleToFit(width - 40, maxHeight);
                     
                     const imageX = (width - dims.width) / 2;
-                    const imageY = (height - dims.height) / 2;
+                    const imageY = 40;
                     
                     page.drawImage(image, {
                         x: imageX,
@@ -590,7 +733,6 @@ export default function AuditCaseScreen({ navigation, route }) {
         
         await firebase.database().ref(`cases/${caseId}`).update({
             photosFolderLink: uploadJson.secure_url,
-            filledForm: null,
             mergedAt: Date.now(),
             manualPdfGenerated: true
         });
@@ -1120,16 +1262,21 @@ Spacesolutions Team
                              {Array.isArray(photos) && photos.map((p, i) => {
                                  const isPdf = p.uri?.toLowerCase().includes('.pdf') || p.name?.toLowerCase().endsWith('.pdf');
                                  return (
-                                     <TouchableOpacity key={i} onPress={() => isPdf ? Linking.openURL(p.uri) : setSelectedPhoto(p)}>
-                                         {isPdf ? (
-                                             <View style={[styles.auditThumb, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#fce4ec' }]}>
-                                                 <Ionicons name="document-text" size={24} color="#d81b60" />
-                                                 <Text style={{fontSize: 8, color: '#d81b60', fontWeight: 'bold', marginTop: 2}}>PDF</Text>
-                                             </View>
-                                         ) : (
-                                             <Image source={{uri: p.uri}} style={styles.auditThumb} />
-                                         )}
-                                     </TouchableOpacity>
+                                     <View key={i} style={{ marginRight: 8, position: 'relative' }}>
+                                         <TouchableOpacity onPress={() => isPdf ? Linking.openURL(p.uri) : setSelectedPhoto(p)}>
+                                             {isPdf ? (
+                                                 <View style={[styles.auditThumb, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#fce4ec' }]}> 
+                                                     <Ionicons name="document-text" size={24} color="#d81b60" />
+                                                     <Text style={{fontSize: 8, color: '#d81b60', fontWeight: 'bold', marginTop: 2}}>PDF</Text>
+                                                 </View>
+                                             ) : (
+                                                 <Image source={{uri: p.uri}} style={styles.auditThumb} />
+                                             )}
+                                         </TouchableOpacity>
+                                         <TouchableOpacity style={styles.photoDeleteButton} onPress={() => deletePhotoFromPreview(cat, i)}>
+                                             <Ionicons name="close-circle" size={18} color="#fff" />
+                                         </TouchableOpacity>
+                                     </View>
                                  );
                              })}
                          </ScrollView>
@@ -1150,13 +1297,13 @@ Spacesolutions Team
           <View style={styles.divider} />
 
           <View style={{ flexDirection: 'row', gap: 10, marginBottom: 15 }}>
-            {caseData.photosFolderLink && (
+            {isManualCase && caseData.photosFolderLink && (
               <TouchableOpacity 
                 style={[styles.downloadButton, { flex: 1 }]}
                 onPress={() => Linking.openURL(caseData.photosFolderLink)}
               >
                 <Ionicons name="cloud-download-outline" size={20} color="#fff" />
-                <Text style={styles.downloadButtonText}>{!caseData.filledForm?.url ? "Combined PDF" : "PDF Report"}</Text>
+                <Text style={styles.downloadButtonText}>Generated Report</Text>
               </TouchableOpacity>
             )}
 
@@ -1170,18 +1317,7 @@ Spacesolutions Team
               </TouchableOpacity>
             )}
 
-            {(caseData.photosFolderLink && caseData.filledForm?.url && !isCES) && (
-              <TouchableOpacity 
-                style={[styles.downloadButton, { backgroundColor: "#6200ea", flex: 1 }]}
-                onPress={handleFinalizeReport}
-                disabled={isFinalizing}
-              >
-                {isFinalizing ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="git-merge-outline" size={20} color="#fff" />}
-                <Text style={styles.downloadButtonText}>{isFinalizing ? "Merging..." : "Combined PDF"}</Text>
-              </TouchableOpacity>
-            )}
-
-            {(!caseData.photosFolderLink && caseData.photosFolder && !isCES) && (
+            {(!caseData.photosFolderLink && caseData.photosFolder && !isCES && isManualCase) && (
                 <TouchableOpacity 
                     style={[styles.downloadButton, { backgroundColor: "#673AB7", flex: 1 }]}
                     onPress={handleManualPdfGeneration}
@@ -1536,6 +1672,18 @@ const styles = StyleSheet.create({
   maintenanceBox: { backgroundColor: '#f3e5f5', padding: 10, borderRadius: 8, marginTop: 10, borderWidth: 1, borderColor: '#ce93d8' },
   maintenanceHeader: { fontWeight: 'bold', color: '#4a148c', fontSize: 14 },
   maintenanceText: { fontSize: 12, color: '#6a1b9a', marginBottom: 5 },
-  auditThumb: { width: 60, height: 60, borderRadius: 6, marginRight: 8, backgroundColor: '#ddd' },
+  auditThumb: { width: 60, height: 60, borderRadius: 6, marginRight: 8, backgroundColor: '#ddd', borderWidth: 1, borderColor: '#ccc' },
+  photoDeleteButton: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    width: 24,
+    height: 24,
+    backgroundColor: 'rgba(220, 38, 38, 0.95)',
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 20,
+  },
   modalClose: { position: 'absolute', top: 40, right: 20, zIndex: 10, padding: 10 },
 });
