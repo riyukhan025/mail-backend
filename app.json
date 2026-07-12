@@ -2,12 +2,12 @@
   "expo": {
     "name": "Spacesolutions",
     "slug": "Spacesolutions",
-    "version": "2.0.0",
+    "version": "3.0.0",
     "orientation": "portrait",
     "icon": "./assets/logo.png",
     "scheme": "finalapp",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true
     },

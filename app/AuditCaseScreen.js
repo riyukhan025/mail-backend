@@ -107,7 +107,6 @@ export default function AuditCaseScreen({ navigation, route }) {
 
       if (clientName.includes("matrix")) {
           emails = [
-              "saranya.subramani@matrixbsindia.com",
               "radhika.e@matrixbsindia.com",
               "ananth.n@matrixbsindia.com",
               "prasanna.arivazhagan@matrixbsindia.com",
@@ -1317,10 +1316,12 @@ Spacesolutions Team
               </TouchableOpacity>
             )}
 
-            {(!caseData.photosFolderLink && caseData.photosFolder && !isCES && isManualCase) && (
+            {/* FIX: Show Generate Report button for ANY non-CES case that has photos but no link yet. */}
+            {(!caseData.photosFolderLink && caseData.photosFolder && !isCES) && (
                 <TouchableOpacity 
                     style={[styles.downloadButton, { backgroundColor: "#673AB7", flex: 1 }]}
-                    onPress={handleManualPdfGeneration}
+                    // Use handleFinalizeReport for a more robust, universal PDF generation.
+                    onPress={handleFinalizeReport}
                     disabled={isFinalizing}
                 >
                     {isFinalizing ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="document-attach" size={20} color="#fff" />}
