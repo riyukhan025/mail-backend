@@ -1113,6 +1113,12 @@ Spacesolutions Team
             </TouchableOpacity>
           </View>
 
+          {/* Rectify Button is always available */}
+          <TouchableOpacity style={[styles.downloadButton, { backgroundColor: "#FF9800", marginTop: 15 }]} onPress={handleRectify}>
+            <Ionicons name="create-outline" size={20} color="#fff" />
+            <Text style={styles.downloadButtonText}>Rectify / Edit Case</Text>
+          </TouchableOpacity>
+
           {/* Hide manual tools after a report is generated to prevent confusion */}
           {isManualCase && !caseData.photosFolderLink && (
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 15 }}>

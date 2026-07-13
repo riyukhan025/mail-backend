@@ -1274,39 +1274,25 @@ export default function AdminPanelScreen({ navigation }) {
     const revertAction = () => {
       firebase.database().ref(`cases/${caseId}`).update({
         status: "reverted",
-        completedAt: null,
-        assigneeName: null,
-        assigneeRole: null,
-        assignedTo: null,
-        photosFolder: null,
-        formCompleted: false,
-        filledForm: null,
-        auditFeedback: null,
-        photosToRedo: null,
-        assignedAt: null,
-        // Clear Matrix Fields
-        verificationDateTime: null, candidateAddressPeriod: null, respondentPeriodStay: null, modeOfConfirmation: null, 
-        respondentName: null, respondentRelationship: null, residenceStatus: null, addressProofDetails: null, 
-        neighbourConfirmation: null, landmark: null, policeStation: null, verificationComments: null, 
+        auditFeedback: "Reverted from Admin Panel",
+        // Clear all other fields by setting them to null
+        completedAt: null, photosFolder: null, formCompleted: false, filledForm: null, photosToRedo: null,
+        photosFolderLink: null, // Clear the generated report link
+        mergedAt: null, // Clear the merge timestamp
+        manualPdfGenerated: null, // Reset the manual PDF flag
+        assigneeName: null, assignedTo: null, assignedAt: null,
+        verificationDateTime: null, candidateAddressPeriod: null, respondentPeriodStay: null, modeOfConfirmation: null,
+        respondentName: null, respondentRelationship: null, residenceStatus: null, addressProofDetails: null,
+        neighbourConfirmation: null, landmark: null, policeStation: null, verificationComments: null,
         matrixRepNameDate: null, natureLocation: null, addressProof: null, respondentSignature: null, matrixRepSignature: null,
-        // Clear CES Fields
-        fatherName: null, detailsVerified: null, relationship: null, fieldExecutiveName: null, 
-        stayFromDate: null, stayToDate: null, addressType: null, maritalStatus: null, residenceType: null, 
+        fatherName: null, detailsVerified: null, relationship: null, fieldExecutiveName: null,
+        stayFromDate: null, stayToDate: null, addressType: null, maritalStatus: null, residenceType: null,
         locationType: null, siteVisit: null, verificationStatus: null, remarks: null, fieldExecutiveSignature: null,
-        // Clear DHI Fields
-        locationDetailsIfNoCompany: null, officeSpace: null, employeeCount: null, businessNature: null, 
-        respondentDetails: null, verifierDetails: null, emailIds: null, phoneNumbers: null, additionalContacts: null, 
-        neighbor1: null, neighbor2: null, postalCheck: null, courierCheck: null, fieldAssistantSignatureText: null, 
+        locationDetailsIfNoCompany: null, officeSpace: null, employeeCount: null, businessNature: null,
+        respondentDetails: null, verifierDetails: null, emailIds: null, phoneNumbers: null, additionalContacts: null,
+        neighbor1: null, neighbor2: null, postalCheck: null, courierCheck: null, fieldAssistantSignatureText: null,
         checkboxes: null, verifierSignature: null,
-        // Clear Common/Other
         comments: null,
-        // Ensure critical fields remain (commented out to show what is KEPT)
-        // matrixRefNo: KEEP
-        // candidateName: KEEP
-        // address: KEEP
-        // client: KEEP
-        // company: KEEP
-        // contactNumber: KEEP
       });
     };
 
@@ -1711,7 +1697,7 @@ export default function AdminPanelScreen({ navigation }) {
               value = item.contactNumber || "-";
               break;
             case "status":
-              value = getStatusLabel(item.status);
+              value = getStatusLabel(item.status || 'unknown');
               break;
             case "assigneeName":
               value = item.assigneeName || "-";
@@ -1777,7 +1763,18 @@ export default function AdminPanelScreen({ navigation }) {
               break;
           }
 
-          if (key === "select") {
+          // Make contact number clickable to call
+          if (key === "contactNumber" && (item.status === 'audit' || item.status === 'assigned')) {
+            component = (
+              <TouchableOpacity
+                key={key}
+                style={{ width: visibleCols[key] }}
+                onPress={() => item.contactNumber && Linking.openURL(`tel:${item.contactNumber}`)}
+              >
+                <Text style={[styles.cell, { color: theme.primary, textDecorationLine: 'underline' }]} numberOfLines={2}>{value}</Text>
+              </TouchableOpacity>
+            );
+          } else if (key === "select") {
             component = (
               <TouchableOpacity
                 key={key}
@@ -3026,8 +3023,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     height: 36,
     borderRadius: 12,
-    flex: 1,
-    minWidth: 140,
+    flex: IS_DESKTOP ? 1 : 0,
+    minWidth: IS_DESKTOP ? 140 : 'auto',
     maxWidth: 360,
   },
   topBarSearchMobile: { width: "100%", maxWidth: "100%", height: 32 },
@@ -3053,10 +3050,10 @@ const styles = StyleSheet.create({
     shadowRadius: 40,
     elevation: 12,
     minWidth: 160, 
-  },
-  statCardMobile: { borderRadius: 18, padding: 8, minWidth: 105, flex: 0 }, 
-  statCardLineMobile: { borderRadius: 12, padding: 6, minWidth: 100, flex: 0 }, 
-  statCardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: IS_DESKTOP ? 6 : 12 },
+  }, 
+  statCardMobile: { borderRadius: 18, padding: 12, minWidth: 105, flex: 0 },
+  statCardLineMobile: { borderRadius: 12, padding: 8, minWidth: 100, flex: 0 },
+  statCardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: IS_DESKTOP ? 6 : 8 },
   statCardHeaderMobile: { marginBottom: 4 },
   statIconContainer: {
     width: IS_DESKTOP ? 28 : 48,
@@ -3066,10 +3063,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  statIconContainerMobile: { width: 22, height: 22, borderRadius: 8, borderWidth: 0.6 },
+  statIconContainerMobile: { width: 24, height: 24, borderRadius: 8, borderWidth: 0.6 },
   statValue: { fontSize: IS_DESKTOP ? 14 : 22, fontWeight: '800' },
-  statValueMobile: { fontSize: 12, fontWeight: "800" },
-  statLabel: { fontSize: IS_DESKTOP ? 9 : 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1.5 },
+  statValueMobile: { fontSize: 14, fontWeight: "800" },
+  statLabel: { fontSize: IS_DESKTOP ? 9 : 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1.5 },
   statLabelMobile: { fontSize: 8, letterSpacing: 0.2 },
   
   // Table Section
@@ -3099,7 +3096,7 @@ const styles = StyleSheet.create({
   headerCell: { fontWeight: "600", textTransform: 'uppercase', fontSize: 11, letterSpacing: 0.5 },
   headerCellMobile: { fontSize: 9, letterSpacing: 0.2 },
   caseRow: { flexDirection: "row", borderBottomWidth: 1, paddingVertical: 8, alignItems: "center", paddingHorizontal: 8 },
-  caseRowMobile: { paddingVertical: 6, paddingHorizontal: 6 },
+  caseRowMobile: { paddingVertical: 8, paddingHorizontal: 6 },
   iconActionBtn: { borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginHorizontal: 2 },
   
   assigneeCell: {
