@@ -303,6 +303,7 @@ export default function MatrixFormScreen() {
       { key: 'policeStation', label: 'Police Station' },
       { key: 'verificationComments', label: 'Verification Comments' },
       { key: 'matrixRepNameDate', label: 'Matrix Representative Name / Date' },
+      // { key: 'matrixRefNo', label: 'Matrix Ref No' }, // Making this optional
     ];
 
     requireText.forEach(({ key, label }) => {
@@ -330,16 +331,6 @@ export default function MatrixFormScreen() {
     if (!proofSelected) {
       errors.push('At least one Address Proof checkbox');
       keys.push('addressProof');
-    }
-
-    if (!form.respondentSignature) {
-      errors.push('Respondent Signature');
-      keys.push('respondentSignature');
-    }
-
-    if (!form.matrixRepSignature) {
-      errors.push('Matrix Representative Signature');
-      keys.push('matrixRepSignature');
     }
 
     if (form.respondentRelationship === 'Others') {

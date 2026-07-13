@@ -444,6 +444,8 @@ export default function AuthScreen({ navigation }) {
                     placeholderTextColor={theme.color}
                     value={otpInput}
                     onChangeText={setOtpInput}
+                    onSubmitEditing={handleVerifyOtp}
+                    returnKeyType="done"
                     keyboardType="number-pad"
                   />
                   <TouchableOpacity disabled={resendTimer > 0} onPress={handleResendOtp}>
@@ -490,6 +492,8 @@ export default function AuthScreen({ navigation }) {
                     secureTextEntry
                     value={password}
                     onChangeText={setPassword}
+                    returnKeyType="done"
+                    onSubmitEditing={handleSignup}
                   />
                   <TextInput style={[styles.mobileInput, { color: theme.color }]} placeholder="CITY" placeholderTextColor={theme.color} value={city} onChangeText={setCity} />
                   <TextInput
@@ -561,6 +565,8 @@ export default function AuthScreen({ navigation }) {
                     secureTextEntry
                     value={password}
                     onChangeText={setPassword}
+                    returnKeyType="go"
+                    onSubmitEditing={handleLogin}
                   />
                   <Animated.View style={{ transform: [{ scale: mobileSubmitScale }] }}>
                     <TouchableOpacity
@@ -644,7 +650,7 @@ export default function AuthScreen({ navigation }) {
                   <Text style={styles.header}>Verify OTP</Text>
                   <View style={styles.inputRow}>
                     <Ionicons name="shield-checkmark-outline" size={20} color="#fff" />
-                    <TextInput style={styles.input} placeholder="Enter OTP" placeholderTextColor="#ccc" value={otpInput} onChangeText={setOtpInput} keyboardType="number-pad" />
+                    <TextInput style={styles.input} placeholder="Enter OTP" placeholderTextColor="#ccc" value={otpInput} onChangeText={setOtpInput} keyboardType="number-pad" returnKeyType="done" onSubmitEditing={handleVerifyOtp} />
                   </View>
                   <TouchableOpacity disabled={resendTimer > 0} onPress={handleResendOtp}>
                     <Text style={[styles.resend, resendTimer > 0 && { opacity: 0.5 }]}>{resendTimer > 0 ? `Resend OTP (${resendTimer}s)` : "Resend OTP"}</Text>
@@ -682,7 +688,7 @@ export default function AuthScreen({ navigation }) {
                         </View>
                         <View style={[styles.inputRow, compactWeb && { paddingVertical: 10, marginBottom: 8 }]}>
                           <Ionicons name="lock-closed-outline" size={20} color="#fff" />
-                          <TextInput style={styles.input} placeholder="Password" placeholderTextColor="#ccc" secureTextEntry={!showPassword} value={password} onChangeText={setPassword} />
+                          <TextInput style={styles.input} placeholder="Password" placeholderTextColor="#ccc" secureTextEntry={!showPassword} value={password} onChangeText={setPassword} returnKeyType="go" onSubmitEditing={handleLogin} />
                           <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
                             <Ionicons name={showPassword ? "eye-off" : "eye"} size={20} color="#fff" />
                           </TouchableOpacity>

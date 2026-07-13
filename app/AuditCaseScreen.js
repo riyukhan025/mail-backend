@@ -296,202 +296,7 @@ export default function AuditCaseScreen({ navigation, route }) {
     }
   };
 
-  const handleFinalizeReport = async () => {
-    setIsFinalizing(true);
-    const originalFormUrl = caseData.filledForm?.url;
-    const originalPhotosUrl = caseData.photosFolderLink;
-    const rawPhotos = caseData.photosFolder;
-    const photoPdfAlreadyContainsForm = !!caseData.manualPdfGenerated || !!caseData.manualUpload;
-    const reportAlreadyCombined = !!caseData.mergedAt && !!caseData.photosFolderLink;
-
-    try {
-      if (reportAlreadyCombined) {
-        if (caseData.photosFolderLink) {
-          Linking.openURL(caseData.photosFolderLink);
-          return;
-        }
-      }
-
-      if (!originalFormUrl && !originalPhotosUrl && !rawPhotos) {
-        Alert.alert("Error", "No documents available to merge.");
-        return;
-      }
-
-      const mergedPdf = await PDFDocument.create();
-      const font = await mergedPdf.embedFont(StandardFonts.HelveticaBold);
-
-      // --- NEW: Title Page (Page 1) ---
-      const titlePage = mergedPdf.addPage();
-      const { width, height } = titlePage.getSize();
-
-      const titleText = "Audit Report";
-      const dateText = new Date().toLocaleDateString();
-      const refText = `Ref No: ${caseData.matrixRefNo || caseData.RefNo || caseId}`;
-
-      const titleWidth = font.widthOfTextAtSize(titleText, 30);
-      const dateWidth = font.widthOfTextAtSize(dateText, 18);
-      const refWidth = font.widthOfTextAtSize(refText, 24);
-
-      titlePage.drawText(titleText, {
-        x: (width - titleWidth) / 2,
-        y: height / 2 + 50,
-        size: 30,
-        font,
-        color: rgb(0, 0, 0)
-      });
-      titlePage.drawText(dateText, {
-        x: (width - dateWidth) / 2,
-        y: height / 2,
-        size: 18,
-        font,
-        color: rgb(0, 0, 0)
-      });
-      titlePage.drawText(refText, {
-        x: (width - refWidth) / 2,
-        y: height / 2 - 50,
-        size: 24,
-        font,
-        color: rgb(0, 0, 0)
-      });
-      // --------------------------------
-
-      if (originalFormUrl && !photoPdfAlreadyContainsForm) {
-        let fetchUrl = originalFormUrl;
-        if (fetchUrl.includes("cloudinary") && fetchUrl.endsWith(".jpg")) {
-          fetchUrl = fetchUrl.replace(".jpg", ".pdf");
-        }
-
-        try {
-          const formBytes = await fetch(fetchUrl).then(r => {
-            if (!r.ok) throw new Error("Fetch failed");
-            return r.arrayBuffer();
-          });
-
-          const header = new Uint8Array(formBytes.slice(0, 5));
-          const headerStr = String.fromCharCode(...header);
-
-          if (headerStr.startsWith('%PDF')) {
-            const formPdf = await PDFDocument.load(formBytes);
-            const pages = await mergedPdf.copyPages(formPdf, formPdf.getPageIndices());
-            pages.forEach(p => mergedPdf.addPage(p));
-          } else {
-            const image = await mergedPdf.embedJpg(formBytes);
-            const page = mergedPdf.addPage([image.width, image.height]);
-            page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
-          }
-        } catch (e) {
-          console.warn("Failed to merge form PDF/Image:", e);
-        }
-      }
-
-      if (originalPhotosUrl) {
-        const photoBytes = await fetch(originalPhotosUrl).then(r => r.arrayBuffer());
-        const photoPdf = await PDFDocument.load(photoBytes);
-
-        let pagesToCopy = photoPdf.getPageIndices();
-        if (!photoPdfAlreadyContainsForm && pagesToCopy.length > 0) {
-          pagesToCopy = pagesToCopy.slice(1);
-        }
-
-        const pages = await mergedPdf.copyPages(photoPdf, pagesToCopy);
-        pages.forEach(p => mergedPdf.addPage(p));
-      } else if (rawPhotos) {
-        const allPhotos = [];
-        Object.entries(rawPhotos).forEach(([category, list]) => {
-          if (Array.isArray(list)) {
-            list.forEach(photo => allPhotos.push({ ...photo, category }));
-          }
-        });
-
-        for (const photo of allPhotos) {
-          if (!photo.uri) continue;
-          try {
-            const response = await fetch(photo.uri);
-            if (!response.ok) throw new Error(`Failed to fetch photo ${photo.uri}`);
-            const photoBytes = await response.arrayBuffer();
-            let image;
-            try {
-              image = await mergedPdf.embedJpg(photoBytes);
-            } catch (jpgError) {
-              image = await mergedPdf.embedPng(photoBytes);
-            }
-
-            const page = mergedPdf.addPage();
-            const { width, height } = page.getSize();
-            const dims = image.scaleToFit(width - 40, height - 40);
-            page.drawImage(image, {
-              x: (width - dims.width) / 2,
-              y: (height - dims.height) / 2,
-              width: dims.width,
-              height: dims.height,
-            });
-          } catch (e) {
-            console.warn("Failed to embed raw photo:", photo.uri, e);
-          }
-        }
-      }
-
-      const pdfBytes = await mergedPdf.save();
-      const safeRef = (caseData.matrixRefNo || caseData.RefNo || caseId).replace(/[^a-zA-Z0-9-_]/g, '_');
-      const publicId = `FinalReport_${safeRef}_${Date.now()}`;
-
-      // Direct Cloudinary Upload
-      const formData = new FormData();
-        formData.append("upload_preset", UPLOAD_PRESET);
-        formData.append("public_id", publicId);
-        formData.append("folder", `cases/${safeRef}`);
-
-        if (Platform.OS === 'web') {
-            const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-            formData.append("file", blob, `${publicId}.pdf`);
-        } else {
-            const pdfBase64 = uint8ToBase64Safe(pdfBytes);
-            const fileUri = FileSystem.cacheDirectory + `${publicId}.pdf`;
-            await FileSystem.writeAsStringAsync(fileUri, pdfBase64, { encoding: FileSystem.EncodingType.Base64 });
-            formData.append("file", {
-                uri: fileUri,
-                type: 'application/pdf',
-                name: `${publicId}.pdf`,
-            });
-        }
-
-        console.log(`[FINALIZE] Uploading merged PDF to Cloudinary...`);
-        const uploadResponse = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/upload`, {
-            method: 'POST',
-            body: formData
-        });
-
-        if (!uploadResponse.ok) {
-            const errText = await uploadResponse.text();
-            throw new Error(`Upload failed: ${uploadResponse.status} ${errText}`);
-        }
-        
-        const uploadJson = await uploadResponse.json();
-        const newPdfUrl = uploadJson?.secure_url;
-
-        if (!newPdfUrl) throw new Error('Upload failed: No URL returned from Cloudinary.');
-
-        console.log(`[FINALIZE] Upload successful: ${newPdfUrl}`);
-
-        // --- DELETION LOGIC REMOVED PER REQUEST ---
-        // Photos and original forms will be kept in Cloudinary.
-
-        // Update Firebase. Preserve raw form and photo assets so admin can still preview them after report generation.
-        await firebase.database().ref(`cases/${caseId}`).update({
-            photosFolderLink: newPdfUrl,
-            mergedAt: Date.now(),
-        });
-
-        Linking.openURL(newPdfUrl);
-    } catch (e) {
-        console.error("Finalize Report failed:", e);
-        Alert.alert("Error", "Failed to finalize report: " + e.message);
-    } finally {
-        setIsFinalizing(false);
-    }
-  };
-
-  const handleManualPdfGeneration = async () => {
+  const generateCombinedReport = async () => {
     setIsFinalizing(true);
     try {
         const pdfDoc = await PDFDocument.create();
@@ -551,44 +356,16 @@ export default function AuditCaseScreen({ navigation, route }) {
         // 1. Embed Form if exists
         if (caseData.filledForm?.url) {
             try {
-                const formBytes = await fetch(caseData.filledForm.url).then(r => r.arrayBuffer());
-                
-                // Check for PDF signature to determine handling
-                const header = new Uint8Array(formBytes.slice(0, 5));
-                const headerStr = String.fromCharCode(...header);
-
-                if (headerStr.startsWith('%PDF')) {
-                    const formPdf = await PDFDocument.load(formBytes);
-                    const pages = await pdfDoc.copyPages(formPdf, formPdf.getPageIndices());
-                    pages.forEach(p => pdfDoc.addPage(p));
-                } else {
-                    // Assume Image (JPG/PNG) - e.g. CES Form
-                    let image;
-                    try {
-                        image = await pdfDoc.embedJpg(formBytes);
-                    } catch (e) {
-                        image = await pdfDoc.embedPng(formBytes);
-                    }
-                    
-                    const page = pdfDoc.addPage();
-                    const { width, height } = page.getSize();
-                    page.drawText("Form", {
-                        x: 40,
-                        y: height - 50,
-                        size: 18,
-                        font,
-                        color: rgb(0, 0, 0),
-                    });
-                    const maxHeight = height - 100;
-                    const dims = image.scaleToFit(width - 40, maxHeight);
-                    
-                    page.drawImage(image, {
-                        x: (width - dims.width) / 2,
-                        y: 40,
-                        width: dims.width,
-                        height: dims.height,
-                    });
-                }
+                const formUrl = caseData.filledForm.url;
+                console.log(`[PDF-FETCH] Fetching form from: ${formUrl}`);
+                const formBytes = await fetch(formUrl).then(res => {
+                    if (!res.ok) throw new Error(`Failed to fetch form PDF: ${res.status}`);
+                    return res.arrayBuffer();
+                });
+                const formPdf = await PDFDocument.load(formBytes);
+                const copiedPages = await pdfDoc.copyPages(formPdf, formPdf.getPageIndices());
+                copiedPages.forEach((page) => pdfDoc.addPage(page));
+                console.log(`[PDF-MERGE] Successfully merged ${copiedPages.length} page(s) from the form PDF.`);
             } catch (e) {
                 console.log("Error loading form pdf", e);
                 Alert.alert("Warning", "Could not load filled form. Proceeding with photos only.");
@@ -707,40 +484,57 @@ export default function AuditCaseScreen({ navigation, route }) {
         const safeRef = (caseData.matrixRefNo || caseData.RefNo || caseId).replace(/[^a-zA-Z0-9-_]/g, '_');
         const publicId = `ManualReport_${safeRef}_${Date.now()}`;
 
+        // --- FIX: Use a more reliable direct-to-Cloudinary upload method ---
         const formData = new FormData();
         formData.append("upload_preset", UPLOAD_PRESET);
         formData.append("public_id", publicId);
         formData.append("folder", `cases/${safeRef}`);
+        // For PDFs, we must specify 'raw' to prevent Cloudinary from treating it as an image
+        formData.append("resource_type", 'raw');
 
         if (Platform.OS === 'web') {
             const blob = new Blob([pdfBytes], { type: 'application/pdf' });
             formData.append("file", blob, `${publicId}.pdf`);
         } else {
             const pdfBase64 = uint8ToBase64Safe(pdfBytes);
-            const fileUri = FileSystem.cacheDirectory + `${publicId}.pdf`;
-            await FileSystem.writeAsStringAsync(fileUri, pdfBase64, { encoding: FileSystem.EncodingType.Base64 });
-            formData.append("file", { uri: fileUri, type: 'application/pdf', name: `${publicId}.pdf` });
+            // Prepending the data URL scheme is required for Cloudinary's v2 API with base64
+            formData.append("file", `data:application/pdf;base64,${pdfBase64}`);
         }
 
-        const uploadResponse = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/upload`, {
+        const uploadResponse = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/raw/upload`, {
             method: 'POST',
             body: formData
         });
 
-        if (!uploadResponse.ok) throw new Error("Upload failed");
+        if (!uploadResponse.ok) {
+            const errText = await uploadResponse.text();
+            throw new Error(`Upload failed: ${uploadResponse.status} ${errText}`);
+        }
         const uploadJson = await uploadResponse.json();
+        const newPdfUrl = uploadJson.secure_url;
+
+        if (!newPdfUrl) throw new Error("Upload failed: No URL returned from Cloudinary.");
         
         await firebase.database().ref(`cases/${caseId}`).update({
-            photosFolderLink: uploadJson.secure_url,
+            photosFolderLink: newPdfUrl,
             mergedAt: Date.now(),
             manualPdfGenerated: true
         });
-        Alert.alert("Success", "Manual PDF generated and saved.");
+        // Automatically open the generated report
+        Linking.openURL(newPdfUrl);
     } catch (e) {
         Alert.alert("Error", "Failed to generate PDF: " + e.message);
     } finally {
         setIsFinalizing(false);
     }
+  };
+
+  const handleManualPdfGeneration = async () => {
+    // This function now specifically handles the generation of the photos-only PDF for manual flow.
+    // The final combination is handled by generateCombinedReport.
+    // For now, we can just call the main function as it handles the logic correctly.
+    // If a separate photo-only PDF logic is needed, it would go here.
+    await generateCombinedReport();
   };
 
   const completeCase = async () => {
@@ -1077,12 +871,21 @@ Spacesolutions Team
       
       setIsUploadingManual(true);
       try {
-          // Fetch existing manual photos first to append
-          const snapshot = await firebase.database().ref(`cases/${caseId}/photosFolder/manual`).once('value');
-          const existingManualPhotos = snapshot.val() || [];
+          // Fetch existing photosFolder to append to it
+          const snapshot = await firebase.database().ref(`cases/${caseId}/photosFolder`).once('value');
+          const existingPhotosFolder = snapshot.val() || {};
           
-          const newUploadedPhotos = [];
+          const newPhotosByCategory = {};
           const safeRef = (caseData.matrixRefNo || caseData.RefNo || caseId).replace(/[^a-zA-Z0-9-_]/g, '_');
+
+          const getCategoryFromFilename = (name) => {
+            const lowerName = (name || "").toLowerCase();
+            if (lowerName.startsWith('selfie')) return 'selfie';
+            if (lowerName.startsWith('id1') || lowerName.startsWith('id2')) return 'proof';
+            if (lowerName.startsWith('landmark')) return 'landmark';
+            if (lowerName.startsWith('house')) return 'house';
+            return 'other'; // Default category
+          };
 
           for (let i = 0; i < manualPhotos.length; i++) {
               const photo = manualPhotos[i];
@@ -1090,34 +893,35 @@ Spacesolutions Team
               const fileName = photo.name || `manual_${Date.now()}_${i}${photo.mimeType === 'application/pdf' ? '.pdf' : '.jpg'}`;
               const fileType = photo.mimeType || 'application/octet-stream';
               const resourceType = fileType.startsWith('image/') ? 'image' : 'raw';
+              const category = getCategoryFromFilename(fileName);
               
               if (Platform.OS === 'web') {
                   const res = await fetch(photo.uri);
                   const blob = await res.blob();
-                  // Ensure the blob has the correct name for Cloudinary to detect extension
                   const fileToUpload = new File([blob], fileName, { type: fileType });
                   formData.append("file", fileToUpload);
               } else {
                   formData.append("file", {
                       uri: photo.uri,
-                      type: resourceType === 'image' ? 'image/jpeg' : 'application/pdf',
+                      type: fileType,
                       name: fileName,
                   });
               }
 
               formData.append("upload_preset", UPLOAD_PRESET);
               formData.append("folder", `cases/${safeRef}`);
-              
-              // Use specific endpoint based on resource type
               const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/${resourceType}/upload`;
               const response = await fetch(uploadUrl, { method: "POST", body: formData });
               const data = await response.json();
               if (data.error) throw new Error(data.error.message);
               
               if (data.secure_url) {
-                  newUploadedPhotos.push({
+                  if (!newPhotosByCategory[category]) {
+                    newPhotosByCategory[category] = [];
+                  }
+                  newPhotosByCategory[category].push({
                       uri: data.secure_url,
-                      category: 'manual',
+                      category: category,
                       timestamp: new Date().toLocaleString(),
                       name: fileName
                   });
@@ -1125,14 +929,18 @@ Spacesolutions Team
           }
 
           // Merge old and new
-          const combinedManual = [...existingManualPhotos, ...newUploadedPhotos];
+          const updatedPhotosFolder = { ...existingPhotosFolder };
+          for (const category in newPhotosByCategory) {
+            const existing = updatedPhotosFolder[category] || [];
+            updatedPhotosFolder[category] = [...existing, ...newPhotosByCategory[category]];
+          }
 
           const updates = {
             status: "audit",
             manualUpload: true,
             manualPdfGenerated: false,
             completedAt: Date.now(),
-            "photosFolder/manual": combinedManual
+            photosFolder: updatedPhotosFolder
           };
 
           await firebase.database().ref(`cases/${caseId}`).update(updates);
@@ -1295,41 +1103,6 @@ Spacesolutions Team
 
           <View style={styles.divider} />
 
-          <View style={{ flexDirection: 'row', gap: 10, marginBottom: 15 }}>
-            {isManualCase && caseData.photosFolderLink && (
-              <TouchableOpacity 
-                style={[styles.downloadButton, { flex: 1 }]}
-                onPress={() => Linking.openURL(caseData.photosFolderLink)}
-              >
-                <Ionicons name="cloud-download-outline" size={20} color="#fff" />
-                <Text style={styles.downloadButtonText}>Generated Report</Text>
-              </TouchableOpacity>
-            )}
-
-            {caseData.filledForm?.url && (
-              <TouchableOpacity 
-                style={[styles.downloadButton, { backgroundColor: "#6c757d", flex: 1 }]}
-                onPress={() => Linking.openURL(caseData.filledForm.url)}
-              >
-                <Ionicons name="document-text-outline" size={20} color="#fff" />
-                <Text style={styles.downloadButtonText}>Filled Form</Text>
-              </TouchableOpacity>
-            )}
-
-            {/* FIX: Show Generate Report button for ANY non-CES case that has photos but no link yet. */}
-            {(!caseData.photosFolderLink && caseData.photosFolder && !isCES) && (
-                <TouchableOpacity 
-                    style={[styles.downloadButton, { backgroundColor: "#673AB7", flex: 1 }]}
-                    // Use handleFinalizeReport for a more robust, universal PDF generation.
-                    onPress={handleFinalizeReport}
-                    disabled={isFinalizing}
-                >
-                    {isFinalizing ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="document-attach" size={20} color="#fff" />}
-                    <Text style={styles.downloadButtonText}>Generate Report</Text>
-                </TouchableOpacity>
-            )}
-          </View>
-
           <View style={styles.actionRow}>
             <TouchableOpacity style={[styles.approveButton, isSending && { opacity: 0.7 }]} onPress={handleApprove} disabled={isSending}>
               <Text style={styles.actionText}>{isSending ? "Processing..." : "Approve & Send"}</Text>
@@ -1340,7 +1113,8 @@ Spacesolutions Team
             </TouchableOpacity>
           </View>
 
-          {isManualCase && (
+          {/* Hide manual tools after a report is generated to prevent confusion */}
+          {isManualCase && !caseData.photosFolderLink && (
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 15 }}>
                 <TouchableOpacity 
                     style={[styles.downloadButton, { backgroundColor: "#9c27b0", flex: 1 }]}
@@ -1360,14 +1134,52 @@ Spacesolutions Team
                 </TouchableOpacity>
             </View>
           )}
+          
+          {/* Show a button to view the filled form if it exists */}
+          {caseData.filledForm?.url && (
+            <TouchableOpacity 
+              style={[styles.downloadButton, { backgroundColor: "#6c757d", marginTop: 15 }]}
+              onPress={() => Linking.openURL(caseData.filledForm.url)}
+            >
+              <Ionicons name="document-text-outline" size={20} color="#fff" />
+              <Text style={styles.downloadButtonText}>View Filled Form</Text>
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity 
-            style={[styles.downloadButton, { backgroundColor: "#FF9800", marginTop: 15 }]}
-            onPress={handleRectify}
+            style={[styles.downloadButton, { backgroundColor: "#673AB7", marginTop: 15 }, isManualCase && { display: 'none' }]}
+            onPress={generateCombinedReport}
+            disabled={isFinalizing}
           >
-            <Ionicons name="create-outline" size={20} color="#fff" />
-            <Text style={styles.downloadButtonText}>Rectify / Edit Case</Text>
+            {isFinalizing ? <ActivityIndicator color="#fff" /> : <Ionicons name="create-outline" size={20} color="#fff" />}
+            <Text style={styles.downloadButtonText}>
+              {isFinalizing ? "Generating..." : "Generate Report"}
+            </Text>
           </TouchableOpacity>
+
+          {isManualCase && (
+            caseData.photosFolderLink ? (
+              // If the report is already generated, show a button to view it.
+              <TouchableOpacity 
+                style={[styles.downloadButton, { backgroundColor: "#4CAF50", marginTop: 15 }]}
+                onPress={() => Linking.openURL(caseData.photosFolderLink)}
+              >
+                <Ionicons name="cloud-download-outline" size={20} color="#fff" />
+                <Text style={styles.downloadButtonText}>View Generated Report</Text>
+              </TouchableOpacity>
+            ) : (
+              // Otherwise, show the button to generate it.
+              <TouchableOpacity 
+                style={[styles.downloadButton, { backgroundColor: "#FF5722", marginTop: 15 }]}
+                onPress={generateCombinedReport}
+                disabled={isFinalizing || !caseData.filledForm?.url || !caseData.photosFolder}
+              >
+                {isFinalizing ? <ActivityIndicator color="#fff" /> : <Ionicons name="git-merge-outline" size={20} color="#fff" />}
+                <Text style={styles.downloadButtonText}>Generate Combined PDF</Text>
+              </TouchableOpacity>
+            )
+          )}
+
         </View>
       </ScrollView>
 
