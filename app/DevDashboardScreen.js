@@ -115,6 +115,27 @@ const TABS = [
   { id: "enterprise", label: "Enterprise", icon: "business-outline" },
 ];
 
+// --- UI HELPERS ---
+async function uiConfirm(title, message) {
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    return window.confirm(`${title}\n\n${message}`);
+  }
+  return await new Promise((resolve) => {
+    Alert.alert(title, message, [
+      { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+      { text: "Continue", style: "default", onPress: () => resolve(true) },
+    ]);
+  });
+}
+
+function uiAlert(title, message) {
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    window.alert(`${title}\n\n${message}`);
+    return;
+  }
+  Alert.alert(title, message);
+}
+
 // --- REAL DATA INTERCEPTORS ---
 const LOG_BUFFER = [];
 const NETWORK_BUFFER = [];
@@ -1942,6 +1963,62 @@ function TicketsTab() {
 function UsersTab({ users, onRevoke, onGrant }) {
   const [search, setSearch] = useState("");
   
+  const [deletingPhotos, setDeletingPhotos] = useState(false);
+
+  const handleDeleteAllProfilePhotos = async () => {
+    const confirm = await uiConfirm(
+      "Delete All Profile Photos?",
+      "This will delete the profile photo for ALL users from Cloudinary and Firebase. This is useful for sending a fresh 'Upload Photo' alert to everyone. This cannot be undone. Continue?"
+    );
+
+    if (!confirm) return;
+
+    setDeletingPhotos(true);
+
+    try {
+      const updates = {};
+      const cloudinaryDeletePromises = [];
+
+      users.forEach(user => {
+        const photoUrl = user.photoURL || user.photoUrl;
+        if (photoUrl) {
+          // Prepare Firebase update
+          updates[`/users/${user.uid}/photoURL`] = null;
+          updates[`/users/${user.uid}/photoUrl`] = null; // Also clear the alternative key
+
+          // Prepare Cloudinary deletion
+          if (photoUrl.includes('cloudinary')) {
+            cloudinaryDeletePromises.push(
+              fetch(`${SERVER_URL}/cloudinary/destroy-from-url`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: photoUrl, resource_type: 'image' }),
+              }).catch(e => console.warn(`Cloudinary delete failed for ${photoUrl}:`, e)) // Don't let one fail stop others
+            );
+          }
+        }
+      });
+
+      if (Object.keys(updates).length === 0) {
+        uiAlert("No Photos", "No users with profile photos were found to delete.");
+        setDeletingPhotos(false);
+        return;
+      }
+
+      // Execute Firebase update
+      await firebase.database().ref().update(updates);
+
+      // Execute Cloudinary deletions (best effort)
+      await Promise.all(cloudinaryDeletePromises);
+
+      uiAlert("Success", `Cleared profile photos for ${Object.keys(updates).length / 2} users.`);
+    } catch (e) {
+      uiAlert("Error", "An error occurred while deleting photos: " + e.message);
+    } finally {
+      setDeletingPhotos(false);
+    }
+  };
+
   const filteredUsers = users.filter(u => 
     (u.name || "").toLowerCase().includes(search.toLowerCase()) || 
     (u.email || "").toLowerCase().includes(search.toLowerCase())
@@ -1958,6 +2035,18 @@ function UsersTab({ users, onRevoke, onGrant }) {
           value={search}
           onChangeText={setSearch}
         />
+      </View>
+      <View style={{ paddingHorizontal: 16, paddingBottom: 10 }}>
+        <GradientButton
+          colors={['#b91c1c', '#ef4444']}
+          icon="trash-bin-outline"
+          label={deletingPhotos ? "Deleting All Photos..." : "Delete All Profile Photos"}
+          small
+          onPress={handleDeleteAllProfilePhotos}
+          disabled={deletingPhotos}
+          loading={deletingPhotos}
+        />
+        <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 6, textAlign: 'center' }}>This action clears all user profile photos to allow re-triggering the "Upload Photo" alert.</Text>
       </View>
       <FlatList
         data={filteredUsers}

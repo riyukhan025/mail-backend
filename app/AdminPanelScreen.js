@@ -32,6 +32,7 @@ import * as XLSX from "xlsx";
 import firebase from "../firebase";
 import { AuthContext } from "./AuthContext";
 import { FINE_CONFIG, getCaseFineInfo } from "./utils/fines";
+import { sanitizeObjectStrings } from "./utils/textSanitizer"; // Import the new sanitizer
 
 const SCREEN_HEIGHT = Dimensions.get("window").height;
 const SCREEN_WIDTH = Dimensions.get("window").width;
@@ -1384,40 +1385,63 @@ export default function AdminPanelScreen({ navigation }) {
       ]);
     }
   };
+
+  const sanitizeWinAnsi = (value) => {
+    if (typeof value !== 'string' || !value) {
+      return { sanitized: value, count: 0 };
+    }
+
+    const replacements = {
+      '\u2018': "'", // Left single quote
+      '\u2019': "'", // Right single quote
+      '\u201C': '"', // Left double quote
+      '\u201D': '"', // Right double quote
+      '\u2013': '-', // En dash
+      '\u2014': '-', // Em dash
+      '\u2026': '...', // Ellipsis
+    };
+
+    let sanitized = value;
+    let count = 0;
+
+    for (const char in replacements) {
+      const regex = new RegExp(char, 'g');
+      const matches = (sanitized.match(regex) || []).length;
+      if (matches > 0) {
+        count += matches;
+        sanitized = sanitized.replace(regex, replacements[char]);
+      }
+    }
+    return { sanitized, count };
+  };
+
   const processExcelData = async (jsonData, mode) => {
-    let addedCount = 0;
-    let duplicateCount = 0;
+    let addedCount = 0, duplicateCount = 0, winAnsiCount = 0;
     const addedIds = [];
 
-    for (const row of jsonData) {
-      const refNo = row["Reference ID"]?.toString() || "";
-      if (!refNo) continue;
+    for (const rawRow of jsonData) {
+      // Sanitize all string values in the row first and get the count of fixes
+      const { sanitizedObject: row, totalCount: rowFixes } = sanitizeObjectStrings(rawRow);
+      winAnsiCount += rowFixes;
 
-      const caseData = {
+      const refNo = row["Reference ID"]?.toString() || "";
+      if (!refNo) {
+        console.warn("Skipping row with empty Reference ID:", row);
+        continue;
+      }
+
+      const rawCaseData = {
         client: row["Client"] || "",
         matrixRefNo: refNo,
         checkType: row["Check type"] || "",
         company: row["company"] || "",
         candidateName: row["Candidate Name"] || "",
         candidateEmail: (() => {
-          // Excel headers vary a lot; normalize keys so "gmail" works too.
           const byLower = {};
           Object.keys(row || {}).forEach((k) => {
             byLower[String(k).trim().toLowerCase()] = row[k];
           });
-          const raw =
-            row["Candidate Email"] ||
-            row["candidate email"] ||
-            row["Email"] ||
-            row["E-mail"] ||
-            row["Gmail"] ||
-            row["gmail"] ||
-            byLower["candidate email"] ||
-            byLower["gmail"] ||
-            byLower["email"] ||
-            byLower["e-mail"] ||
-            "";
-          return String(raw || "").trim();
+          return byLower["candidate email"] || byLower["gmail"] || byLower["email"] || "";
         })(),
         address: row["Address"] || "",
         chkType: row["ChkType"] || "",
@@ -1448,6 +1472,11 @@ export default function AdminPanelScreen({ navigation }) {
         comments: row["comments"] || "",
         ingestedAt: new Date().toISOString(),
       };
+
+      // Apply the new, more powerful sanitizer to the entire object
+      // This is a second pass to ensure any constructed strings are also clean
+      const { sanitizedObject: caseData, totalCount: caseDataFixes } = sanitizeObjectStrings(rawCaseData);
+      winAnsiCount += caseDataFixes;
 
       // Check for exact duplicates (all fields match) to prevent re-uploading same file
       const isDuplicate = cases.some((existing) => {
@@ -1493,8 +1522,12 @@ export default function AdminPanelScreen({ navigation }) {
     if (addedIds.length > 0) {
       setLastUploadBatch({ ids: addedIds, count: addedIds.length, at: new Date().toISOString() });
     }
-    if (Platform.OS === "web") alert(`Upload Complete\nAdded: ${addedCount}\nSkipped (Exact Duplicates): ${duplicateCount}`);
-    else Alert.alert("Upload Complete", `Added: ${addedCount}\nSkipped (Exact Duplicates): ${duplicateCount}`);
+    const successMessage = `Upload Complete\nAdded: ${addedCount}\nSkipped (Exact Duplicates): ${duplicateCount}` +
+      (winAnsiCount > 0 ? `\nSpecial Characters Fixed: ${winAnsiCount}` : "");
+
+    if (Platform.OS === "web") {
+      alert(successMessage);
+    } else Alert.alert("Upload Complete", successMessage);
   };
 
   const StatCard = ({ label, value, icon, color, change, onPress }) => {
@@ -3096,8 +3129,8 @@ const styles = StyleSheet.create({
   headerCell: { fontWeight: "600", textTransform: 'uppercase', fontSize: 11, letterSpacing: 0.5 },
   headerCellMobile: { fontSize: 9, letterSpacing: 0.2 },
   caseRow: { flexDirection: "row", borderBottomWidth: 1, paddingVertical: 8, alignItems: "center", paddingHorizontal: 8 },
-  caseRowMobile: { paddingVertical: 8, paddingHorizontal: 6 },
-  iconActionBtn: { borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginHorizontal: 2 },
+  caseRowMobile: { paddingVertical: 12, paddingHorizontal: 6 },
+  iconActionBtn: { borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginHorizontal: 4 },
   
   assigneeCell: {
     flexDirection: 'row',
