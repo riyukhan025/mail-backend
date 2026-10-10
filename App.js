@@ -45,6 +45,7 @@ import MemberViewScreen from "./app/MemberViewScreen";
 import MonthEndReportScreen from "./app/MonthEndReportScreen";
 import MyTicketsScreen from "./app/MyTicketsScreen";
 import PlanYourDayScreen from "./app/PlanYourDayScreen";
+import PostCompletionFeedbackScreen from "./app/PostCompletionFeedbackScreen";
 import RaiseTicketScreen from "./app/RaiseTicketScreen";
 import RevertedCasesScreen from "./app/RevertedCasesScreen";
 import RewardsScreen from "./app/RewardsScreen";
@@ -131,6 +132,7 @@ function AdminStack() {
       <Stack.Screen name="MemberReportsScreen" component={MemberReportsScreen} />
       <Stack.Screen name="MemberReportDetailScreen" component={MemberReportDetailScreen} />
       <Stack.Screen name="MemberReportSendScreen" component={MemberReportSendScreen} />
+      <Stack.Screen name="PostCompletionFeedbackScreen" component={PostCompletionFeedbackScreen} />
       <Stack.Screen
         name="AdminEmailScreen"
         component={AdminEmailScreen}

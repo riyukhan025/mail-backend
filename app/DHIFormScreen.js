@@ -24,57 +24,180 @@ import WebSignaturePad from "./WebSignaturePad";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { get, getDatabase, ref, update } from "firebase/database";
 
-/* ================= ACROFIELDS (DHI) ================= */
-const TEXT_FIELDS = {
-  companyName: "Multi_1",
-  addressLine1: "Multi_2",
-  addressLine2: "Multi_3",
-  locationDetailsIfNoCompany: "Multi_4",
-  officeSpace: "Multi_5",
-  employeeCount: "Multi_6",
-  businessNature: "Multi_7",
-  respondentDetails: "Multi_8",
-  verifierDetails: "Multi_9",
-  emailIds: "Multi_10",
-  phoneNumbers: "Multi_11",
-  additionalContacts: "Multi_12",
-  neighbor1: "Multi_13",
-  neighbor2: "Multi_14",
-  postalCheck: "Multi_15",
-  courierCheck: "Multi_16",
-  comments: "Multi_17",
-  fieldAssistantSignatureText: "Multi_19",
-  date: "Multi_19",
-  time: "Multi_20"
-};
+const RELATIONSHIP_OPTIONS = [
+  "Self",
+  "Father",
+  "Mother",
+  "Husband",
+  "Wife",
+  "Son",
+  "Daughter",
+  "Brother",
+  "Sister",
+  "Father-in-law",
+  "Mother-in-law",
+  "Brother-in-law",
+  "Sister-in-law",
+  "Uncle",
+  "Aunt",
+  "Grandfather",
+  "Grandmother",
+  "Neighbour",
+  "Other",
+];
 
-const CHECKBOX_FIELDS = {
-  // Is Name Board Displayed?
-  nameBoardYes: "Check_1",
-  nameBoardNo: "Check_2",
+/* ================= ACROFIELDS (DHI RESIDENCE) ================= */
+const DHI_FIELD_LAYOUT = [
+  {
+    section: "Case Details",
+    fields: [
+      { key: "caseReferenceNumber", label: "Case Ref. No.", pdfName: "text_14v1i", type: "text" },
+      { key: "dateOfInitiation", label: "Date of Initiation", pdfName: "text_26y6i", type: "text" },
+      { key: "candidateName", label: "Candidate's Name", pdfName: "text_35y0m", type: "text" },
+      { key: "candidateAddressPhone", label: "Address & Phone Number Given by Candidate", pdfName: "textarea_42g1b", type: "text" },
+      { key: "periodOfStayFrom", label: "Period of Stay - From (DD/MM/YY)", pdfName: "text_379r6c", type: "text" },
+      { key: "periodOfStayTo", label: "Period of Stay - To (DD/MM/YY)", pdfName: "text_380n0r", type: "text" },
+    ],
+  },
+  {
+    section: "Nature of Residence",
+    fields: [
+      { key: "ownHouse", label: "Own House", pdfName: "checkbox_52e5p", type: "checkbox" },
+      { key: "rental", label: "Rental", pdfName: "checkbox_67h2x", type: "checkbox" },
+      { key: "payingGuest", label: "Paying Guest (PG)", pdfName: "checkbox_72v7u", type: "checkbox" },
+      { key: "hostel", label: "Hostel", pdfName: "checkbox_85i9c", type: "checkbox" },
+      { key: "otherResidence", label: "Others", pdfName: "checkbox_95f0i", type: "checkbox" },
+    ],
+  },
+  {
+    section: "Identity Proof Provided",
+    fields: [
+      { key: "aadhaar", label: "Aadhaar Card", pdfName: "checkbox_109p8s", type: "checkbox" },
+      { key: "passport", label: "Passport", pdfName: "checkbox_110f3d", type: "checkbox" },
+      { key: "drivingLicense", label: "Driving License", pdfName: "checkbox_129l0i", type: "checkbox" },
+      { key: "powerBill", label: "Power Bill", pdfName: "checkbox_138h9k", type: "checkbox" },
+      { key: "waterBill", label: "Water Bill", pdfName: "checkbox_140n6v", type: "checkbox" },
+      { key: "phoneBill", label: "Phone Bill", pdfName: "checkbox_154x7s", type: "checkbox" },
+      { key: "bankStatement", label: "Bank Statement", pdfName: "checkbox_164h5x", type: "checkbox" },
+      { key: "creditCardStatement", label: "Credit Card Statement", pdfName: "checkbox_178v5e", type: "checkbox" },
+      { key: "electionCard", label: "Election Card", pdfName: "checkbox_188y0c", type: "checkbox" },
+      { key: "otherIdentityProof", label: "Other", pdfName: "checkbox_199v8c", type: "checkbox" },
+      { key: "identityProofOther", label: "Other Identity Proof (Specify)", pdfName: "text_350q5s", type: "text" },
+    ],
+  },
+  {
+    section: "Verified By",
+    fields: [
+      { key: "candidate", label: "Candidate", pdfName: "checkbox_209y8e", type: "checkbox" },
+      { key: "familyMember", label: "Family Member", pdfName: "checkbox_214i6h", type: "checkbox" },
+      { key: "neighbour", label: "Neighbour", pdfName: "checkbox_229t0s", type: "checkbox" },
+      { key: "landlord", label: "Landlord", pdfName: "checkbox_230s1m", type: "checkbox" },
+      { key: "otherVerifier", label: "Other", pdfName: "checkbox_249y1r", type: "checkbox" },
+      { key: "verifiedByOther", label: "Other Verifier (Specify)", pdfName: "text_367i0d", type: "text" },
+    ],
+  },
+  {
+    section: "Respondent",
+    fields: [
+      { key: "respondentName", label: "Respondent's Name", pdfName: "text_290v3b", type: "text" },
+      { key: "respondentRelationship", label: "Relationship with Candidate", pdfName: "text_303l8t", type: "select" },
+    ],
+  },
+  {
+    section: "Verification Details",
+    fields: [
+      { key: "modeOfVerification", label: "Mode of Verification", type: "manualText" },
+    ],
+  },
+  {
+    section: "Internal Use Only",
+    fields: [
+      { key: "fieldAssistantName", label: "Field Assistant's Name", type: "manualText" },
+      { key: "statusClear", label: "Clear / Green", pdfName: "checkbox_260s5m", type: "checkbox" },
+      { key: "statusDiscrepant", label: "Discrepant / Red", pdfName: "checkbox_272o1f", type: "checkbox" },
+      { key: "statusUnable", label: "Unable to Verify / Orange", pdfName: "checkbox_281q1e", type: "checkbox" },
+      { key: "comments", label: "Field Assistant's Comments", type: "manualText" },
+      { key: "date", label: "Date", pdfName: "text_321g9z", type: "text" },
+      { key: "time", label: "Time", pdfName: "text_335h2z", type: "text" },
+    ]
+  },
+];
 
-  // Type of Locality
-  localityResidential: "Check_3",
-  localityCommercial: "Check_4",
+const TEXT_FIELDS = Object.fromEntries(
+  DHI_FIELD_LAYOUT.flatMap(section =>
+    section.fields
+      .filter(field => field.pdfName && (field.type === "text" || field.type === "select"))
+      .map(field => [field.key, field.pdfName])
+  )
+);
 
-  // Does company exist?
-  companyExistsYes: "Check_5",
-  companyExistsNo: "Check_6",
-
-  // Status of Verification
-  statusClear: "Check_7",
-  statusDiscrepant: "Check_8",
-  statusUnable: "Check_9",
-};
+const CHECKBOX_FIELDS = Object.fromEntries(
+  DHI_FIELD_LAYOUT.flatMap(section =>
+    section.fields
+      .filter(field => field.type === "checkbox")
+      .map(field => [field.key, field.pdfName])
+  )
+);
 
 /* ================= SIGNATURE COORDS ================= */
 const SIGNATURE_COORDS = {
-  verifier: { x: 330, y: 95, width: 160, height: 45 },
+  verifier: { x: 151, y: 181, width: 157, height: 31 },
 };
 
 /* ================= CLOUDINARY CONFIG ================= */
 const CLOUD_NAME = "dfpykheky";
 const UPLOAD_PRESET = "cases_upload";
+
+const normalizeBoolean = (value) => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return ["true", "yes", "y", "1", "checked", "selected"].includes(normalized);
+  }
+  return Boolean(value);
+};
+
+const hydrateFormFromData = (source = {}) => {
+  const now = new Date();
+  const address = source.address || source.addressLine1 || "";
+  const phone = source.contactNumber || source.phoneNumbers || "";
+  const nextForm = {
+    caseReferenceNumber: String(source.matrixRefNo || source.RefNo || source.caseReferenceNumber || ""),
+    dateOfInitiation: String(source.dateOfInitiation || source.date || now.toLocaleDateString()),
+    candidateName: String(source.candidateName || source.applicantName || ""),
+    candidateAddressPhone: String(source.candidateAddressPhone || [address, phone].filter(Boolean).join(", ")),
+    periodOfStayFrom: String(source.periodOfStayFrom || ""),
+    periodOfStayTo: String(source.periodOfStayTo || ""),
+    identityProofOther: String(source.identityProofOther || ""),
+    verifiedByOther: String(source.verifiedByOther || ""),
+    respondentName: String(source.respondentName || ""),
+    respondentRelationship: String(source.respondentRelationship || ""),
+    fieldAssistantName: String(source.assigneeName || source.fieldAssistantName || ""),
+    modeOfVerification: String(
+      source.modeOfVerification || source.verificationMode || "Manual/physical"
+    ),
+    comments: String(source.comments || ""),
+    date: String(source.verificationDate || source.date || now.toLocaleDateString()),
+    time: String(source.verificationTime || source.time || now.toLocaleTimeString()),
+    checkboxes: {},
+    verifierSignature: String(source.verifierSignature || ""),
+  };
+
+  const checkboxSource = source.checkboxes || source.dhiForm?.checkboxes || {};
+  Object.keys(CHECKBOX_FIELDS).forEach((key) => {
+    const aliases = {
+      statusClear: "clear",
+      statusDiscrepant: "discrepant",
+      statusUnable: "unableToVerify",
+    };
+    nextForm.checkboxes[key] = normalizeBoolean(
+      checkboxSource[key] ?? checkboxSource[aliases[key]]
+    );
+  });
+
+  return nextForm;
+};
 
 async function uploadPdfToCloudinary(pdfData, caseId) {
   const formData = new FormData();
@@ -117,36 +240,26 @@ export default function DHIFormScreen() {
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState("");
   const [signingField, setSigningField] = useState(null);
+  const [relationshipPickerVisible, setRelationshipPickerVisible] = useState(false);
   const canGoBack = useRef(false);
 
   const [form, setForm] = useState({
     caseReferenceNumber: "",
-    companyName: "",
-    addressLine1: "",
-    addressLine2: "",
-    locationDetailsIfNoCompany: "",
-    officeSpace: "",
-    employeeCount: "",
-    businessNature: "",
-    respondentDetails: "",
-    verifierDetails: "",
-    emailIds: "",
-    phoneNumbers: "",
-    additionalContacts: "",
-    neighbor1: "",
-    neighbor2: "",
-    postalCheck: "",
-    courierCheck: "",
+    dateOfInitiation: new Date().toLocaleDateString(),
+    candidateName: "",
+    candidateAddressPhone: "",
+    periodOfStayFrom: "",
+    periodOfStayTo: "",
+    identityProofOther: "",
+    verifiedByOther: "",
+    respondentName: "",
+    respondentRelationship: "",
     fieldAssistantName: "",
+    modeOfVerification: "Manual/physical",
     comments: "",
-    fieldAssistantSignatureText: "",
     date: new Date().toLocaleDateString(),
     time: new Date().toLocaleTimeString(),
-    
-    // Checkboxes
     checkboxes: {},
-    
-    respondentSignature: "",
     verifierSignature: "",
   });
 
@@ -154,20 +267,9 @@ export default function DHIFormScreen() {
   useEffect(() => {
     const loadData = (data) => {
       if (!data) return;
-      setForm(prev => ({
-        ...prev,
-        caseReferenceNumber: String(data.matrixRefNo || data.RefNo || ""),
-        companyName: String(data.company || data.client || ""),
-        addressLine1: String(data.address || ""),
-        respondentDetails: String(data.respondentName || ""),
-        phoneNumbers: String(data.contactNumber || ""),
-        fieldAssistantName: String(data.assigneeName || ""),
-        checkboxes: data.checkboxes || {},
-        respondentSignature: String(data.respondentSignature || ""),
-        verifierSignature: String(data.verifierSignature || ""),
-      }));
-      console.log('loadData data', data);
-      };
+      const hydrated = hydrateFormFromData(data);
+      setForm(prev => ({ ...prev, ...hydrated }));
+    };
 
     if (route.params?.existingData) {
       loadData(route.params.existingData);
@@ -178,7 +280,7 @@ export default function DHIFormScreen() {
         setLoading(false);
       });
     }
-  }, [caseId, route.params]);
+  }, [caseId, route.params?.existingData, db]);
 
   /* ================= BACK HANDLER ================= */
   useEffect(() => {
@@ -242,8 +344,7 @@ export default function DHIFormScreen() {
       setProgress(0.1);
       setProgressMessage("Initializing...");
 
-      // Ensure you have DHI_Format.pdf in your assets folder
-      const asset = Asset.fromModule(require("../assets/DHI_FORM.pdf"));
+      const asset = Asset.fromModule(require("../assets/DHI Residence Template.pdf"));
       await asset.downloadAsync();
 
       setProgress(0.2);
@@ -265,85 +366,92 @@ export default function DHIFormScreen() {
       
       const pdfForm = pdfDoc.getForm();
 
-      // --- DEBUG: Log all fields found in the PDF ---
-      const fields = pdfForm.getFields();
-      console.log(`[DEBUG] Total Fields Found: ${fields.length}`);
-      let textCount = 0;
-      let checkCount = 0;
-      fields.forEach(f => {
-        const type = f.constructor.name;
-        const name = f.getName();
-        console.log(`[DEBUG] Field: ${name} (${type})`);
-        if (type === 'PDFTextField') textCount++;
-        if (type === 'PDFCheckBox') checkCount++;
-      });
-      console.log(`[DEBUG] Summary: ${textCount} TextFields, ${checkCount} Checkboxes`);
-      // ----------------------------------------------
-
-      /* FIX BLUE BOX ISSUE - Set default appearance */
-      pdfForm.getFields().forEach(field => {
-        try {
-          field.acroField.setDefaultAppearance('/TiIt 9 Tf 0 g');
-        } catch (e) {}
-      });
-
       setProgress(0.4);
       setProgressMessage("Filling form data...");
       
-      // Fill Text Fields
-      Object.entries(TEXT_FIELDS).forEach(([k, v]) => {
-        try {
-            if (form[k]) pdfForm.getTextField(v).setText(form[k]);
-        } catch (err) {
-            console.log(`Field ${v} not found in PDF`);
-        }
+      Object.entries(TEXT_FIELDS).forEach(([key, fieldName]) => {
+        pdfForm.getTextField(fieldName).setText(form[key] || "");
       });
 
-      // Fill Checkboxes
       Object.entries(CHECKBOX_FIELDS).forEach(([key, fieldName]) => {
-        try {
-          const cb = pdfForm.getCheckBox(fieldName);
-          if (form.checkboxes[key]) {
-            cb.check();
-          } else {
-            cb.uncheck();
-          }
-        } catch (err) {
-          console.log(`Checkbox ${fieldName} error: ${err.message}`);
-        }
+        const checkbox = pdfForm.getCheckBox(fieldName);
+        if (form.checkboxes[key]) checkbox.check();
+        else checkbox.uncheck();
       });
-
-      // Manually place Field Assistant Name
-      if (form.fieldAssistantName) {
-        const font = await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
-        const page = pdfDoc.getPages()[0];
-        page.drawText(form.fieldAssistantName, {
-            x: 330,
-            y: 145, // Placed above the signature
-            size: 10,
-            font: font,
-            color: rgb(0, 0, 0),
-        });
-      }
+      const selectedCheckboxes = Object.entries(CHECKBOX_FIELDS)
+        .filter(([key]) => form.checkboxes[key])
+        .map(([, fieldName]) =>
+          pdfForm.getCheckBox(fieldName).acroField.getWidgets()[0].getRectangle()
+        );
 
       setProgress(0.6);
       setProgressMessage("Embedding signatures...");
       await embedSignature(pdfDoc, form.verifierSignature, SIGNATURE_COORDS.verifier);
 
-      /* FIX BLUE BOX ISSUE - Update appearances and flatten */
-      try {
-        pdfForm.updateFieldAppearances();
-      } catch (e) {
-        console.log("Error updating field appearances:", e);
+      pdfForm.updateFieldAppearances();
+      const page = pdfDoc.getPages()[0];
+      const font = await pdfDoc.embedFont(StandardFonts.TimesRoman);
+      if (form.fieldAssistantName) {
+        page.drawText(form.fieldAssistantName, {
+          x: 155,
+          y: 278,
+          size: 10,
+          font,
+          color: rgb(0, 0, 0),
+        });
+      }
+      if (form.modeOfVerification) {
+        page.drawText(form.modeOfVerification, {
+          x: 442,
+          y: 295,
+          size: 10,
+          font,
+          color: rgb(0, 0, 0),
+        });
+      }
+      page.drawRectangle({
+        x: 151,
+        y: 215,
+        width: 430,
+        height: 25,
+        color: rgb(1, 1, 1),
+      });
+      if (form.comments.trim()) {
+        page.drawText(form.comments.trim(), {
+          x: 155,
+          y: 229,
+          size: 9,
+          font,
+          color: rgb(0, 0, 0),
+          maxWidth: 422,
+          lineHeight: 11,
+        });
       }
 
-      // Fix for blue boxes: make all fields read-only before flattening
-      pdfForm.getFields().forEach(field => {
-        try { field.enableReadOnly(); } catch (e) {}
-      });
-      pdfForm.flatten();
+      const signatureField = pdfForm.getField("signature_314b4u");
+      const signatureWidget = signatureField.acroField.getWidgets()[0];
+      const appearanceField = pdfForm.getTextField("text_14v1i");
+      const appearanceWidget = appearanceField.acroField.getWidgets()[0];
+      signatureWidget.setNormalAppearance(appearanceWidget.getNormalAppearance());
+      pdfForm.removeField(signatureField);
 
-      // Nuclear option: Remove all annotations to ensure no blue boxes
+      pdfForm.getFields().forEach(field => field.enableReadOnly());
+      pdfForm.flatten();
+      selectedCheckboxes.forEach(({ x, y, width, height }) => {
+        page.drawLine({
+          start: { x: x + width * 0.2, y: y + height * 0.52 },
+          end: { x: x + width * 0.43, y: y + height * 0.28 },
+          thickness: 1.2,
+          color: rgb(0, 0, 0),
+        });
+        page.drawLine({
+          start: { x: x + width * 0.43, y: y + height * 0.28 },
+          end: { x: x + width * 0.82, y: y + height * 0.78 },
+          thickness: 1.2,
+          color: rgb(0, 0, 0),
+        });
+      });
+
       pdfDoc.getPages().forEach(page => {
         page.node.delete(PDFName.of('Annots'));
       });
@@ -393,7 +501,7 @@ export default function DHIFormScreen() {
       navigation.goBack();
     } catch (e) {
       console.error(e);
-      Alert.alert("Error", "Failed to generate PDF. Ensure DHI_Format.pdf exists in assets.");
+      Alert.alert("Error", `Failed to generate DHI residence PDF: ${e.message}`);
     } finally {
       setSaving(false);
     }
@@ -410,34 +518,107 @@ export default function DHIFormScreen() {
         <Text style={styles.headerTitle}>DHI Verification Form</Text>
       </View>
 
-      <Text style={styles.sectionTitle}>Company & Location</Text>
-      {Object.keys(TEXT_FIELDS).map(k => (
-        <View key={k} style={{ marginBottom: 10 }}>
-          <Text style={styles.label}>{k.replace(/([A-Z])/g, ' $1').trim()}</Text>
-          <TextInput
-            placeholder={`Enter ${k}`}
-            style={styles.input}
-            value={form[k]}
-            onChangeText={v => setForm({ ...form, [k]: v })}
-          />
-        </View>
-      ))}
+      {DHI_FIELD_LAYOUT.map((section) => (
+        <View key={section.section} style={{ marginBottom: 18 }}>
+          <Text style={styles.sectionTitle}>{section.section}</Text>
 
-      <Text style={styles.sectionTitle}>Checklist</Text>
-      {Object.keys(CHECKBOX_FIELDS).map(k => (
-        <TouchableOpacity
-          key={k}
-          style={styles.checkboxRow}
-          onPress={() =>
-            setForm(f => ({
-              ...f,
-              checkboxes: { ...f.checkboxes, [k]: !f.checkboxes[k] }
-            }))
-          }
-        >
-          <View style={[styles.checkbox, form.checkboxes[k] && styles.checked]} />
-          <Text>{k.replace(/([A-Z])/g, ' $1').trim()}</Text>
-        </TouchableOpacity>
+          {section.fields.map((field) => {
+            if (field.type === "checkbox") {
+              return (
+                <TouchableOpacity
+                  key={field.key}
+                  style={styles.checkboxRow}
+                  onPress={() =>
+                    setForm((current) => ({
+                      ...current,
+                      checkboxes: { ...current.checkboxes, [field.key]: !current.checkboxes[field.key] }
+                    }))
+                  }
+                >
+                  <View style={[styles.checkbox, form.checkboxes[field.key] && styles.checked]} />
+                  <Text>{field.label}</Text>
+                </TouchableOpacity>
+              );
+            }
+
+            if (field.key === "respondentRelationship") {
+              const currentRelationship = String(form.respondentRelationship || "");
+              const isCustomRelationship =
+                currentRelationship !== "" &&
+                !RELATIONSHIP_OPTIONS.includes(currentRelationship);
+
+              return (
+                <View key={field.key} style={{ marginBottom: 10 }}>
+                  <Text style={styles.label}>{field.label}</Text>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel={`${field.label}: ${isCustomRelationship ? currentRelationship : currentRelationship || "Select relationship"}`}
+                    style={styles.dropdown}
+                    onPress={() => setRelationshipPickerVisible(true)}
+                  >
+                    <Text style={currentRelationship ? styles.dropdownValue : styles.dropdownPlaceholder}>
+                      {isCustomRelationship ? currentRelationship : currentRelationship || "Select relationship..."}
+                    </Text>
+                    <Ionicons name="chevron-down" size={20} color="#555" />
+                  </TouchableOpacity>
+                  {(currentRelationship === "Other" || isCustomRelationship) && (
+                    <TextInput
+                      placeholder="Enter relationship"
+                      style={styles.input}
+                      value={isCustomRelationship ? currentRelationship : ""}
+                      onChangeText={(value) =>
+                        setForm((current) => ({
+                          ...current,
+                          respondentRelationship: value,
+                        }))
+                      }
+                    />
+                  )}
+                </View>
+              );
+            }
+
+            if (field.key === "modeOfVerification") {
+              return (
+                <View key={field.key} style={{ marginBottom: 10 }}>
+                  <Text style={styles.label}>{field.label}</Text>
+                  <TextInput
+                    accessibilityLabel={field.label}
+                    placeholder="Enter mode of verification"
+                    style={styles.input}
+                    value={String(form.modeOfVerification || "Manual/physical")}
+                    onChangeText={(value) =>
+                      setForm((current) => ({
+                        ...current,
+                        modeOfVerification: value,
+                      }))
+                    }
+                  />
+                </View>
+              );
+            }
+
+            return (
+              <View key={field.key} style={{ marginBottom: 10 }}>
+                <Text style={styles.label}>{field.label}</Text>
+                <TextInput
+                  placeholder={
+                    field.key === "periodOfStayFrom" || field.key === "periodOfStayTo"
+                      ? "DD/MM/YY"
+                      : `Enter ${field.label}`
+                  }
+                  multiline={field.key === "comments" || field.key === "candidateAddressPhone"}
+                  style={[
+                    styles.input,
+                    (field.key === "comments" || field.key === "candidateAddressPhone") && styles.multilineInput,
+                  ]}
+                  value={String(form[field.key] ?? "")}
+                  onChangeText={(value) => setForm((current) => ({ ...current, [field.key]: value }))}
+                />
+              </View>
+            );
+          })}
+        </View>
       ))}
 
       {/* SIGNATURES */}
@@ -456,6 +637,45 @@ export default function DHIFormScreen() {
       <TouchableOpacity style={styles.submit} onPress={generatePdf}>
         <Text style={{ color: "#fff" }}>{saving ? "Saving..." : "Generate DHI PDF"}</Text>
       </TouchableOpacity>
+
+      <Modal
+        visible={relationshipPickerVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setRelationshipPickerVisible(false)}
+      >
+        <View style={styles.dropdownOverlay}>
+          <View style={styles.dropdownMenu}>
+            <Text style={styles.dropdownTitle}>Relationship with Candidate</Text>
+            <ScrollView>
+              {RELATIONSHIP_OPTIONS.map((relationship) => (
+                <TouchableOpacity
+                  key={relationship}
+                  style={styles.dropdownOption}
+                  onPress={() => {
+                    setForm((current) => ({
+                      ...current,
+                      respondentRelationship: relationship,
+                    }));
+                    setRelationshipPickerVisible(false);
+                  }}
+                >
+                  <Text style={styles.dropdownOptionText}>{relationship}</Text>
+                  {form.respondentRelationship === relationship && (
+                    <Ionicons name="checkmark" size={20} color="#007AFF" />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity
+              style={styles.dropdownCancel}
+              onPress={() => setRelationshipPickerVisible(false)}
+            >
+              <Text style={styles.dropdownCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={!!signingField} animationType="slide">
         <View style={{ flex: 1, backgroundColor: "#fff" }}>
@@ -506,6 +726,45 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 16, fontWeight: "bold", marginTop: 10, marginBottom: 10 },
   label: { fontSize: 12, color: "#666", marginBottom: 4 },
   input: { borderWidth: 1, borderColor: "#ccc", padding: 10, marginBottom: 12, borderRadius: 5 },
+  multilineInput: { minHeight: 72, textAlignVertical: "top" },
+  dropdown: {
+    minHeight: 48,
+    borderWidth: 1,
+    borderColor: "#ccc",
+    borderRadius: 5,
+    marginBottom: 12,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#fff",
+  },
+  dropdownValue: { color: "#222", fontSize: 16 },
+  dropdownPlaceholder: { color: "#777", fontSize: 16 },
+  dropdownOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    padding: 24,
+    backgroundColor: "rgba(0,0,0,0.45)",
+  },
+  dropdownMenu: {
+    maxHeight: "80%",
+    backgroundColor: "#fff",
+    borderRadius: 10,
+    padding: 16,
+  },
+  dropdownTitle: { fontSize: 18, fontWeight: "bold", marginBottom: 10 },
+  dropdownOption: {
+    minHeight: 44,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#ddd",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  dropdownOptionText: { color: "#222", fontSize: 16 },
+  dropdownCancel: { alignItems: "center", paddingTop: 14 },
+  dropdownCancelText: { color: "#007AFF", fontWeight: "600" },
   checkboxRow: { flexDirection: "row", alignItems: "center", marginBottom: 10 },
   checkbox: { width: 20, height: 20, borderWidth: 1, marginRight: 10 },
   checked: { backgroundColor: "#000" },

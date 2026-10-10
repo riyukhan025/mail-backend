@@ -10,22 +10,22 @@ import * as MailComposer from "expo-mail-composer";
 import * as Speech from "expo-speech";
 import { createElement, useContext, useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  Animated,
-  Dimensions,
-  Easing,
-  Image,
-  Linking,
-  Modal,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    Animated,
+    Dimensions,
+    Easing,
+    Image,
+    Linking,
+    Modal,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Switch,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from "react-native";
 import { LineChart } from "react-native-chart-kit";
 import * as XLSX from "xlsx";
@@ -414,6 +414,7 @@ export default function AdminPanelScreen({ navigation }) {
   const sidebarItems = [
     { label: "Command", icon: "grid-outline", screen: "AdminPanel" },
     { label: "Users", icon: "people-outline", screen: "MemberViewScreen" },
+    { label: "Feedback Monitor", icon: "call-outline", screen: "PostCompletionFeedbackScreen" },
     { label: "Completed", icon: "checkmark-done-circle-outline", screen: "CompletedCases" },
     { label: "Reverted", icon: "refresh-circle-outline", screen: "RevertedCasesScreen" },
     { label: "Verify", icon: "shield-checkmark-outline", screen: "VerifyProfileScreen" },
