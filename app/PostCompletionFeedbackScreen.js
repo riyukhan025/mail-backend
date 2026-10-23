@@ -22,7 +22,7 @@ function getNotificationRows(caseItem) {
   const notifications = caseItem.whatsappNotifications || {};
   const rows = [];
 
-  ["assignment", "completion"].forEach((type) => {
+  ["assignment", "auditFeedback", "completion"].forEach((type) => {
     const records = notifications[type] || {};
     Object.entries(records).forEach(([key, record]) => {
       rows.push({
@@ -42,7 +42,7 @@ function getNotificationRows(caseItem) {
 
   const status = String(caseItem.status || "").toLowerCase();
   const hasAssignment = rows.some((row) => row.type === "assignment");
-  const hasCompletion = rows.some((row) => row.type === "completion");
+  const hasAuditFeedback = rows.some((row) => row.type === "auditFeedback");
   const addUnrecordedRow = (type) => {
     rows.push({
       id: `${caseItem.id}-${type}-unrecorded`,
@@ -61,7 +61,7 @@ function getNotificationRows(caseItem) {
   };
 
   if (status === "assigned" && !hasAssignment) addUnrecordedRow("assignment");
-  if (status === "completed" && !hasCompletion) addUnrecordedRow("completion");
+  if (status === "audit" && !hasAuditFeedback) addUnrecordedRow("auditFeedback");
   return rows;
 }
 
@@ -150,7 +150,7 @@ export default function PostCompletionFeedbackScreen({ navigation }) {
           {loading && <ActivityIndicator color="#93c5fd" style={styles.loader} />}
           {!!loadError && <Text style={styles.errorText}>{loadError}</Text>}
           {!loading && !loadError && rows.length === 0 && (
-            <Text style={styles.emptyText}>No assigned or completed cases with WhatsApp notification records yet.</Text>
+            <Text style={styles.emptyText}>No assigned or audited cases with WhatsApp notification records yet.</Text>
           )}
           {rows.map((row) => {
             const color = STATUS_COLORS[row.status] || "#cbd5e1";
@@ -170,7 +170,11 @@ export default function PostCompletionFeedbackScreen({ navigation }) {
                     color="#93c5fd"
                   />
                   <Text style={styles.messageType}>
-                    {row.type === "assignment" ? "Assignment notice" : "Completion questionnaire"}
+                    {row.type === "assignment"
+                      ? "Assignment notice"
+                      : row.type === "auditFeedback"
+                        ? "Audit feedback questions"
+                        : "Legacy completion questionnaire"}
                   </Text>
                 </View>
                 <Text style={styles.detail}>Field officer: {row.fieldOfficer}</Text>

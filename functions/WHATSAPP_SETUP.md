@@ -1,6 +1,6 @@
 # WhatsApp case notifications
 
-`sendCaseWhatsappNotifications` sends approved WhatsApp template messages when a case is assigned and when its status changes to `completed`. Message delivery runs from Firebase Functions; the access token and phone-number ID are never placed in the app.
+`sendCaseWhatsappNotifications` sends approved WhatsApp template messages when a case is assigned and when its status changes to `audit`. Message delivery runs from Firebase Functions; the access token and phone-number ID are never placed in the app.
 
 ## Candidate opt-in and phone number
 
@@ -14,15 +14,15 @@ Create these templates in WhatsApp Manager and wait for approval. The names and 
 
 **`spacesolutions_assignment_alert`** — utility template, English (`en`), with three body text parameters:
 
-> Hello {{1}}, your background verification has been assigned to {{2}}, who will contact you shortly. Please do not offer or pay any bribe, even if requested; this is an offence. Immediately report any bribe request to 9962873989. Case reference: {{3}}.
+> Hello {{1}}, your verification has been assigned to member {{2}}. They will contact you shortly. Please do not offer or pay any bribe, even if someone asks; this is an offence. Report any bribe request immediately by calling 9962873989 or replying to this WhatsApp message so we can take appropriate legal steps. Case reference: {{3}}.
 
 The parameters are candidate name, field-officer name, and case reference, in that order.
 
-**`spacesolutions_completion_questionnaire`** — utility template, English (`en`), no parameters:
+**`spacesolutions_audit_feedback`** — utility template, English (`en`), no parameters:
 
-> Your verification is complete. Please reply with your feedback: 1. Are you satisfied with the verification process? (Yes/No) 2. Was the member who handled your verification helpful and respectful? (Yes/No) 3. Did the member ask you for a bribe? (Yes/No). If you answered Yes to question 3, report it immediately to 9962873989.
+> Your verification is now under audit. Please reply to these questions: 1. Are you satisfied with the verification process? (Yes/No) 2. Was the member who handled your case professional and helpful? (Yes/No) 3. Did the member ask you for or hint at a bribe? (Yes/No). If you answered Yes to question 3, report it immediately by calling 9962873989 or replying here.
 
-This integration sends the questionnaire but does not yet receive or save WhatsApp replies.
+The audit message is sent when a case enters `audit` from another status. The integration sends these messages but does not yet receive or save candidate replies; replies go to the WhatsApp Business inbox. Configure a WhatsApp webhook separately if replies must be stored in the app.
 
 ## Configure and deploy
 
@@ -44,8 +44,8 @@ This integration sends the questionnaire but does not yet receive or save WhatsA
 
    - `WHATSAPP_GRAPH_API_VERSION` (default `v23.0`; use a Graph API version supported by your Meta app)
    - `WHATSAPP_ASSIGNMENT_TEMPLATE` (default `spacesolutions_assignment_alert`)
-   - `WHATSAPP_COMPLETION_TEMPLATE` (default `spacesolutions_completion_questionnaire`)
+   - `WHATSAPP_AUDIT_TEMPLATE` (default `spacesolutions_audit_feedback`)
    - `WHATSAPP_TEMPLATE_LANGUAGE` (default `en`)
    - `WHATSAPP_DEFAULT_COUNTRY_CODE` (default `91`, digits only)
 
-Delivery attempts are visible in the admin WhatsApp Monitor and at `cases/{caseId}/whatsappNotifications/{assignment|completion}`. A separate server-side claim record prevents duplicate sends if Firebase retries an event.
+Delivery attempts are visible in the admin WhatsApp Monitor and at `cases/{caseId}/whatsappNotifications/{assignment|auditFeedback}`. A separate server-side claim record prevents duplicate sends if Firebase retries an event.

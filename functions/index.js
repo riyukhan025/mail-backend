@@ -13,8 +13,8 @@ const whatsappGraphApiVersion = defineString("WHATSAPP_GRAPH_API_VERSION", { def
 const whatsappAssignmentTemplate = defineString("WHATSAPP_ASSIGNMENT_TEMPLATE", {
   default: "spacesolutions_assignment_alert",
 });
-const whatsappCompletionTemplate = defineString("WHATSAPP_COMPLETION_TEMPLATE", {
-  default: "spacesolutions_completion_questionnaire",
+const whatsappAuditTemplate = defineString("WHATSAPP_AUDIT_TEMPLATE", {
+  default: "spacesolutions_audit_feedback",
 });
 const whatsappTemplateLanguage = defineString("WHATSAPP_TEMPLATE_LANGUAGE", { default: "en" });
 const whatsappDefaultCountryCode = defineString("WHATSAPP_DEFAULT_COUNTRY_CODE", { default: "91" });
@@ -163,7 +163,7 @@ exports.sendCaseWhatsappNotifications = onValueWritten(
         || String(before.assignedTo || "") !== String(after.assignedTo || "")
         || String(before.assignedAt || "") !== String(after.assignedAt || "")
       );
-    const completedNow = afterStatus === "completed" && beforeStatus !== "completed";
+    const enteredAudit = afterStatus === "audit" && beforeStatus !== "audit";
 
     if (assignmentChanged) {
       const assignmentKey = crypto
@@ -185,13 +185,18 @@ exports.sendCaseWhatsappNotifications = onValueWritten(
       });
     }
 
-    if (completedNow) {
+    if (enteredAudit) {
+      const auditKey = crypto
+        .createHash("sha256")
+        .update(String(event.id || `${caseId}|${after.completedAt || after.updatedAt || "audit"}`))
+        .digest("hex")
+        .slice(0, 24);
       await sendWhatsappTemplate({
         caseId,
         caseData: after,
-        notificationType: "completion",
-        notificationKey: "completion",
-        templateName: whatsappCompletionTemplate.value(),
+        notificationType: "auditFeedback",
+        notificationKey: auditKey,
+        templateName: whatsappAuditTemplate.value(),
         parameters: [],
       });
     }

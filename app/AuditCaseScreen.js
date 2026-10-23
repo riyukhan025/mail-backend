@@ -107,15 +107,16 @@ export default function AuditCaseScreen({ navigation, route }) {
 
       if (clientName.includes("matrix")) {
           emails = [
-              "radhika.e@matrixbsindia.com",
-              "ananth.n@matrixbsindia.com",
-              "prasanna.arivazhagan@matrixbsindia.com",
               "spacesolution2017@gmail.com",
               "chennaioutstation@matrixbsindia.com",
               "resi3@matrixbsindia.com",
               "dharani.e@matrixbsindia.com",
-              "sathyapriya.i@matrixbsindia.com",
-              "monisha.v@matrixbsindia.com"
+              "monisha.v@matrixbsindia.com",
+              "rajashree.d@matrixbsindia.com",
+              "harish.md@matrixbsindia.com",
+              "kamali.p@matrixbsindia.com",
+              "varna.m@matrixbsindia.com",
+              "residencechn@matrixbsindia.com",
           ];
       } else if (clientName.includes("dhi")) {
           emails = [
