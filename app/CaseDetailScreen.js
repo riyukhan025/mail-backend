@@ -24,6 +24,7 @@ import {
 } from "react-native";
 import firebase from "../firebase";
 import { AuthContext } from "./AuthContext";
+import { buildWhatsAppUrl } from "./utils/whatsapp";
 
 // Cloudinary configuration
 const CLOUD_NAME = "dfpykheky";
@@ -1048,37 +1049,51 @@ const handleCloseCase = async () => {
         });
     };
 
-    // --- NEW: Handle Call with multiple numbers ---
-    const handleCall = () => {
+    const openCandidateWhatsApp = (phone) => {
+        const text = `Hello, regarding your background verification. Case reference: ${caseData.matrixRefNo || caseData.RefNo || caseId}.`;
+        const url = buildWhatsAppUrl(phone, text);
+        if (!url) {
+            const message = "The candidate's contact number is not a valid WhatsApp number.";
+            if (Platform.OS === "web") window.alert(message);
+            else Alert.alert("Invalid WhatsApp number", message);
+            return;
+        }
+
+        Linking.openURL(url).catch((error) => {
+            console.error("Could not open WhatsApp chat:", error);
+            const message = "Could not open WhatsApp. Check that WhatsApp is available and try again.";
+            if (Platform.OS === "web") window.alert(message);
+            else Alert.alert("WhatsApp unavailable", message);
+        });
+    };
+
+    const handleWhatsApp = () => {
         const contact = String(caseData?.contactNumber || "").trim();
         if (!contact) return;
 
-        if (contact.includes('/')) {
-            const numbers = contact.split('/').map(n => n.trim()).filter(Boolean);
+        if (contact.includes("/") || contact.includes(",")) {
+            const numbers = contact.split(/[\/,]/).map((number) => number.trim()).filter(Boolean);
             if (numbers.length > 1) {
                 if (Platform.OS === 'web') {
-                    // Simple choice logic for web
-                    if (window.confirm(`Call ${numbers[0]}? (Cancel to see option for ${numbers[1]})`)) {
-                        Linking.openURL(`tel:${numbers[0]}`);
-                    } else if (window.confirm(`Call ${numbers[1]}?`)) {
-                        Linking.openURL(`tel:${numbers[1]}`);
+                    for (const number of numbers) {
+                        if (window.confirm(`Open WhatsApp for ${number}?`)) {
+                            openCandidateWhatsApp(number);
+                            return;
+                        }
                     }
                     return;
                 }
 
                 Alert.alert(
-                    "Select Number",
-                    "Which number would you like to call?",
-                    [
-                        { text: numbers[0], onPress: () => Linking.openURL(`tel:${numbers[0]}`) },
-                        { text: numbers[1], onPress: () => Linking.openURL(`tel:${numbers[1]}`) },
-                        { text: "Cancel", style: "cancel" }
-                    ]
+                    "Select WhatsApp Number",
+                    "Which candidate number should be opened in WhatsApp?",
+                    [...numbers.map((number) => ({ text: number, onPress: () => openCandidateWhatsApp(number) })),
+                        { text: "Cancel", style: "cancel" }]
                 );
                 return;
             }
         }
-        Linking.openURL(`tel:${contact}`);
+        openCandidateWhatsApp(contact);
     };
 
 
@@ -1185,12 +1200,12 @@ const handleCloseCase = async () => {
                     </View>
 
                     <View style={styles.infoRow}>
-                        <Ionicons name="call-outline" size={18} color="#fbbf24" style={styles.infoIcon} />
+                        <Ionicons name="chatbubble-ellipses-outline" size={18} color="#86efac" style={styles.infoIcon} />
                         <Text style={styles.infoText}>{caseData.contactNumber || "No contact"}</Text>
                         {caseData.contactNumber && (
-                            <TouchableOpacity onPress={handleCall} style={styles.callButton}>
-                                <Ionicons name="call" size={14} color="#fff" />
-                                <Text style={styles.callButtonText}>Call</Text>
+                            <TouchableOpacity onPress={handleWhatsApp} style={styles.callButton} accessibilityLabel="Message candidate on WhatsApp">
+                                <Ionicons name="logo-whatsapp" size={14} color="#fff" />
+                                <Text style={styles.callButtonText}>WhatsApp</Text>
                             </TouchableOpacity>
                         )}
                     </View>

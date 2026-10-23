@@ -2,8 +2,201 @@ const crypto = require("crypto");
 const admin = require("firebase-admin");
 const nodemailer = require("nodemailer");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onValueWritten } = require("firebase-functions/v2/database");
+const { defineSecret, defineString } = require("firebase-functions/params");
 
 admin.initializeApp();
+
+const whatsappAccessToken = defineSecret("WHATSAPP_ACCESS_TOKEN");
+const whatsappPhoneNumberId = defineSecret("WHATSAPP_PHONE_NUMBER_ID");
+const whatsappGraphApiVersion = defineString("WHATSAPP_GRAPH_API_VERSION", { default: "v23.0" });
+const whatsappAssignmentTemplate = defineString("WHATSAPP_ASSIGNMENT_TEMPLATE", {
+  default: "spacesolutions_assignment_alert",
+});
+const whatsappCompletionTemplate = defineString("WHATSAPP_COMPLETION_TEMPLATE", {
+  default: "spacesolutions_completion_questionnaire",
+});
+const whatsappTemplateLanguage = defineString("WHATSAPP_TEMPLATE_LANGUAGE", { default: "en" });
+const whatsappDefaultCountryCode = defineString("WHATSAPP_DEFAULT_COUNTRY_CODE", { default: "91" });
+
+function normalizeWhatsappNumber(value, defaultCountryCode) {
+  let digits = String(value || "").replace(/\D/g, "");
+  if (digits.startsWith("00")) digits = digits.slice(2);
+  if (digits.length === 10) digits = `${defaultCountryCode}${digits}`;
+  if (digits.length < 10 || digits.length > 15) {
+    throw new Error("Candidate contact number is not a valid international phone number.");
+  }
+  return digits;
+}
+
+function whatsappTemplateParameters(values) {
+  return values.length
+    ? [{ type: "body", parameters: values.map((text) => ({ type: "text", text: String(text) })) }]
+    : [];
+}
+
+async function sendWhatsappTemplate({
+  caseId,
+  caseData,
+  notificationType,
+  notificationKey,
+  templateName,
+  parameters,
+}) {
+  const caseRef = admin.database().ref(`cases/${caseId}`);
+  const notificationRef = caseRef.child(`whatsappNotifications/${notificationType}/${notificationKey}`);
+  const claimRef = admin.database().ref(`whatsappMessageClaims/${caseId}/${notificationType}/${notificationKey}`);
+  const timestamp = Date.now();
+  let recipient = null;
+  let recipientError = "";
+  try {
+    recipient = normalizeWhatsappNumber(caseData.contactNumber, whatsappDefaultCountryCode.value());
+  } catch (error) {
+    recipientError = String(error?.message || error);
+  }
+  const hasOptIn = caseData.whatsappOptIn === true;
+  const skipReason = !hasOptIn
+    ? "Candidate WhatsApp opt-in is not recorded for this case."
+    : !recipient
+      ? recipientError || "Candidate contact number is missing or invalid."
+      : "";
+
+  const claim = await claimRef.transaction((current) => (
+    current ? undefined : { status: "sending", createdAt: timestamp }
+  ));
+  if (!claim.committed) return;
+
+  if (skipReason) {
+    const result = {
+      status: "skipped",
+      reason: skipReason,
+      updatedAt: timestamp,
+      recipientLastFour: recipient ? recipient.slice(-4) : null,
+    };
+    await Promise.all([notificationRef.set(result), claimRef.update(result)]);
+    console.warn(`[WhatsApp] Skipped ${notificationType} for case ${caseId}: ${skipReason}`);
+    return;
+  }
+
+  try {
+    const accessToken = whatsappAccessToken.value();
+    const phoneNumberId = whatsappPhoneNumberId.value();
+    const apiVersion = whatsappGraphApiVersion.value();
+    if (!accessToken || !phoneNumberId) {
+      throw new Error("WhatsApp credentials are not configured in Firebase Secret Manager.");
+    }
+    if (!/^v\d+\.\d+$/.test(apiVersion)) {
+      throw new Error("WHATSAPP_GRAPH_API_VERSION must look like vXX.X.");
+    }
+
+    const response = await fetch(
+      `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          recipient_type: "individual",
+          to: recipient,
+          type: "template",
+          template: {
+            name: templateName,
+            language: { code: whatsappTemplateLanguage.value() },
+            ...(parameters.length ? { components: whatsappTemplateParameters(parameters) } : {}),
+          },
+        }),
+      }
+    );
+    const responseText = await response.text();
+    let responseData;
+    try {
+      responseData = responseText ? JSON.parse(responseText) : {};
+    } catch {
+      throw new Error(`WhatsApp API returned invalid JSON (HTTP ${response.status}).`);
+    }
+    if (!response.ok) {
+      throw new Error(responseData.error?.message || `WhatsApp API request failed (HTTP ${response.status}).`);
+    }
+
+    const result = {
+      status: "sent",
+      templateName,
+      messageId: responseData.messages?.[0]?.id || null,
+      recipientLastFour: recipient.slice(-4),
+      sentAt: Date.now(),
+    };
+    await Promise.all([notificationRef.set(result), claimRef.update(result)]);
+  } catch (error) {
+    const result = {
+      status: "failed",
+      templateName,
+      error: String(error?.message || error).slice(0, 500),
+      recipientLastFour: recipient.slice(-4),
+      updatedAt: Date.now(),
+    };
+    console.error(`[WhatsApp] ${notificationType} send failed for case ${caseId}:`, error);
+    await Promise.all([notificationRef.set(result), claimRef.update(result)]);
+  }
+}
+
+exports.sendCaseWhatsappNotifications = onValueWritten(
+  {
+    ref: "/cases/{caseId}",
+    instance: "spacesolutions2-89738-default-rtdb",
+    region: "us-central1",
+    secrets: [whatsappAccessToken, whatsappPhoneNumberId],
+  },
+  async (event) => {
+    const before = event.data.before.val() || {};
+    const after = event.data.after.val();
+    if (!after) return;
+
+    const caseId = event.params.caseId;
+    const beforeStatus = String(before.status || "").toLowerCase();
+    const afterStatus = String(after.status || "").toLowerCase();
+    const assignmentChanged = afterStatus === "assigned"
+      && (
+        beforeStatus !== "assigned"
+        || String(before.assignedTo || "") !== String(after.assignedTo || "")
+        || String(before.assignedAt || "") !== String(after.assignedAt || "")
+      );
+    const completedNow = afterStatus === "completed" && beforeStatus !== "completed";
+
+    if (assignmentChanged) {
+      const assignmentKey = crypto
+        .createHash("sha256")
+        .update(`${after.assignedTo || ""}|${after.assignedAt || ""}`)
+        .digest("hex")
+        .slice(0, 24);
+      await sendWhatsappTemplate({
+        caseId,
+        caseData: after,
+        notificationType: "assignment",
+        notificationKey: assignmentKey,
+        templateName: whatsappAssignmentTemplate.value(),
+        parameters: [
+          after.candidateName || after.name || "Candidate",
+          after.assigneeName || after.assignedToName || "your assigned field officer",
+          after.matrixRefNo || after.refNo || caseId,
+        ],
+      });
+    }
+
+    if (completedNow) {
+      await sendWhatsappTemplate({
+        caseId,
+        caseData: after,
+        notificationType: "completion",
+        notificationKey: "completion",
+        templateName: whatsappCompletionTemplate.value(),
+        parameters: [],
+      });
+    }
+  }
+);
 
 function mustGetConfig(path, hint) {
   // v2 functions still exposes runtime config via process.env for params,

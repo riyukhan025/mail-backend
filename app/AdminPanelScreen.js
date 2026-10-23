@@ -33,6 +33,7 @@ import firebase from "../firebase";
 import { AuthContext } from "./AuthContext";
 import { FINE_CONFIG, getCaseFineInfo } from "./utils/fines";
 import { sanitizeObjectStrings } from "./utils/textSanitizer"; // Import the new sanitizer
+import { buildWhatsAppUrl } from "./utils/whatsapp";
 
 const SCREEN_HEIGHT = Dimensions.get("window").height;
 const SCREEN_WIDTH = Dimensions.get("window").width;
@@ -268,6 +269,7 @@ export default function AdminPanelScreen({ navigation }) {
   const [assignTo, setAssignTo] = useState("");
   const [assignSearchText, setAssignSearchText] = useState("");
   const [assignModalVisible, setAssignModalVisible] = useState(false);
+  const [whatsappOptInConfirmed, setWhatsappOptInConfirmed] = useState(false);
   const [headerFilters, setHeaderFilters] = useState({});
   const [showHeaderFilters, setShowHeaderFilters] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -414,7 +416,7 @@ export default function AdminPanelScreen({ navigation }) {
   const sidebarItems = [
     { label: "Command", icon: "grid-outline", screen: "AdminPanel" },
     { label: "Users", icon: "people-outline", screen: "MemberViewScreen" },
-    { label: "Feedback Monitor", icon: "call-outline", screen: "PostCompletionFeedbackScreen" },
+    { label: "WhatsApp Monitor", icon: "chatbubble-ellipses-outline", screen: "PostCompletionFeedbackScreen" },
     { label: "Completed", icon: "checkmark-done-circle-outline", screen: "CompletedCases" },
     { label: "Reverted", icon: "refresh-circle-outline", screen: "RevertedCasesScreen" },
     { label: "Verify", icon: "shield-checkmark-outline", screen: "VerifyProfileScreen" },
@@ -1237,16 +1239,19 @@ export default function AdminPanelScreen({ navigation }) {
 
     const performAssignment = () => {
       selectedCases.forEach((caseId) => {
+        const selectedCase = cases.find((item) => item.id === caseId);
         firebase.database().ref(`cases/${caseId}`).update({
           assigneeName: member.name,
           assignedTo: member.id,
           assigneeRole: member.role || "FE",
           status: "assigned",
           assignedAt: new Date().toISOString(),
+          whatsappOptIn: whatsappOptInConfirmed || selectedCase?.whatsappOptIn === true,
         });
       });
       setSelectedCases([]);
       setAssignTo("");
+      setWhatsappOptInConfirmed(false);
       setAssignModalVisible(false);
       setTimeout(() => {
           if (Platform.OS === "web") alert("Success: Cases assigned successfully!");
@@ -1797,13 +1802,54 @@ export default function AdminPanelScreen({ navigation }) {
               break;
           }
 
-          // Make contact number clickable to call
+          // Open candidate contact numbers in WhatsApp
           if (key === "contactNumber" && (item.status === 'audit' || item.status === 'assigned')) {
             component = (
               <TouchableOpacity
                 key={key}
                 style={{ width: visibleCols[key] }}
-                onPress={() => item.contactNumber && Linking.openURL(`tel:${item.contactNumber}`)}
+                onPress={() => {
+                  const text = `Hello, regarding your background verification. Case reference: ${item.matrixRefNo || item.RefNo || item.id}.`;
+                  const numbers = String(item.contactNumber || "")
+                    .split(/[\/,]/)
+                    .map((number) => number.trim())
+                    .filter(Boolean);
+                  const openChat = (number) => {
+                    const url = buildWhatsAppUrl(number, text);
+                    if (!url) {
+                      const message = "This contact number is not a valid WhatsApp number.";
+                      if (Platform.OS === "web") window.alert(message);
+                      else Alert.alert("Invalid WhatsApp number", message);
+                      return;
+                    }
+                    Linking.openURL(url).catch((error) => {
+                      console.error("Could not open WhatsApp chat:", error);
+                      const message = "Could not open WhatsApp. Check that WhatsApp is available and try again.";
+                      if (Platform.OS === "web") window.alert(message);
+                      else Alert.alert("WhatsApp unavailable", message);
+                    });
+                  };
+
+                  if (numbers.length > 1 && Platform.OS !== "web") {
+                    Alert.alert(
+                      "Select WhatsApp Number",
+                      "Which candidate number should be opened in WhatsApp?",
+                      [...numbers.map((number) => ({ text: number, onPress: () => openChat(number) })),
+                        { text: "Cancel", style: "cancel" }]
+                    );
+                    return;
+                  }
+                  if (numbers.length > 1) {
+                    for (const number of numbers) {
+                      if (window.confirm(`Open WhatsApp for ${number}?`)) {
+                        openChat(number);
+                        return;
+                      }
+                    }
+                    return;
+                  }
+                  openChat(numbers[0]);
+                }}
               >
                 <Text style={[styles.cell, { color: theme.primary, textDecorationLine: 'underline' }]} numberOfLines={2}>{value}</Text>
               </TouchableOpacity>
@@ -2832,7 +2878,10 @@ export default function AdminPanelScreen({ navigation }) {
         visible={assignModalVisible}
         transparent={true}
         animationType="fade"
-        onRequestClose={() => setAssignModalVisible(false)}
+        onRequestClose={() => {
+          setWhatsappOptInConfirmed(false);
+          setAssignModalVisible(false);
+        }}
       >
         <View style={styles.modalOverlay}>
           <LinearGradient
@@ -2896,12 +2945,28 @@ export default function AdminPanelScreen({ navigation }) {
                 )}
               </ScrollView>
             )}
+            <TouchableOpacity
+              style={{ flexDirection: "row", alignItems: "center", marginTop: 12, marginBottom: 6 }}
+              onPress={() => setWhatsappOptInConfirmed((current) => !current)}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: whatsappOptInConfirmed }}
+            >
+              <Ionicons
+                name={whatsappOptInConfirmed ? "checkbox" : "square-outline"}
+                size={21}
+                color={whatsappOptInConfirmed ? "#86efac" : "#cbd5e1"}
+              />
+              <Text style={{ color: "#fff", marginLeft: 9, flex: 1, fontSize: 13 }}>
+                Candidate(s) have explicitly opted in to WhatsApp messages
+              </Text>
+            </TouchableOpacity>
             <View style={styles.modalActions}>
               <TouchableOpacity
                 style={[styles.modalButton, styles.cancelButton]}
                 onPress={() => {
                   setAssignTo("");
                   setAssignSearchText("");
+                  setWhatsappOptInConfirmed(false);
                   setAssignModalVisible(false);
                 }}
               >
